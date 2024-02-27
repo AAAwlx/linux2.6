@@ -349,7 +349,7 @@ END(ret_from_fork)
 	RING0_PTREGS_FRAME
 ret_from_exception:
 	preempt_stop(CLBR_ANY)
-ret_from_intr:
+ret_from_intr:		# 处理完中断返回的函数
 	GET_THREAD_INFO(%ebp)
 check_userspace:
 	movl PT_EFLAGS(%esp), %eax	# mix EFLAGS and CS
@@ -858,6 +858,7 @@ END(interrupt)
  * the CPU automatically disables interrupts when executing an IRQ vector,
  * so IRQ-flags tracing has to follow that:
  */
+# 下面这段都是和进出中断相关的代码，会进入到arch/x86/kernel/irq/do_IRQ中
 	.p2align CONFIG_X86_L1_CACHE_SHIFT
 common_interrupt:
 	addl $-0x80,(%esp)	/* Adjust vector into the [-256,-1] range */

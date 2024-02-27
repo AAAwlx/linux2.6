@@ -223,6 +223,7 @@ u64 arch_irq_stat(void)
  * SMP cross-CPU interrupts have their own specific
  * handlers).
  */
+// x86的do_IRQ，执行中断的函数，处理器接收中断，然后就执行这个函数
 unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
@@ -234,9 +235,9 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 	exit_idle();
 	irq_enter();
 
-	irq = __get_cpu_var(vector_irq)[vector];
+	irq = __get_cpu_var(vector_irq)[vector];		// 获取irq号
 
-	if (!handle_irq(irq, regs)) {
+	if (!handle_irq(irq, regs)) {		// 通过handle_irq调用irq号对应的中断
 		ack_APIC_irq();
 
 		if (printk_ratelimit())

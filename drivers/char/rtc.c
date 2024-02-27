@@ -235,7 +235,7 @@ static inline unsigned char rtc_is_updating(void)
  *	architecture should implement in the timer code.
  *	(See ./arch/XXXX/kernel/time.c for the set_rtc_mmss() function.)
  */
-
+// rtc（real-time clock）中断处理程序
 static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 {
 	/*
@@ -244,8 +244,13 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 	 *	low byte and the number of interrupts received since
 	 *	the last read in the remainder of rtc_irq_data.
 	 */
+	/*
+	 * 可以是报警器中断、更新完成的中断或周期性中断
+	 * 我们把状态保存在rtc_irq_data的低字节中，
+	 * 而把从最后一次读取之后所接收的中断号保存在其余字节中
+	 */
 
-	spin_lock(&rtc_lock);
+	spin_lock(&rtc_lock);		// 自旋锁，保证rtc_irq_dat不被其他SMP机器上其他处理器同时访问
 	rtc_irq_data += 0x100;
 	rtc_irq_data &= ~0xff;
 	if (is_hpet_enabled()) {
@@ -259,13 +264,15 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 		rtc_irq_data |= (CMOS_READ(RTC_INTR_FLAGS) & 0xF0);
 	}
 
+	// 如果设置了RTC周期性定时器，就需要通过mod_timer()对其更新
 	if (rtc_status & RTC_TIMER_ON)
 		mod_timer(&rtc_irq_timer, jiffies + HZ/rtc_freq + 2*HZ/100);
 
 	spin_unlock(&rtc_lock);
 
 	/* Now do the rest of the actions */
-	spin_lock(&rtc_task_lock);
+	// 现在执行其余操作，此处会执行一个可能被预先设置好的回调函数。RTC驱动程序注册一个回调函数，并在每个RTC中断到来时执行。
+	spin_lock(&rtc_task_lock);	// 加锁为了避免rtc_callback出现相同的情况（和第一次加锁原因相同）
 	if (rtc_callback)
 		rtc_callback->func(rtc_callback->private_data);
 	spin_unlock(&rtc_task_lock);
@@ -273,6 +280,7 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 
 	kill_fasync(&rtc_async_queue, SIGIO, POLL_IN);
 
+	// 这个中断处理程序不支持共享，而且RTC也没有用来测试虚假的机制，所以总返回IRQ_HANDLED
 	return IRQ_HANDLED;
 }
 #endif
@@ -950,6 +958,7 @@ static void rtc_release_region(void)
 		release_mem_region(RTC_PORT(0), rtc_size);
 }
 
+// RTC驱动程序装载时，rtc_init会被调用，对这个驱动初始化，并注册中断处理程序。
 static int __init rtc_init(void)
 {
 #ifdef CONFIG_PROC_FS
@@ -997,6 +1006,7 @@ found:
 	 * XXX Interrupt pin #7 in Espresso is shared between RTC and
 	 * PCI Slot 2 INTA# (and some INTx# in Slot 1).
 	 */
+	// 对rtc_irq注册rtc_interrupt
 	if (request_irq(rtc_irq, rtc_interrupt, IRQF_SHARED, "rtc",
 			(void *)&rtc_port)) {
 		rtc_has_irq = 0;

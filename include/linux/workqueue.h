@@ -22,14 +22,17 @@ typedef void (*work_func_t)(struct work_struct *work);
  */
 #define work_data_bits(work) ((unsigned long *)(&(work)->data))
 
+// 表示工作的数据结构
 struct work_struct {
 	atomic_long_t data;
 #define WORK_STRUCT_PENDING 0		/* T if work item pending execution */
 #define WORK_STRUCT_STATIC  1		/* static initializer (debugobjects) */
 #define WORK_STRUCT_FLAG_MASK (3UL)
 #define WORK_STRUCT_WQ_DATA_MASK (~WORK_STRUCT_FLAG_MASK)
+	// 这些结构体被连接成链表，每个处理器上的每种类型的队列都对应这样一个链表。当一个工作者线程被唤醒，
+	// 它会执行链表的所有工作。工作执行完毕，它就将相应的work_struct对象从链表中移除。当链表不再有对象时，它就会休眠
 	struct list_head entry;
-	work_func_t func;
+	work_func_t func;			// 该工作执行的函数
 #ifdef CONFIG_LOCKDEP
 	struct lockdep_map lockdep_map;
 #endif
@@ -76,6 +79,7 @@ struct execute_work {
 	.timer = TIMER_INITIALIZER(NULL, 0, 0),			\
 	}
 
+// 创建一个工作，名为n，函数为f
 #define DECLARE_WORK(n, f)					\
 	struct work_struct n = __WORK_INITIALIZER(n, f)
 
@@ -129,6 +133,7 @@ static inline void destroy_work_on_stack(struct work_struct *work) { }
 	} while (0)
 #endif
 
+// 运行时创建一个工作，处理函数是func
 #define INIT_WORK(_work, _func)					\
 	do {							\
 		__INIT_WORK((_work), (_func), 0);		\
@@ -206,6 +211,8 @@ __create_workqueue_key(const char *name, int singlethread,
 			       NULL, NULL)
 #endif
 
+// 创建一个新的任务队列和与之相关的工作者线程（系统每个CPU都有一个），name参数用于给该内核线程命名。
+// events队列的创建是：struct workqueue_struct *keventd_wq = create_workqueue("events");
 #define create_workqueue(name) __create_workqueue((name), 0, 0, 0)
 #define create_rt_workqueue(name) __create_workqueue((name), 0, 0, 1)
 #define create_freezeable_workqueue(name) __create_workqueue((name), 1, 1, 0)
@@ -213,20 +220,27 @@ __create_workqueue_key(const char *name, int singlethread,
 
 extern void destroy_workqueue(struct workqueue_struct *wq);
 
+// 对指定工作线程进行调度，和schedule_work函数作用雷同，不过变成了指定工作线程(wq)
 extern int queue_work(struct workqueue_struct *wq, struct work_struct *work);
 extern int queue_work_on(int cpu, struct workqueue_struct *wq,
 			struct work_struct *work);
+// 对指定工作线程进行延时调度
 extern int queue_delayed_work(struct workqueue_struct *wq,
 			struct delayed_work *work, unsigned long delay);
 extern int queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 			struct delayed_work *work, unsigned long delay);
 
+// 刷新指定的工作队列，函数会一直等待，直到队列中所有对象都被执行以后才返回，只能在进程上下文使用，因为在等待所有待处理工作执行的时候，该函数会进入休眠状态。
 extern void flush_workqueue(struct workqueue_struct *wq);
+// 刷新events工作队列，函数会一直等待，直到队列中所有对象都被执行以后才返回，只能在进程上下文使用，因为在等待所有待处理工作执行的时候，该函数会进入休眠状态。
+// 该函数并不取消任何延迟执行的工作，就是说任何通过schedule_delayed_work调度的工作，如果其延迟时间未结束，并不会因为调用flush_scheduled_work()而被刷新掉
 extern void flush_scheduled_work(void);
 extern void flush_delayed_work(struct delayed_work *work);
 
+// 对工作线程进行调度(调度events线程)，工作线程直接会执行
 extern int schedule_work(struct work_struct *work);
 extern int schedule_work_on(int cpu, struct work_struct *work);
+// 对工作线程进行调度（调度events线程），延迟delay后工作线程才开始执行
 extern int schedule_delayed_work(struct delayed_work *work, unsigned long delay);
 extern int schedule_delayed_work_on(int cpu, struct delayed_work *work,
 					unsigned long delay);
@@ -247,6 +261,7 @@ extern int cancel_work_sync(struct work_struct *work);
  * it returns 1 and the work doesn't re-arm itself. Run flush_workqueue() or
  * cancel_work_sync() to wait on it.
  */
+// 取消延迟执行的工作，取消的是events工作线程中的延时工作
 static inline int cancel_delayed_work(struct delayed_work *work)
 {
 	int ret;

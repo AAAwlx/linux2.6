@@ -36,28 +36,44 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/workqueue.h>
 
+// 工作者线程执行worker_thread函数，在worker_thread中死循环
+
+// 每一个工作者线程由一个cpu_workqueue_struct结构体表示。而workqueue_struct结构体则表示给定类型的所有工作者线程。
+
 /*
  * The per-CPU workqueue (if single thread, we always use the first
  * possible cpu).
  */
+// 每一个工作者线程都有一个这样的结构体。假如只有一种工作者线程的话那么该结构有16个，因为cpu有16个，每一种工作线程在每个cpu上都需要有实例
 struct cpu_workqueue_struct {
 
-	spinlock_t lock;
+	spinlock_t lock;		// 锁，保护这种结构
 
-	struct list_head worklist;
+	struct list_head worklist;		// 工作列表
 	wait_queue_head_t more_work;
-	struct work_struct *current_work;
+	struct work_struct *current_work;		// 指向当前工作
 
-	struct workqueue_struct *wq;
-	struct task_struct *thread;
+	struct workqueue_struct *wq;		// 关联工作队列结构（即所属的工作者线程的类型）
+	struct task_struct *thread;			// 关联线程
 } ____cacheline_aligned;
 
 /*
  * The externally visible workqueue abstraction is an array of
  * per-CPU workqueues:
  */
+
+// 每种工作者线程有一个这样的结构体。
+// 一种工作者线程有一个这样的结构体，然后在这个结构体内部有一个cpu_workqueue_struct组成的数组，数组的每一个元素代表该种工作者线程在每一个cpu上的实例
+
+// 每个工作者线程类型关联一个自己的workqueue_struct。该结构体里面，给每个线程分配一个cpu_workqueue_struct，
+// 因而也就是给每个处理器分配一个，因为每个处理器都有一个该类型的工作者线程
+
+// 外部可见的工作队列抽象是由每个CPU的工作队列组成的数组
 struct workqueue_struct {
-	struct cpu_workqueue_struct *cpu_wq;
+	// 由cpu_workqueue_struct结构组成的数组，数组每一项对应系统中一个处理器，
+	// 系统每一个CPU对应一个工作者线程，所以对于给定计算机来说，就是每个处理器，
+	// 每个工作者线程对应一个这样的cpu_workqueue_struct结构体。
+	struct cpu_workqueue_struct *cpu_wq;		// 一个数组，总数为cpu数，代表者该种工作者线程在每一个cpu上的实体
 	struct list_head list;
 	const char *name;
 	int singlethread;
@@ -271,6 +287,7 @@ static void __queue_work(struct cpu_workqueue_struct *cwq,
  * We queue the work to the CPU on which it was submitted, but if the CPU dies
  * it can be processed by another CPU.
  */
+// 对指定工作线程进行调度，和schedule_work函数作用雷同，不过变成了指定工作线程(wq)
 int queue_work(struct workqueue_struct *wq, struct work_struct *work)
 {
 	int ret;
@@ -324,6 +341,7 @@ static void delayed_work_timer_fn(unsigned long __data)
  *
  * Returns 0 if @work was already on a queue, non-zero otherwise.
  */
+// 对指定工作线程进行延时调度
 int queue_delayed_work(struct workqueue_struct *wq,
 			struct delayed_work *dwork, unsigned long delay)
 {
@@ -375,6 +393,7 @@ EXPORT_SYMBOL_GPL(queue_delayed_work_on);
 static void run_workqueue(struct cpu_workqueue_struct *cwq)
 {
 	spin_lock_irq(&cwq->lock);
+	// 当链表不为空，选取下一个节点对象。
 	while (!list_empty(&cwq->worklist)) {
 		struct work_struct *work = list_entry(cwq->worklist.next,
 						struct work_struct, entry);
@@ -393,13 +412,16 @@ static void run_workqueue(struct cpu_workqueue_struct *cwq)
 		trace_workqueue_execution(cwq->thread, work);
 		debug_work_deactivate(work);
 		cwq->current_work = work;
+		// 把该节点从链表上解下来
 		list_del_init(cwq->worklist.next);
 		spin_unlock_irq(&cwq->lock);
 
 		BUG_ON(get_wq_data(work) != cwq);
+		// 将待处理标志位pending清零
 		work_clear_pending(work);
 		lock_map_acquire(&cwq->wq->lockdep_map);
 		lock_map_acquire(&lockdep_map);
+		// 调用函数
 		f(work);
 		lock_map_release(&lockdep_map);
 		lock_map_release(&cwq->wq->lockdep_map);
@@ -421,20 +443,25 @@ static void run_workqueue(struct cpu_workqueue_struct *cwq)
 	spin_unlock_irq(&cwq->lock);
 }
 
+// 工作者线程执行的函数
 static int worker_thread(void *__cwq)
 {
 	struct cpu_workqueue_struct *cwq = __cwq;
-	DEFINE_WAIT(wait);
+	DEFINE_WAIT(wait);		// 定义一个等待队列，名字是wait，func是autoremove_wake_function
 
 	if (cwq->wq->freezeable)
 		set_freezable();
 
+	// 死循环，当有操作被插入到队列时，线程被唤醒。当没有操作时，它又会睡眠
 	for (;;) {
+		// 线程将自己设置为休眠状态（TASK_INTERRUPTIBLE）
 		prepare_to_wait(&cwq->more_work, &wait, TASK_INTERRUPTIBLE);
 		if (!freezing(current) &&
 		    !kthread_should_stop() &&
 		    list_empty(&cwq->worklist))
+				//如果工作链表是空，线程调用schedule进入休眠 
 			schedule();
+		// 如果链表中由对象，线程不会睡眠。相反，它将自己状态设置为TASK_RUNNING，脱离等待队列
 		finish_wait(&cwq->more_work, &wait);
 
 		try_to_freeze();
@@ -442,6 +469,7 @@ static int worker_thread(void *__cwq)
 		if (kthread_should_stop())
 			break;
 
+		// 如果链表非空，调用run_workqueue()函数执行被推后的工作
 		run_workqueue(cwq);
 	}
 
@@ -512,6 +540,7 @@ static int flush_cpu_workqueue(struct cpu_workqueue_struct *cwq)
  * This function used to run the workqueues itself.  Now we just wait for the
  * helper threads to do it.
  */
+// 刷新指定的工作队列，函数会一直等待，直到队列中所有对象都被执行以后才返回，只能在进程上下文使用，因为在等待所有待处理工作执行的时候，该函数会进入休眠状态。
 void flush_workqueue(struct workqueue_struct *wq)
 {
 	const struct cpumask *cpu_map = wq_cpu_map(wq);
@@ -730,6 +759,7 @@ static struct workqueue_struct *keventd_wq __read_mostly;
  * queued and leaves it in the same position on the kernel-global
  * workqueue otherwise.
  */
+// 对工作线程进行调度(调度events线程)，工作线程直接会执行
 int schedule_work(struct work_struct *work)
 {
 	return queue_work(keventd_wq, work);
@@ -757,6 +787,7 @@ EXPORT_SYMBOL(schedule_work_on);
  * After waiting for a given time this puts a job in the kernel-global
  * workqueue.
  */
+// 对工作线程进行调度（调度events线程），延迟delay后工作线程才开始执行
 int schedule_delayed_work(struct delayed_work *dwork,
 					unsigned long delay)
 {
@@ -845,6 +876,8 @@ int schedule_on_each_cpu(work_func_t func)
 	return 0;
 }
 
+// 刷新events工作队列，函数会一直等待，直到队列中所有对象都被执行以后才返回，只能在进程上下文使用，因为在等待所有待处理工作执行的时候，该函数会进入休眠状态。
+// 该函数并不取消任何延迟执行的工作，就是说任何通过schedule_delayed_work调度的工作，如果其延迟时间未结束，并不会因为调用flush_scheduled_work()而被刷新掉
 void flush_scheduled_work(void)
 {
 	flush_workqueue(keventd_wq);

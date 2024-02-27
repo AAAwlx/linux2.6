@@ -172,6 +172,7 @@ struct irq_2_iommu;
  * @dir:		/proc/irq/ procfs entry
  * @name:		flow handler name for /proc/interrupts output
  */
+// 中断描述符
 struct irq_desc {
 	unsigned int		irq;
 	struct timer_rand_state *timer_rand_state;
@@ -179,12 +180,21 @@ struct irq_desc {
 #ifdef CONFIG_INTR_REMAP
 	struct irq_2_iommu      *irq_2_iommu;
 #endif
+	/*
+	handle_irq就是highlevel irq-events handler，何谓high level？站在高处自然看不到细节。我认为high level是和specific相对，specific handler处理具体的事务，例如处理一个按键中断、处理一个磁盘中断。而high level则是对处理各种中断交互过程的一个抽象，根据下列硬件的不同：
+	（a）中断控制器
+	（b）IRQ trigger type highlevel irq-events handler可以分成：
+	（a）处理电平触发类型的中断handler（handle_level_irq）
+	（b）处理边缘触发类型的中断handler（handle_edge_irq）
+	（c）处理简单类型的中断handler（handle_simple_irq）
+	（d）处理EOI类型的中断handler（handle_fasteoi_irq）
+	*/
 	irq_flow_handler_t	handle_irq;
 	struct irq_chip		*chip;
 	struct msi_desc		*msi_desc;
 	void			*handler_data;
 	void			*chip_data;
-	struct irqaction	*action;	/* IRQ action list */
+	struct irqaction	*action;	/* IRQ action list */		// 一个irq（中断）线上可能有多个设备，将多个设备串起来
 	unsigned int		status;		/* IRQ status */
 
 	unsigned int		depth;		/* nested irq disables */
@@ -213,6 +223,7 @@ extern void arch_init_copy_chip_data(struct irq_desc *old_desc,
 extern void arch_free_chip_data(struct irq_desc *old_desc, struct irq_desc *desc);
 
 #ifndef CONFIG_SPARSE_IRQ
+// 中断描述符表
 extern struct irq_desc irq_desc[NR_IRQS];
 #endif
 
