@@ -1,3 +1,4 @@
+/*slob内存分配器*/
 #ifndef __LINUX_SLOB_DEF_H
 #define __LINUX_SLOB_DEF_H
 

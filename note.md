@@ -13,7 +13,7 @@ M       include/linux/interrupt.h
 M       include/linux/irq.h
 M       include/linux/irqflags.h
 M       include/linux/irqreturn.h
-M       include/linux/kernel.h
+M       include/linux/kernel.h          
 M       include/linux/kfifo.h
 M       include/linux/list.h
 M       include/linux/rbtree.h
@@ -26,3 +26,5 @@ M       kernel/softirq.c
 M       kernel/workqueue.c
 M       lib/idr.c
 M       net/core/dev.c
+# 内核模块
+module_param()      向内核中注册模块      /include/linux/moduleparam.h

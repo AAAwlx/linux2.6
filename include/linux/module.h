@@ -172,7 +172,6 @@ extern struct module __this_module;
 const struct exception_table_entry *search_exception_tables(unsigned long add);
 
 struct notifier_block;
-
 #ifdef CONFIG_MODULES
 
 extern int modules_disabled; /* for sysctl */

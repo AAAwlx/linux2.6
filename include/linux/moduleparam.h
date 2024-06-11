@@ -103,11 +103,16 @@ struct kparam_array
 /* Helper functions: type is byte, short, ushort, int, uint, long,
    ulong, charp, bool or invbool, or XXX if you define param_get_XXX,
    param_set_XXX and param_check_XXX. */
+
+/*
+param_check_##type检查传入的value是否是type代表的类型，即module_param中的name参数
+
+*/
 #define module_param_named(name, value, type, perm)			   \
 	param_check_##type(name, &(value));				   \
 	module_param_call(name, param_set_##type, param_get_##type, &value, perm); \
 	__MODULE_PARM_TYPE(name, #type)
-
+//name参数名，type参数类型，perm sysfs的操作权限
 #define module_param(name, type, perm)				\
 	module_param_named(name, name, type, perm)
 

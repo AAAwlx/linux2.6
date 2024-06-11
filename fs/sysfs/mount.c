@@ -94,11 +94,11 @@ int __init sysfs_init(void)
 	if (!sysfs_dir_cachep)
 		goto out;
 
-	err = sysfs_inode_init();
+	err = sysfs_inode_init();.//sysfs_inode_init->bdi_init(该函数并未初始化实际和inode相关的内容)
 	if (err)
 		goto out_err;
 
-	err = register_filesystem(&sysfs_fs_type);
+	err = register_filesystem(&sysfs_fs_type);//注册文件系统
 	if (!err) {
 		sysfs_mount = kern_mount(&sysfs_fs_type);
 		if (IS_ERR(sysfs_mount)) {

@@ -29,8 +29,9 @@
 
 #undef i386     /* in case the preprocessor is a 32bit one */
 
-OUTPUT_FORMAT(CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT)
+OUTPUT_FORMAT(CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT, CONFIG_OUTPUT_FORMAT)/*指定输出格式*/
 
+/*根据config选择架构*/
 #ifdef CONFIG_X86_32
 OUTPUT_ARCH(i386)
 ENTRY(phys_startup_32)
@@ -66,9 +67,9 @@ jiffies_64 = jiffies;
 #define X64_ALIGN_DEBUG_RODATA_END
 
 #endif
-
+/*设置程序表头*/
 PHDRS {
-	text PT_LOAD FLAGS(5);          /* R_E */
+	text PT_LOAD FLAGS(5);          /* R_E *设置text段可读可执行/
 	data PT_LOAD FLAGS(7);          /* RWE */
 #ifdef CONFIG_X86_64
 	user PT_LOAD FLAGS(5);          /* R_E */

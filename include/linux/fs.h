@@ -1733,18 +1733,17 @@ static inline void file_accessed(struct file *file)
 int sync_inode(struct inode *inode, struct writeback_control *wbc);
 
 struct file_system_type {
-	const char *name;
-	int fs_flags;
-	int (*get_sb) (struct file_system_type *, int,
-		       const char *, void *, struct vfsmount *);
-	void (*kill_sb) (struct super_block *);
-	struct module *owner;
-	struct file_system_type * next;
-	struct list_head fs_supers;
+	const char *name;  // 文件系统的名称，例如 "ext4" 或 "vfat"
+	int fs_flags;  // 文件系统标志，指定文件系统的属性（例如是否只读）
+	int (*get_sb) (struct file_system_type *, int, const char *, void *, struct vfsmount *);  // 获取超级块的回调函数
+	void (*kill_sb) (struct super_block *);  // 销毁超级块的回调函数
+	struct module *owner;  // 拥有该文件系统类型的模块
+	struct file_system_type *next;  // 链表指针，指向下一个文件系统类型
+	struct list_head fs_supers;  // 超级块列表头
 
+	// 锁类键，用于锁定机制
 	struct lock_class_key s_lock_key;
 	struct lock_class_key s_umount_key;
-
 	struct lock_class_key i_lock_key;
 	struct lock_class_key i_mutex_key;
 	struct lock_class_key i_mutex_dir_key;

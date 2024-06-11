@@ -96,16 +96,16 @@ typedef irqreturn_t (*irq_handler_t)(int, void *);	// 中断处理程序类型�
 
 /**
  * struct irqaction - per interrupt action descriptor
- * @handler:	interrupt handler function
- * @flags:	flags (see IRQF_* above)
- * @name:	name of the device
- * @dev_id:	cookie to identify the device
- * @next:	pointer to the next irqaction for shared interrupts
- * @irq:	interrupt number
- * @dir:	pointer to the proc/irq/NN/name entry
- * @thread_fn:	interupt handler function for threaded interrupts
- * @thread:	thread pointer for threaded interrupts
- * @thread_flags:	flags related to @thread
+ * @handler:	interrupt handler function这个字段表示与此动作描述符关联的中断处理函数。当中断发生时，内核将执行此处理函数。
+ * @flags:	flags (see IRQF_* above)与此中断动作相关的标志位。这些标志提供了有关处理中断的附加信息或配置选项。常见的标志位使用 IRQF_* 常量定义
+ * @name:	name of the device这是与中断相关联的设备的名称。
+ * @dev_id:	cookie to identify the device用于帮助标识与中断相关的设备的 cookie 或标识符
+ * @next:	pointer to the next irqaction for shared interrupts此字段是指向共享中断的下一个 irqaction 结构的指针，共享中断线维护一个处理该中断线上所有设备中断的链表，出发共享中断时遍历该链表
+ * @irq:	interrupt number中断号
+ * @dir:	pointer to the proc/irq/NN/name entry指向 proc/irq/NN/name 条目的指针。这通常用于调试和诊断目的
+ * @thread_fn:	interupt handler function for threaded interrupts如果启用了线程中断，则此字段表示用于线程中断的中断处理函数，新开一个线程处理中断
+ * @thread:	thread pointer for threaded interrupts这是指向与线程中断相关联的线程结构的指针。
+ * @thread_flags:	flags related to @thread与线程中断相关的标志
  */
 struct irqaction {
 	irq_handler_t handler;

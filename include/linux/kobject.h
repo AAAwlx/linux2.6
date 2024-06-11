@@ -57,10 +57,10 @@ enum kobject_action {
 };
 
 struct kobject {
-	const char		*name;
-	struct list_head	entry;
-	struct kobject		*parent;
-	struct kset		*kset;
+	const char		*name; /* 对应sysfs的目录名 */
+	struct list_head	entry; /*用于连接到所属kset的链表中，用于将kobj挂在kset->list中*/
+	struct kobject		*parent;/*指向 父对象，形成层次结构，在sysfs中表现为父子目录的关系*/
+	struct kset		*kset;/*属于哪个kset表征该kobj所属的kset。kset可以作为parent的“候补”：当注册时，传入的parent为空时，可以让kset来担当。*/
 	struct kobj_type	*ktype;
 	struct sysfs_dirent	*sd;
 	struct kref		kref;

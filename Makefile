@@ -1,3 +1,4 @@
+#设置系统的版本信息
 VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 34
@@ -16,7 +17,7 @@ NAME = Sheep on Meth
 # o  print "Entering directory ...";
 MAKEFLAGS += -rR --no-print-directory
 
-# Avoid funny character set dependencies
+# 避免出现字符集相关的怪异问题
 unexport LC_ALL
 LC_COLLATE=C
 LC_NUMERIC=C
@@ -38,7 +39,7 @@ export LC_COLLATE LC_NUMERIC
 # descending is started. They are now explicitly listed as the
 # prepare rule.
 
-# To put more focus on warnings, be less verbose as default
+#如果命令行指定了“V”参数，表示需要输出详细信息
 # Use 'make V=1' to see the full commands
 
 ifeq ("$(origin V)", "command line")
@@ -51,21 +52,21 @@ endif
 # Call a source code checker (by default, "sparse") as part of the
 # C compilation.
 #
-# Use 'make C=1' to enable checking of only re-compiled files.
-# Use 'make C=2' to enable checking of *all* source files, regardless
+# 使用'make C=1'，仅仅检查重新编译的文件。
+# 使用'make C=2'，将对'所有'源文件进行检查，而不管是否重新编译它
 # of whether they are re-compiled or not.
 #
 # See the file "Documentation/sparse.txt" for more details, including
 # where to get the "sparse" utility.
 
-ifeq ("$(origin C)", "command line")
+ifeq ("$(origin C)", "command line") #检查命令行中是否定义了 C 的值
   KBUILD_CHECKSRC = $(C)
 endif
-ifndef KBUILD_CHECKSRC
+ifndef KBUILD_CHECKSRC #如果没有定义 KBUILD_CHECKSRC 则保证有默认值0
   KBUILD_CHECKSRC = 0
 endif
 
-# Use make M=dir to specify directory of external module to build
+# 使用 make M=dir 指定外部模块的构建目录
 # Old syntax make ... SUBDIRS=$PWD is still supported
 # Setting the environment variable KBUILD_EXTMOD take precedence
 ifdef SUBDIRS
@@ -155,11 +156,7 @@ VPATH		:= $(srctree)$(if $(KBUILD_EXTMOD),:$(KBUILD_EXTMOD))
 export srctree objtree VPATH
 
 
-# SUBARCH tells the usermode build what the underlying arch is.  That is set
-# first, and if a usermode build is happening, the "ARCH=um" on the command
-# line overrides the setting of ARCH below.  If a native build is happening,
-# then ARCH is assigned, getting whatever value it gets normally, and 
-# SUBARCH is subsequently ignored.
+#使用 uname -m 获取当前主机的架构信息，如果 ARCH 未被设置则使用 SUBARCH 
 
 SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 				  -e s/arm.*/arm/ -e s/sa110/arm/ \
@@ -167,28 +164,26 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 				  -e s/ppc.*/powerpc/ -e s/mips.*/mips/ \
 				  -e s/sh[234].*/sh/ )
 
-# Cross compiling and selecting different set of gcc/bin-utils
+# 交叉编译使用不同的gcc/bin-utils集合
 # ---------------------------------------------------------------------------
 #
-# When performing cross compilation for other architectures ARCH shall be set
-# to the target architecture. (See arch/* for the possibilities).
-# ARCH can be set during invocation of make:
+# 当执行交叉编译时，应当指定ARCH参数为目标体系结构。
+# ARCH可以象如下命令一样指定：
 # make ARCH=ia64
-# Another way is to have ARCH set in the environment.
-# The default ARCH is the host where make is executed.
+# 另一种方式是指定ARCH环境变量。默认ARCH是make执行时的主机体系结构。
 
-# CROSS_COMPILE specify the prefix used for all executables used
-# during compilation. Only gcc and related bin-utils executables
-# are prefixed with $(CROSS_COMPILE).
-# CROSS_COMPILE can be set on the command line
+# CROSS_COMPILE指定了交叉编译时的前缀。仅仅只有gcc和相关的bin-utils执行时，
+# 才使用$(CROSS_COMPILE)作为前缀。
+# CROSS_COMPILE可以在命令行指定，如：
 # make CROSS_COMPILE=ia64-linux-
-# Alternatively CROSS_COMPILE can be set in the environment.
-# Default value for CROSS_COMPILE is not to prefix executables
-# Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
+# 可选的，可以在环境变量中指定CROSS_COMPILE。
+# 第三种方法是在.config中保存交叉编译的设置。
+# 注意：某些体系结构在它们的arch/*/Makefile文件中指定了CROSS_COMPILE
 export KBUILD_BUILDHOST := $(SUBARCH)
 ARCH		?= $(SUBARCH)
 CROSS_COMPILE	?=
 
+# 统一架构
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
 SRCARCH 	:= $(ARCH)
@@ -211,7 +206,7 @@ ifeq ($(ARCH),sh64)
        SRCARCH := sh
 endif
 
-# Where to locate arch specific headers
+# 头文件所在的目录
 hdr-arch  := $(SRCARCH)
 
 ifeq ($(ARCH),m68knommu)
@@ -220,18 +215,19 @@ endif
 
 KCONFIG_CONFIG	?= .config
 
-# SHELL used by kbuild
+# 确定 kbuild 构建内核使用的shell
 CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 	  else if [ -x /bin/bash ]; then echo /bin/bash; \
 	  else echo sh; fi ; fi)
+
+# 设置编译器选项
 
 HOSTCC       = gcc
 HOSTCXX      = g++
 HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer
 HOSTCXXFLAGS = -O2
 
-# Decide whether to build built-in, modular, or both.
-# Normally, just do built-in.
+# 默认只编译内核不编译模块
 
 KBUILD_MODULES :=
 KBUILD_BUILTIN := 1
@@ -240,6 +236,7 @@ KBUILD_BUILTIN := 1
 #	When we're building modules with modversions, we need to consider
 #	the built-in objects during the descend as well, in order to
 #	make sure the checksums are up to date before we record them.
+#如果make规则为modules,则检查是否设置CONFIG_MODVERSIONS，如果设置则编译内核，否则只编译模块
 
 ifeq ($(MAKECMDGOALS),modules)
   KBUILD_BUILTIN := $(if $(CONFIG_MODVERSIONS),1)
@@ -260,28 +257,25 @@ endif
 export KBUILD_MODULES KBUILD_BUILTIN
 export KBUILD_CHECKSRC KBUILD_SRC KBUILD_EXTMOD
 
-# Beautify output
+# 修饰输出格式
 # ---------------------------------------------------------------------------
 #
-# Normally, we echo the whole command before executing it. By making
-# that echo $($(quiet)$(cmd)), we now have the possibility to set
-# $(quiet) to choose other forms of output instead, e.g.
+# 一般情况下，在执行命令前，我们回显完整的命令
+# 可以设置$(quiet)来选择其他的输出格式。
 #
 #         quiet_cmd_cc_o_c = Compiling $(RELDIR)/$@
 #         cmd_cc_o_c       = $(CC) $(c_flags) -c -o $@ $<
 #
-# If $(quiet) is empty, the whole command will be printed.
-# If it is set to "quiet_", only the short version will be printed. 
-# If it is set to "silent_", nothing will be printed at all, since
-# the variable $(silent_cmd_cc_o_c) doesn't exist.
+# 如果$(quiet)为空，整个命令会被打印出来
+# 如果设置为"quiet_", 仅仅打印短版本
+# 如果设置为"silent_", 什么都不会被打印，因为$(silent_cmd_cc_o_c)根本不存在。
 #
-# A simple variant is to prefix commands with $(Q) - that's useful
-# for commands that shall be hidden in non-verbose mode.
+# 在non-verbose模式下，在命令前面的简单变量$(Q)，将隐藏执行的命令
 #
 #	$(Q)ln $@ :<
 #
-# If KBUILD_VERBOSE equals 0 then the above command will be hidden.
-# If KBUILD_VERBOSE equals 1 then the above command is displayed.
+# 如果KBUILD_VERBOSE等于0，上面的命令将被隐藏
+# 如果KBUILD_VERBOSE等于1，那么上面的命令将被显示出来
 
 ifeq ($(KBUILD_VERBOSE),1)
   quiet =
@@ -350,7 +344,8 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \
 		   -Wno-format-security \
-		   -fno-delete-null-pointer-checks
+		   -fno-delete-null-pointer-checks\
+		   -fno-pie
 KBUILD_AFLAGS   := -D__ASSEMBLY__
 
 # Read KERNELRELEASE from include/config/kernel.release (if it exists)
