@@ -927,65 +927,65 @@ EXPORT_SYMBOL(get_sb_single);
 struct vfsmount *
 vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void *data)
 {
-	struct vfsmount *mnt;
-	char *secdata = NULL;
-	int error;
+	struct vfsmount *mnt; // 用于存储挂载信息的结构体指针
+	char *secdata = NULL; // 用于存储安全数据的指针
+	int error; // 存储错误代码的变量
 
 	if (!type)
-		return ERR_PTR(-ENODEV);
+		return ERR_PTR(-ENODEV); // 如果文件系统类型为空，返回错误指针，表示没有此设备
 
 	error = -ENOMEM;
-	mnt = alloc_vfsmnt(name);
+	mnt = alloc_vfsmnt(name); // 分配一个 vfsmount 结构体
 	if (!mnt)
-		goto out;
+		goto out; // 如果分配失败，跳转到 out 标签
 
 	if (flags & MS_KERNMOUNT)
-		mnt->mnt_flags = MNT_INTERNAL;
+		mnt->mnt_flags = MNT_INTERNAL; // 如果挂载标志包含 MS_KERNMOUNT，设置 mnt_flags 为 MNT_INTERNAL
 
 	if (data && !(type->fs_flags & FS_BINARY_MOUNTDATA)) {
-		secdata = alloc_secdata();
+		secdata = alloc_secdata(); // 分配安全数据
 		if (!secdata)
-			goto out_mnt;
+			goto out_mnt; // 如果分配失败，跳转到 out_mnt 标签
 
-		error = security_sb_copy_data(data, secdata);
+		error = security_sb_copy_data(data, secdata); // 复制安全数据
 		if (error)
-			goto out_free_secdata;
+			goto out_free_secdata; // 如果复制失败，跳转到 out_free_secdata 标签
 	}
 
-	error = type->get_sb(type, flags, name, data, mnt);
+	error = type->get_sb(type, flags, name, data, mnt); // 调用文件系统类型的 get_sb 函数获取超级块
 	if (error < 0)
-		goto out_free_secdata;
-	BUG_ON(!mnt->mnt_sb);
-	WARN_ON(!mnt->mnt_sb->s_bdi);
+		goto out_free_secdata; // 如果获取失败，跳转到 out_free_secdata 标签
+	BUG_ON(!mnt->mnt_sb); // 检查 mnt_sb 是否为空，如果为空，触发 BUG
+	WARN_ON(!mnt->mnt_sb->s_bdi); // 检查 mnt_sb->s_bdi 是否为空，如果为空，发出警告
 
-	error = security_sb_kern_mount(mnt->mnt_sb, flags, secdata);
+	error = security_sb_kern_mount(mnt->mnt_sb, flags, secdata); // 调用安全子系统进行挂载安全检查
 	if (error)
-		goto out_sb;
+		goto out_sb; // 如果检查失败，跳转到 out_sb 标签
 
 	/*
-	 * filesystems should never set s_maxbytes larger than MAX_LFS_FILESIZE
-	 * but s_maxbytes was an unsigned long long for many releases. Throw
-	 * this warning for a little while to try and catch filesystems that
-	 * violate this rule. This warning should be either removed or
-	 * converted to a BUG() in 2.6.34.
+	 * 文件系统不应将 s_maxbytes 设置为超过 MAX_LFS_FILESIZE 的值
+	 * 但 s_maxbytes 在许多版本中是一个无符号长整型。为了捕捉
+	 * 违反此规则的文件系统，这里添加了一个警告。在 2.6.34 版本
+	 * 中应移除或转换为 BUG()。
 	 */
 	WARN((mnt->mnt_sb->s_maxbytes < 0), "%s set sb->s_maxbytes to "
 		"negative value (%lld)\n", type->name, mnt->mnt_sb->s_maxbytes);
 
-	mnt->mnt_mountpoint = mnt->mnt_root;
-	mnt->mnt_parent = mnt;
-	up_write(&mnt->mnt_sb->s_umount);
-	free_secdata(secdata);
-	return mnt;
+	mnt->mnt_mountpoint = mnt->mnt_root; // 设置挂载点
+	mnt->mnt_parent = mnt; // 设置父挂载点为自身
+	up_write(&mnt->mnt_sb->s_umount); // 释放超级块的卸载锁
+	free_secdata(secdata); // 释放安全数据
+	return mnt; // 返回挂载信息结构体指针
+
 out_sb:
-	dput(mnt->mnt_root);
-	deactivate_locked_super(mnt->mnt_sb);
+	dput(mnt->mnt_root); // 释放目录项
+	deactivate_locked_super(mnt->mnt_sb); // 停用并解锁超级块
 out_free_secdata:
-	free_secdata(secdata);
+	free_secdata(secdata); // 释放安全数据
 out_mnt:
-	free_vfsmnt(mnt);
+	free_vfsmnt(mnt); // 释放挂载信息结构体
 out:
-	return ERR_PTR(error);
+	return ERR_PTR(error); // 返回错误指针
 }
 
 EXPORT_SYMBOL_GPL(vfs_kern_mount);

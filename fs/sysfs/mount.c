@@ -100,19 +100,19 @@ int __init sysfs_init(void)
 
 	err = register_filesystem(&sysfs_fs_type);//注册文件系统
 	if (!err) {
-		sysfs_mount = kern_mount(&sysfs_fs_type);
-		if (IS_ERR(sysfs_mount)) {
+		sysfs_mount = kern_mount(&sysfs_fs_type);//调用关系：kern_mount->kern_mount_data->vfs_kern_mount 挂载文件系统
+		if (IS_ERR(sysfs_mount)) {//如果挂载失败则进行错误处理
 			printk(KERN_ERR "sysfs: could not mount!\n");
 			err = PTR_ERR(sysfs_mount);
 			sysfs_mount = NULL;
-			unregister_filesystem(&sysfs_fs_type);
+			unregister_filesystem(&sysfs_fs_type);//释放文件系统资源
 			goto out_err;
 		}
 	} else
 		goto out_err;
 out:
 	return err;
-out_err:
+out_err://错误处理
 	kmem_cache_destroy(sysfs_dir_cachep);
 	sysfs_dir_cachep = NULL;
 	goto out;

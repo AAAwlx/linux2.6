@@ -75,13 +75,13 @@ int register_filesystem(struct file_system_type * fs)
 	if (fs->next)
 		return -EBUSY;
 	INIT_LIST_HEAD(&fs->fs_supers);
-	write_lock(&file_systems_lock);
-	p = find_filesystem(fs->name, strlen(fs->name));
+	write_lock(&file_systems_lock);//加锁
+	p = find_filesystem(fs->name, strlen(fs->name));//寻找一个空闲的文件系统结构体
 	if (*p)
 		res = -EBUSY;
 	else
 		*p = fs;
-	write_unlock(&file_systems_lock);
+	write_unlock(&file_systems_lock);//解锁，多核
 	return res;
 }
 
@@ -99,23 +99,37 @@ EXPORT_SYMBOL(register_filesystem);
  *	may be freed or reused.
  */
  
-int unregister_filesystem(struct file_system_type * fs)
+int unregister_filesystem(struct file_system_type *fs)
 {
-	struct file_system_type ** tmp;
+    struct file_system_type **tmp;
 
-	write_lock(&file_systems_lock);
-	tmp = &file_systems;
-	while (*tmp) {
-		if (fs == *tmp) {
-			*tmp = fs->next;
-			fs->next = NULL;
-			write_unlock(&file_systems_lock);
-			return 0;
-		}
-		tmp = &(*tmp)->next;
-	}
-	write_unlock(&file_systems_lock);
-	return -EINVAL;
+    // 获取写锁，确保对 file_systems 链表的修改是线程安全的
+    write_lock(&file_systems_lock);
+    
+    // 初始化 tmp 为指向 file_systems 链表头的指针
+    tmp = &file_systems;
+
+    // 遍历 file_systems 链表，查找与要取消注册的文件系统类型 fs 匹配的节点
+    while (*tmp) {
+        // 如果找到匹配的文件系统类型
+        if (fs == *tmp) {
+            // 从链表中移除该节点
+            *tmp = fs->next;
+            // 将 fs->next 置为 NULL，表示 fs 已从链表中移除
+            fs->next = NULL;
+            // 释放写锁
+            write_unlock(&file_systems_lock);
+            // 返回 0 表示成功
+            return 0;
+        }
+        // 移动到链表中的下一个节点
+        tmp = &(*tmp)->next;
+    }
+    
+    // 如果遍历完链表没有找到匹配的文件系统类型，则释放写锁
+    write_unlock(&file_systems_lock);
+    // 返回 -EINVAL 表示错误，即找不到要取消注册的文件系统类型
+    return -EINVAL;
 }
 
 EXPORT_SYMBOL(unregister_filesystem);
