@@ -203,22 +203,27 @@ static struct inode *alloc_inode(struct super_block *sb)
 {
 	struct inode *inode;
 
+	// 检查超级块 (super_block) 是否有自定义的 alloc_inode 函数
 	if (sb->s_op->alloc_inode)
-		inode = sb->s_op->alloc_inode(sb);
+		inode = sb->s_op->alloc_inode(sb); // 调用自定义的 alloc_inode 函数
 	else
-		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL);
+		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL); // 从内存缓存中分配一个 inode 结构
 
+	// 检查是否成功分配了 inode
 	if (!inode)
 		return NULL;
 
+	// 初始化 inode 结构
 	if (unlikely(inode_init_always(sb, inode))) {
+		// 如果初始化失败，检查是否有自定义的 destroy_inode 函数
 		if (inode->i_sb->s_op->destroy_inode)
-			inode->i_sb->s_op->destroy_inode(inode);
+			inode->i_sb->s_op->destroy_inode(inode); // 调用自定义的 destroy_inode 函数销毁 inode
 		else
-			kmem_cache_free(inode_cachep, inode);
+			kmem_cache_free(inode_cachep, inode); // 否则从内存缓存中释放 inode
 		return NULL;
 	}
 
+	// 返回分配并初始化好的 inode
 	return inode;
 }
 
@@ -1564,16 +1569,17 @@ void __init inode_init(void)
 {
 	int loop;
 
-	/* inode slab cache */
+	/* 创建 inode slab 缓存 */
 	inode_cachep = kmem_cache_create("inode_cache",
 					 sizeof(struct inode),
 					 0,
 					 (SLAB_RECLAIM_ACCOUNT|SLAB_PANIC|
 					 SLAB_MEM_SPREAD),
 					 init_once);
+	// 注册 inode 缓存的 shrinker
 	register_shrinker(&icache_shrinker);
 
-	/* Hash may have been set up in inode_init_early */
+	/* 如果哈希表已经在 inode_init_early 中设置，则直接返回 */
 	if (!hashdist)
 		return;
 

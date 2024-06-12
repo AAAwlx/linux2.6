@@ -722,73 +722,67 @@ struct posix_acl;
 #define ACL_NOT_CACHED ((void *)(-1))
 
 struct inode {
-	struct hlist_node	i_hash;
-	struct list_head	i_list;		/* backing dev IO list */
-	struct list_head	i_sb_list;
-	struct list_head	i_dentry;
-	unsigned long		i_ino;
-	atomic_t		i_count;
-	unsigned int		i_nlink;
-	uid_t			i_uid;
-	gid_t			i_gid;
-	dev_t			i_rdev;
-	unsigned int		i_blkbits;
-	u64			i_version;
-	loff_t			i_size;
+    struct hlist_node i_hash;                   // 用于将 inode 插入到哈希链表中的节点
+    struct list_head i_list;                    // 支持设备 IO 的链表
+    struct list_head i_sb_list;                 // 超级块 (super block) 的链表
+    struct list_head i_dentry;                  // 目录项 (dentry) 链表
+    unsigned long i_ino;                        // inode 号码
+    atomic_t i_count;                           // 引用计数
+    unsigned int i_nlink;                       // 硬链接计数
+    uid_t i_uid;                                // 所有者用户 ID
+    gid_t i_gid;                                // 所有者组 ID
+    dev_t i_rdev;                               // 设备 ID（对于设备文件）
+    unsigned int i_blkbits;                     // 块大小的比特数
+    u64 i_version;                              // inode 版本号
+    loff_t i_size;                              // 文件大小（以字节为单位）
 #ifdef __NEED_I_SIZE_ORDERED
-	seqcount_t		i_size_seqcount;
+    seqcount_t i_size_seqcount;                 // 顺序计数，用于确保 i_size 的一致性
 #endif
-	struct timespec		i_atime;
-	struct timespec		i_mtime;
-	struct timespec		i_ctime;
-	blkcnt_t		i_blocks;
-	unsigned short          i_bytes;
-	umode_t			i_mode;
-	spinlock_t		i_lock;	/* i_blocks, i_bytes, maybe i_size */
-	struct mutex		i_mutex;
-	struct rw_semaphore	i_alloc_sem;
-	const struct inode_operations	*i_op;
-	const struct file_operations	*i_fop;	/* former ->i_op->default_file_ops */
-	struct super_block	*i_sb;
-	struct file_lock	*i_flock;
-	struct address_space	*i_mapping;
-	struct address_space	i_data;
+    struct timespec i_atime;                    // 最后访问时间
+    struct timespec i_mtime;                    // 最后修改时间
+    struct timespec i_ctime;                    // 最后状态改变时间
+    blkcnt_t i_blocks;                          // 占用的块数
+    unsigned short i_bytes;                     // 占用的字节数
+    umode_t i_mode;                             // 文件类型和权限
+    spinlock_t i_lock;                          // 自旋锁，用于保护 i_blocks、i_bytes 和可能的 i_size
+    struct mutex i_mutex;                       // 互斥锁
+    struct rw_semaphore i_alloc_sem;            // 读写信号量
+    const struct inode_operations *i_op;        // inode 操作函数指针
+    const struct file_operations *i_fop;        // 文件操作函数指针（之前是 i_op->default_file_ops）
+    struct super_block *i_sb;                   // 所属的超级块
+    struct file_lock *i_flock;                  // 文件锁
+    struct address_space *i_mapping;            // 关联的地址空间（主地址空间）
+    struct address_space i_data;                // 数据地址空间
 #ifdef CONFIG_QUOTA
-	struct dquot		*i_dquot[MAXQUOTAS];
+    struct dquot *i_dquot[MAXQUOTAS];           // 与 inode 关联的磁盘配额信息
 #endif
-	struct list_head	i_devices;
-	union {
-		struct pipe_inode_info	*i_pipe;
-		struct block_device	*i_bdev;
-		struct cdev		*i_cdev;
-	};
-
-	__u32			i_generation;
-
+    struct list_head i_devices;                 // 设备链表
+    union {
+        struct pipe_inode_info *i_pipe;         // 管道信息
+        struct block_device *i_bdev;            // 块设备信息
+        struct cdev *i_cdev;                    // 字符设备信息
+    };
+    __u32 i_generation;                         // inode 生成号
 #ifdef CONFIG_FSNOTIFY
-	__u32			i_fsnotify_mask; /* all events this inode cares about */
-	struct hlist_head	i_fsnotify_mark_entries; /* fsnotify mark entries */
+    __u32 i_fsnotify_mask;                      // inode 关注的所有事件掩码
+    struct hlist_head i_fsnotify_mark_entries;  // fsnotify 标记条目链表
 #endif
-
 #ifdef CONFIG_INOTIFY
-	struct list_head	inotify_watches; /* watches on this inode */
-	struct mutex		inotify_mutex;	/* protects the watches list */
+    struct list_head inotify_watches;           // 这个 inode 上的 inotify 监视列表
+    struct mutex inotify_mutex;                 // 保护 inotify 监视列表的互斥锁
 #endif
-
-	unsigned long		i_state;
-	unsigned long		dirtied_when;	/* jiffies of first dirtying */
-
-	unsigned int		i_flags;
-
-	atomic_t		i_writecount;
+    unsigned long i_state;                      // inode 状态
+    unsigned long dirtied_when;                 // 第一次被弄脏的时间（以 jiffies 为单位）
+    unsigned int i_flags;                       // inode 标志
+    atomic_t i_writecount;                      // 写计数
 #ifdef CONFIG_SECURITY
-	void			*i_security;
+    void *i_security;                           // 安全模块使用的指针
 #endif
 #ifdef CONFIG_FS_POSIX_ACL
-	struct posix_acl	*i_acl;
-	struct posix_acl	*i_default_acl;
+    struct posix_acl *i_acl;                    // POSIX ACL
+    struct posix_acl *i_default_acl;            // 默认的 POSIX ACL
 #endif
-	void			*i_private; /* fs or device private pointer */
+    void *i_private;                            // 文件系统或设备私有指针
 };
 
 /*
@@ -1732,6 +1726,7 @@ static inline void file_accessed(struct file *file)
 
 int sync_inode(struct inode *inode, struct writeback_control *wbc);
 
+/*记录文件系统信息*/
 struct file_system_type {
 	const char *name;  // 文件系统的名称，例如 "ext4" 或 "vfat"
 	int fs_flags;  // 文件系统标志，指定文件系统的属性（例如是否只读）

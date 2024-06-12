@@ -570,21 +570,23 @@ static void __init clean_rootfs(void)
 
 static int __init populate_rootfs(void)
 {
+	/*解压内嵌initramfs*/
 	char *err = unpack_to_rootfs(__initramfs_start,
 			 __initramfs_end - __initramfs_start);
 	if (err)
-		panic(err);	/* Failed to decompress INTERNAL initramfs */
+		panic(err);	/* 如果解压失败，则触发内核崩溃 */
+	/* 如果检测到有initrd存在，则进一步处理initrd */
 	if (initrd_start) {
 #ifdef CONFIG_BLK_DEV_RAM
 		int fd;
 		printk(KERN_INFO "Trying to unpack rootfs image as initramfs...\n");
 		err = unpack_to_rootfs((char *)initrd_start,
 			initrd_end - initrd_start);
-		if (!err) {
+		if (!err) {//解压成功
 			free_initrd();
 			return 0;
-		} else {
-			clean_rootfs();
+		} else {//解压失败
+			clean_rootfs();//清理rootfs并重新解压
 			unpack_to_rootfs(__initramfs_start,
 				 __initramfs_end - __initramfs_start);
 		}
@@ -597,7 +599,7 @@ static int __init populate_rootfs(void)
 			sys_close(fd);
 			free_initrd();
 		}
-#else
+#else /*直接解压*/
 		printk(KERN_INFO "Unpacking initramfs...\n");
 		err = unpack_to_rootfs((char *)initrd_start,
 			initrd_end - initrd_start);

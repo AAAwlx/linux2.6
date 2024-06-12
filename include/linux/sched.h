@@ -1348,7 +1348,7 @@ struct task_struct {
 /* open file information */
 	struct files_struct *files;
 /* namespaces */
-	struct nsproxy *nsproxy;
+	struct nsproxy *nsproxy;//nsproxy->mnt_namespace->vfsmount->root
 /* signal handlers */
 	struct signal_struct *signal;
 	struct sighand_struct *sighand;

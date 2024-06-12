@@ -2297,23 +2297,25 @@ out3:
 
 static void __init init_mount_tree(void)
 {
-	struct vfsmount *mnt;
-	struct mnt_namespace *ns;
-	struct path root;
+	struct vfsmount *mnt;/*挂载点信息*/
+	struct mnt_namespace *ns;/**/
+	struct path root;/**/
 
+	// 挂载根文件系统
 	mnt = do_kern_mount("rootfs", 0, "rootfs", NULL);
 	if (IS_ERR(mnt))
 		panic("Can't create rootfs");
+	// 创建一个新的挂载命名空间
 	ns = create_mnt_ns(mnt);
 	if (IS_ERR(ns))
 		panic("Can't allocate initial namespace");
 
 	init_task.nsproxy->mnt_ns = ns;
 	get_mnt_ns(ns);
-
+	// 设置根路径
 	root.mnt = ns->root;
 	root.dentry = ns->root->mnt_root;
-
+	// 设置当前进程的工作目录和根目录
 	set_fs_pwd(current->fs, &root);
 	set_fs_root(current->fs, &root);
 }
@@ -2338,7 +2340,7 @@ void __init mnt_init(void)
 	for (u = 0; u < HASH_SIZE; u++)
 		INIT_LIST_HEAD(&mount_hashtable[u]);
 
-	err = sysfs_init();
+	err = sysfs_init();//先初始化sysfs确保sysfs能够完整的记录下设备驱动模型
 	if (err)
 		printk(KERN_WARNING "%s: sysfs_init error: %d\n",
 			__func__, err);

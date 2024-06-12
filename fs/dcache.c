@@ -2350,7 +2350,7 @@ void __init vfs_caches_init_early(void)
 	dcache_init_early();
 	inode_init_early();
 }
-
+/*vfs相关的初始化*/
 void __init vfs_caches_init(unsigned long mempages)
 {
 	unsigned long reserve;
@@ -2367,7 +2367,7 @@ void __init vfs_caches_init(unsigned long mempages)
 	dcache_init();
 	inode_init();
 	files_init(mempages);
-	mnt_init();
+	mnt_init();//mnt-> init_sysfs init_rootfs
 	bdev_cache_init();
 	chrdev_init();
 }

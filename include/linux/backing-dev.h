@@ -58,39 +58,62 @@ struct bdi_writeback {
 };
 
 struct backing_dev_info {
-	struct list_head bdi_list;
-	struct rcu_head rcu_head;
+	struct list_head bdi_list; // 链表，用于将所有的 bdi 结构连接在一起
+	struct rcu_head rcu_head; // 用于 RCU（Read-Copy Update）机制的头部
 	unsigned long ra_pages;	/* max readahead in PAGE_CACHE_SIZE units */
+	// 最大预读页数，以 PAGE_CACHE_SIZE 为单位
 	unsigned long state;	/* Always use atomic bitops on this */
+	// 状态位，应该总是使用原子操作来修改
 	unsigned int capabilities; /* Device capabilities */
+	// 设备能力标志
 	congested_fn *congested_fn; /* Function pointer if device is md/dm */
+	// 指向检测设备是否拥堵的函数指针，适用于多设备管理（md/dm）
 	void *congested_data;	/* Pointer to aux data for congested func */
+	// 拥堵检测函数的辅助数据指针
 	void (*unplug_io_fn)(struct backing_dev_info *, struct page *);
+	// 用于解除设备 I/O 插头的函数指针
 	void *unplug_io_data;
+	// 解除 I/O 插头函数的辅助数据指针
 
 	char *name;
+	// 设备的名称
 
 	struct percpu_counter bdi_stat[NR_BDI_STAT_ITEMS];
+	// 每 CPU 计数器数组，用于统计 bdi 的各种状态
 
 	struct prop_local_percpu completions;
+	// 每 CPU 局部变量，表示完成的 I/O 操作
+
 	int dirty_exceeded;
+	// 表示脏数据是否超出限制
 
 	unsigned int min_ratio;
 	unsigned int max_ratio, max_prop_frac;
+	// 最小比例、最大比例和最大比例分数，用于脏数据管理
 
 	struct bdi_writeback wb;  /* default writeback info for this bdi */
+	// 默认的回写信息
+
 	spinlock_t wb_lock;	  /* protects update side of wb_list */
+	// 自旋锁，用于保护 wb_list 的更新操作
 	struct list_head wb_list; /* the flusher threads hanging off this bdi */
+	// 挂在此 bdi 上的刷新线程链表
 	unsigned long wb_mask;	  /* bitmask of registered tasks */
+	// 已注册任务的位掩码
 	unsigned int wb_cnt;	  /* number of registered tasks */
+	// 已注册任务的数量
 
 	struct list_head work_list;
+	// 工作链表
 
 	struct device *dev;
+	// 指向关联设备的指针
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debug_dir;
+	// 调试文件系统目录项指针
 	struct dentry *debug_stats;
+	// 调试文件系统统计信息指针
 #endif
 };
 

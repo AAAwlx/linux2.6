@@ -43,7 +43,7 @@
 
 static const struct super_operations ramfs_ops;
 static const struct inode_operations ramfs_dir_inode_operations;
-
+/*填写文件系统设备的信息*/
 static struct backing_dev_info ramfs_backing_dev_info = {
 	.name		= "ramfs",
 	.ra_pages	= 0,	/* No readahead */
@@ -305,16 +305,16 @@ static void __exit exit_ramfs_fs(void)
 module_init(init_ramfs_fs)
 module_exit(exit_ramfs_fs)
 
-int __init init_rootfs(void)
+int __init init_rootfs(void)//初始化根文件系统
 {
 	int err;
 
-	err = bdi_init(&ramfs_backing_dev_info);
+	err = bdi_init(&ramfs_backing_dev_info);//初始化设备信息
 	if (err)
 		return err;
 
-	err = register_filesystem(&rootfs_fs_type);
-	if (err)
+	err = register_filesystem(&rootfs_fs_type);//注册文件系统
+	if (err)//错误处理回收资源
 		bdi_destroy(&ramfs_backing_dev_info);
 
 	return err;
