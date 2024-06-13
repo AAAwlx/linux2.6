@@ -871,23 +871,43 @@ int get_sb_nodev(struct file_system_type *fs_type,
 	int (*fill_super)(struct super_block *, void *, int),
 	struct vfsmount *mnt)
 {
+	// 声明一个整数变量用于存储错误码
 	int error;
+
+	// 调用 sget 函数获取一个超级块指针 s
+	// sget 函数的参数包括文件系统类型、比较函数、设置函数和数据
 	struct super_block *s = sget(fs_type, NULL, set_anon_super, NULL);
 
+	// 如果 s 是一个错误指针，则返回对应的错误码
 	if (IS_ERR(s))
 		return PTR_ERR(s);
 
+	// 将传入的挂载标志赋值给超级块的 s_flags 字段
 	s->s_flags = flags;
 
+	// 调用 fill_super 函数填充超级块 s
+	// 传入超级块指针 s，数据 data 和挂载标志
+	// 如果 MS_SILENT 标志被设置，则传入 1，否则传入 0
 	error = fill_super(s, data, flags & MS_SILENT ? 1 : 0);
+
+	// 如果 fill_super 函数返回错误码
 	if (error) {
+		// 调用 deactivate_locked_super 函数取消激活超级块
 		deactivate_locked_super(s);
+		// 返回错误码
 		return error;
 	}
+
+	// 设置超级块的 MS_ACTIVE 标志，表示超级块已激活
 	s->s_flags |= MS_ACTIVE;
+
+	// 使用 simple_set_mnt 函数将超级块 s 绑定到挂载点 mnt
 	simple_set_mnt(mnt, s);
+
+	// 返回 0，表示成功
 	return 0;
 }
+
 
 EXPORT_SYMBOL(get_sb_nodev);
 
