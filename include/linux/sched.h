@@ -1230,6 +1230,8 @@ struct task_struct {
 	// list_entry(task->tasks.next/task->tasks.prev, struct task_struct, tasks);		// 获取前/后一个进程
 	struct plist_node pushable_tasks;
 
+	// mm指向当前进程的内存描述符
+	// active_mm是内核线程用的，内核线程mm为NULL，active_mm指向前一个进程的mm_struct
 	struct mm_struct *mm, *active_mm;
 #if defined(SPLIT_RSS_COUNTING)
 	struct task_rss_stat	rss_stat;
@@ -1344,8 +1346,10 @@ struct task_struct {
 /* CPU-specific state of this task */
 	struct thread_struct thread;
 /* filesystem information */
+// 包含文件系统和进程相关信息
 	struct fs_struct *fs;
 /* open file information */
+// 打开文件信息（打开文件表）
 	struct files_struct *files;
 /* namespaces */
 	struct nsproxy *nsproxy;//nsproxy->mnt_namespace->vfsmount->root
@@ -2097,9 +2101,11 @@ static inline int sas_ss_flags(unsigned long sp)
 extern struct mm_struct * mm_alloc(void);
 
 /* mmdrop drops the mm and the page tables */
+/* mmdrop用于释放mm结构和页表 */
 extern void __mmdrop(struct mm_struct *);
 static inline void mmdrop(struct mm_struct * mm)
 {
+	/* 如果mm_count减到0则调用__mmdrop */
 	if (unlikely(atomic_dec_and_test(&mm->mm_count)))
 		__mmdrop(mm);
 }

@@ -3,6 +3,8 @@
  *
  *  Copyright (C) 2002 Jens Axboe <axboe@kernel.dk>
  */
+
+// 最后期限I/O调度程序
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
@@ -438,6 +440,7 @@ static struct elv_fs_entry deadline_attrs[] = {
 	__ATTR_NULL
 };
 
+// 定义deadline IO 调度
 static struct elevator_type iosched_deadline = {
 	.ops = {
 		.elevator_merge_fn = 		deadline_merge,

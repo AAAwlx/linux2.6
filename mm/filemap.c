@@ -209,36 +209,72 @@ static int sync_page_killable(void *word)
  * these two operations is that if a dirty page/buffer is encountered, it must
  * be waited upon, and not just skipped over.
  */
+/**
+ * __filemark_fdatawrite_range - 开始对映射中范围内的脏页面进行写回
+ * @mapping:	需要写回的地址空间结构
+ * @start:	范围开始的字节偏移
+ * @end:	范围结束的字节偏移（包含在内）
+ * @sync_mode:	启用同步操作
+ *
+ * 对地址空间中位于字节偏移 <start, end>（包括边界）内的所有脏页面开始写回操作。
+ *
+ * 如果 sync_mode 是 WB_SYNC_ALL，则这是一个“数据完整性”操作，与普通的内存清理写回不同。
+ * 这两种操作的区别在于，如果遇到脏页/缓冲区，必须等待它，而不是简单地跳过。
+ */
 int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 				loff_t end, int sync_mode)
 {
 	int ret;
+	// 初始化写回控制结构
 	struct writeback_control wbc = {
-		.sync_mode = sync_mode,
-		.nr_to_write = LONG_MAX,
-		.range_start = start,
-		.range_end = end,
+		.sync_mode = sync_mode,		// 设置同步模式
+		.nr_to_write = LONG_MAX,	// 设置要写回的页数为最大，即尽可能多地写回
+		.range_start = start,			// 设置写回范围的起始位置
+		.range_end = end,					// 设置写回范围的结束位置
 	};
 
+	// 如果映射的地址空间不支持写回脏页，则直接返回
 	if (!mapping_cap_writeback_dirty(mapping))
 		return 0;
 
+	// 执行写回操作
 	ret = do_writepages(mapping, &wbc);
 	return ret;
 }
 
+/**
+ * __filemap_fdatawrite - 执行映射写回的辅助函数
+ * @mapping: 目标地址空间
+ * @sync_mode: 同步模式
+ * 
+ * 此内联函数调用 __filemap_fdatawrite_range 函数来写回从起始位置到最大长整数范围内的所有脏页面。
+ */
 static inline int __filemap_fdatawrite(struct address_space *mapping,
 	int sync_mode)
 {
 	return __filemap_fdatawrite_range(mapping, 0, LLONG_MAX, sync_mode);
 }
 
+/**
+ * filemap_fdatawrite - 启动对所有脏页面的写回
+ * @mapping: 目标地址空间
+ * 
+ * 此函数用于启动对地址空间中所有脏页面的数据完整性写回。
+ */
 int filemap_fdatawrite(struct address_space *mapping)
 {
 	return __filemap_fdatawrite(mapping, WB_SYNC_ALL);
 }
 EXPORT_SYMBOL(filemap_fdatawrite);
 
+/**
+ * filemap_fdatawrite_range - 启动对特定范围内所有脏页面的写回
+ * @mapping: 目标地址空间
+ * @start: 起始字节偏移
+ * @end: 结束字节偏移
+ * 
+ * 此函数用于启动对地址空间中特定范围内所有脏页面的数据完整性写回。
+ */
 int filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 				loff_t end)
 {
@@ -252,6 +288,13 @@ EXPORT_SYMBOL(filemap_fdatawrite_range);
  *
  * This is a mostly non-blocking flush.  Not suitable for data-integrity
  * purposes - I/O may not be started against all dirty pages.
+ */
+
+/**
+ * filemap_flush - 主要是一个非阻塞刷新操作
+ * @mapping: 目标地址空间
+ * 
+ * 这是一个主要的非阻塞刷新操作。不适用于数据完整性目的——可能不会对所有脏页面启动 I/O。
  */
 int filemap_flush(struct address_space *mapping)
 {
@@ -268,41 +311,63 @@ EXPORT_SYMBOL(filemap_flush);
  * Walk the list of under-writeback pages of the given address space
  * in the given range and wait for all of them.
  */
+/**
+ * filemap_fdatawait_range - 等待写回完成
+ * @mapping: 要等待的地址空间结构体
+ * @start_byte: 范围的开始字节偏移
+ * @end_byte: 范围的结束字节偏移（包含）
+ *
+ * 遍历给定地址空间在指定范围内正在写回的页面列表并等待所有这些页面。
+ */
+// 这个函数通过循环遍历给定范围内的所有页面，等待每个页面的写回操作完成，并检查是否有
+// 任何页面在写回过程中出现错误。如果有错误发生，函数将返回错误代码。这个函数是内核中
+// 处理文件数据同步的重要部分，确保数据的完整性。
 int filemap_fdatawait_range(struct address_space *mapping, loff_t start_byte,
 			    loff_t end_byte)
 {
+	// 计算起始和结束的页面索引
 	pgoff_t index = start_byte >> PAGE_CACHE_SHIFT;
 	pgoff_t end = end_byte >> PAGE_CACHE_SHIFT;
 	struct pagevec pvec;
 	int nr_pages;
 	int ret = 0;
 
+	// 如果结束字节小于开始字节，则直接返回，无需处理
 	if (end_byte < start_byte)
 		return 0;
 
+	// 初始化页面向量
 	pagevec_init(&pvec, 0);
+	// 循环通过页面向量查找和处理所有标记为正在写回的页面
 	while ((index <= end) &&
 			(nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
 			PAGECACHE_TAG_WRITEBACK,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1)) != 0) {
 		unsigned i;
 
+		// 遍历所有找到的页面
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 
 			/* until radix tree lookup accepts end_index */
+			// 如果页面的索引超出了结束索引，则跳过
 			if (page->index > end)
 				continue;
 
+			// 等待页面的写回完成
 			wait_on_page_writeback(page);
+			// 如果页面有错误，则设置返回值为 -EIO
 			if (PageError(page))
 				ret = -EIO;
 		}
+		// 释放页面向量
 		pagevec_release(&pvec);
+		// 调度点检查
 		cond_resched();
 	}
 
 	/* Check for outstanding write errors */
+	// 检查是否有未处理的写错误
 	if (test_and_clear_bit(AS_ENOSPC, &mapping->flags))
 		ret = -ENOSPC;
 	if (test_and_clear_bit(AS_EIO, &mapping->flags))
@@ -319,22 +384,30 @@ EXPORT_SYMBOL(filemap_fdatawait_range);
  * Walk the list of under-writeback pages of the given address space
  * and wait for all of them.
  */
+// filemap_fdatawait - 等待所有正在写回的页面完成
+// @mapping: 要等待的地址空间结构体
 int filemap_fdatawait(struct address_space *mapping)
 {
+	// 读取文件大小
 	loff_t i_size = i_size_read(mapping->host);
 
+	// 如果文件大小为0，没有什么要等待的，直接返回成功
 	if (i_size == 0)
 		return 0;
 
+	// 等待从0到文件大小的所有页面
 	return filemap_fdatawait_range(mapping, 0, i_size - 1);
 }
 EXPORT_SYMBOL(filemap_fdatawait);
 
+// filemap_write_and_wait - 写入并等待所有页面
 int filemap_write_and_wait(struct address_space *mapping)
 {
 	int err = 0;
 
+	// 如果有页面需要处理
 	if (mapping->nrpages) {
+		// 写入所有脏页
 		err = filemap_fdatawrite(mapping);
 		/*
 		 * Even if the above returned error, the pages may be
@@ -342,8 +415,10 @@ int filemap_write_and_wait(struct address_space *mapping)
 		 * But the -EIO is special case, it may indicate the worst
 		 * thing (e.g. bug) happened, so we avoid waiting for it.
 		 */
-		if (err != -EIO) {
+		if (err != -EIO) {	// 如果没有遇到I/O错误
+			// 然后等待所有页面
 			int err2 = filemap_fdatawait(mapping);
+			// 如果之前没有错误，返回这个等待的结果
 			if (!err)
 				err = err2;
 		}
@@ -363,18 +438,36 @@ EXPORT_SYMBOL(filemap_write_and_wait);
  * Note that `lend' is inclusive (describes the last byte to be written) so
  * that this function can be used to write to the very end-of-file (end = -1).
  */
+/**
+ * filemap_write_and_wait_range - 写出并等待文件的一个区域
+ * @mapping: 负责页面的地址空间
+ * @lstart: 区域开始的字节偏移量
+ * @lend: 区域结束的字节偏移量（包括在内）
+ *
+ * 写出并等待文件偏移量lstart到lend之间的数据，包括边界。
+ *
+ * 注意，`lend`是包含在内的（描述要写的最后一个字节），
+ * 这样这个函数可以用来写文件的最末端（end = -1）。
+ */
+// filemap_write_and_wait_range - 写出并等待文件的一个范围
 int filemap_write_and_wait_range(struct address_space *mapping,
 				 loff_t lstart, loff_t lend)
 {
-	int err = 0;
+	int err = 0;	// 初始化错误码为0
 
+	// 如果有页面需要处理
 	if (mapping->nrpages) {
+		// 调用__filemap_fdatawrite_range函数，以同步方式写出指定范围的页面
 		err = __filemap_fdatawrite_range(mapping, lstart, lend,
 						 WB_SYNC_ALL);
 		/* See comment of filemap_write_and_wait() */
+		/* 参见 filemap_write_and_wait() 的注释 */
+		// 如果没有遇到I/O错误
 		if (err != -EIO) {
+			// 等待这个范围内的页面写入完成
 			int err2 = filemap_fdatawait_range(mapping,
 						lstart, lend);
+			// 如果之前没有错误，返回这个等待的结果
 			if (!err)
 				err = err2;
 		}
@@ -393,46 +486,70 @@ EXPORT_SYMBOL(filemap_write_and_wait_range);
  * This function is used to add a page to the pagecache. It must be locked.
  * This function does not add the page to the LRU.  The caller must do that.
  */
+/**
+ * add_to_page_cache_locked - 将锁定的页面添加到页面缓存中
+ * @page: 要添加的页面
+ * @mapping: 页面的地址空间
+ * @offset: 页面索引
+ * @gfp_mask: 页面分配模式
+ *
+ * 这个函数用于将一个页面添加到页面缓存。页面必须是锁定的。
+ * 这个函数不会将页面添加到LRU列表中。调用者必须自行处理。
+ */
 int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 		pgoff_t offset, gfp_t gfp_mask)
 {
 	int error;
 
+	// 确保页面是锁定的
 	VM_BUG_ON(!PageLocked(page));
 
+	// 尝试对页面进行内存组费用计算
 	error = mem_cgroup_cache_charge(page, current->mm,
 					gfp_mask & GFP_RECLAIM_MASK);
 	if (error)
 		goto out;
 
+	// 为页面树预加载，准备插入操作
 	error = radix_tree_preload(gfp_mask & ~__GFP_HIGHMEM);
 	if (error == 0) {
+		// 获取页面的引用
 		page_cache_get(page);
+		// 设置页面的映射和索引
 		page->mapping = mapping;
 		page->index = offset;
 
+		// 锁定页面树并尝试插入页面
 		spin_lock_irq(&mapping->tree_lock);
 		error = radix_tree_insert(&mapping->page_tree, offset, page);
 		if (likely(!error)) {
+			// 插入成功，更新统计数据
 			mapping->nrpages++;
 			__inc_zone_page_state(page, NR_FILE_PAGES);
 			if (PageSwapBacked(page))
 				__inc_zone_page_state(page, NR_SHMEM);
 			spin_unlock_irq(&mapping->tree_lock);
 		} else {
+			// 插入失败，清除页面的映射
 			page->mapping = NULL;
 			spin_unlock_irq(&mapping->tree_lock);
+			// 取消页面的内存组费用计算
 			mem_cgroup_uncharge_cache_page(page);
+			// 释放页面的引用
 			page_cache_release(page);
 		}
+		// 结束预加载
 		radix_tree_preload_end();
 	} else
+		// 如果预加载失败，也进行费用取消操作
 		mem_cgroup_uncharge_cache_page(page);
 out:
 	return error;
 }
 EXPORT_SYMBOL(add_to_page_cache_locked);
 
+// 通过page_cache_alloc_cold函数分配一个新页面，然后调用add_to_page_cache_lru将其加入到页面调整缓存。
+// 用于将一个页面添加到页缓存和最近最少使用（LRU）列表中。
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t offset, gfp_t gfp_mask)
 {
@@ -444,16 +561,26 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 	 * need to go on the active_anon lru below, and mem_cgroup_cache_charge
 	 * (called in add_to_page_cache) needs to know where they're going too.
 	 */
+	/*
+	 * Splice_read 和 readahead 在 shmem_readpage 有机会标记它们为 SwapBacked 之前
+	 * 就已经将 shmem/tmpfs 页面加入到页缓存中：它们需要被添加到下面的 active_anon lru 中，
+	 * 并且 mem_cgroup_cache_charge（在 add_to_page_cache 中调用）也需要知道它们的去向。
+	 */
 	if (mapping_cap_swap_backed(mapping))
+		// 如果映射支持交换后备，则设置页面的 SwapBacked 标志
 		SetPageSwapBacked(page);
 
+	// 尝试将页面添加到页缓存中
 	ret = add_to_page_cache(page, mapping, offset, gfp_mask);
-	if (ret == 0) {
+	if (ret == 0) {	// 如果添加成功
 		if (page_is_file_cache(page))
+			// 如果是文件缓存页面，将其添加到文件缓存的 LRU 列表中
 			lru_cache_add_file(page);
 		else
+			// 否则，将其添加到活跃匿名页面的 LRU 列表中
 			lru_cache_add_active_anon(page);
 	}
+	// 返回操作结果，0 表示成功，其他值表示错误代码
 	return ret;
 }
 EXPORT_SYMBOL_GPL(add_to_page_cache_lru);
@@ -613,36 +740,51 @@ void __lock_page_nosync(struct page *page)
  * Is there a pagecache struct page at the given (mapping, offset) tuple?
  * If yes, increment its refcount and return it; if no, return NULL.
  */
+/**
+ * find_get_page - 查找并获取一个页面引用
+ * @mapping: 要搜索的地址空间
+ * @offset: 页面索引
+ *
+ * 在给定的 (mapping, offset) 元组中是否存在一个页面缓存的 struct page？
+ * 如果存在，增加其引用计数并返回它；如果不存在，返回 NULL。
+ */
+// mapping是指定地址空间，offset是文件中的指定位置，以页面为单位
 struct page *find_get_page(struct address_space *mapping, pgoff_t offset)
 {
-	void **pagep;
-	struct page *page;
+	void **pagep;		// 用于指向基数树槽位的指针
+	struct page *page;	// 用于存放找到的页面指针
 
-	rcu_read_lock();
+	rcu_read_lock();	// 开始一个读取者区域，用于RCU同步
 repeat:
 	page = NULL;
+	// 在基数树中查找给定偏移量的槽位
 	pagep = radix_tree_lookup_slot(&mapping->page_tree, offset);
-	if (pagep) {
+	if (pagep) {	// 如果找到槽位
+	// 解引用槽位以获取页面指针
 		page = radix_tree_deref_slot(pagep);
 		if (unlikely(!page || page == RADIX_TREE_RETRY))
-			goto repeat;
+			goto repeat;	// 如果页面指针无效或需要重试，则重复查找
 
 		if (!page_cache_get_speculative(page))
-			goto repeat;
+			goto repeat;	// 如果无法增加页面的引用计数，则重复查找
 
 		/*
 		 * Has the page moved?
 		 * This is part of the lockless pagecache protocol. See
 		 * include/linux/pagemap.h for details.
 		 */
-		if (unlikely(page != *pagep)) {
-			page_cache_release(page);
+		/*
+		 * 页面是否已移动？
+		 * 这是无锁页面缓存协议的一部分。详细信息见 include/linux/pagemap.h。
+		 */
+		if (unlikely(page != *pagep)) {	// 检查页面指针是否与槽位中的指针不一致
+			page_cache_release(page);	// 释放页面引用
 			goto repeat;
 		}
 	}
-	rcu_read_unlock();
+	rcu_read_unlock();	// 结束RCU读取者区域
 
-	return page;
+	return page;	// 返回找到的页面，或NULL
 }
 EXPORT_SYMBOL(find_get_page);
 
@@ -656,6 +798,15 @@ EXPORT_SYMBOL(find_get_page);
  *
  * Returns zero if the page was not present. find_lock_page() may sleep.
  */
+/**
+ * find_lock_page - 定位、固定并锁定一个页面缓存页面
+ * @mapping: 要搜索的地址空间
+ * @offset: 页面索引
+ *
+ * 定位所需的页面缓存页面，锁定它，增加其引用计数，并返回它的地址。
+ *
+ * 如果页面不存在则返回零。find_lock_page() 可能会休眠。
+ */
 struct page *find_lock_page(struct address_space *mapping, pgoff_t offset)
 {
 	struct page *page;
@@ -663,13 +814,16 @@ struct page *find_lock_page(struct address_space *mapping, pgoff_t offset)
 repeat:
 	page = find_get_page(mapping, offset);
 	if (page) {
+		// 锁定页面
 		lock_page(page);
 		/* Has the page been truncated? */
+		/* 页面是否被截断了？ */
 		if (unlikely(page->mapping != mapping)) {
-			unlock_page(page);
-			page_cache_release(page);
-			goto repeat;
+			unlock_page(page);	// 解锁页面
+			page_cache_release(page);	// 释放页面
+			goto repeat;	// 重试
 		}
+		// 确保页面索引正确
 		VM_BUG_ON(page->index != offset);
 	}
 	return page;
@@ -693,6 +847,19 @@ EXPORT_SYMBOL(find_lock_page);
  * find_or_create_page() returns the desired page's address, or zero on
  * memory exhaustion.
  */
+/**
+ * find_or_create_page - 定位或添加一个页面缓存页面
+ * @mapping: 页面的地址空间
+ * @index: 页面在映射中的索引
+ * @gfp_mask: 页面分配模式
+ *
+ * 定位页面缓存中的一个页面。如果页面不存在，使用 @gfp_mask 分配一个新页面，
+ * 并将其添加到页面缓存和 VM 的 LRU 列表中。返回的页面被锁定且其引用计数增加。
+ *
+ * find_or_create_page() 可能会休眠，即使 @gfp_flags 指定了一个原子分配！
+ *
+ * find_or_create_page() 返回所需页面的地址，或在内存耗尽时返回零。
+ */
 struct page *find_or_create_page(struct address_space *mapping,
 		pgoff_t index, gfp_t gfp_mask)
 {
@@ -701,22 +868,28 @@ struct page *find_or_create_page(struct address_space *mapping,
 repeat:
 	page = find_lock_page(mapping, index);
 	if (!page) {
+		// 分配新页面
 		page = __page_cache_alloc(gfp_mask);
 		if (!page)
-			return NULL;
+			return NULL;	// 内存耗尽，返回NULL
 		/*
 		 * We want a regular kernel memory (not highmem or DMA etc)
 		 * allocation for the radix tree nodes, but we need to honour
 		 * the context-specific requirements the caller has asked for.
 		 * GFP_RECLAIM_MASK collects those requirements.
 		 */
+		/*
+		 * 我们需要常规内核内存（非高端内存或 DMA 等）
+		 * 用于基数树节点的分配，但我们需要遵守调用者要求的上下文特定需求。
+		 * GFP_RECLAIM_MASK 收集这些要求。
+		 */
 		err = add_to_page_cache_lru(page, mapping, index,
 			(gfp_mask & GFP_RECLAIM_MASK));
 		if (unlikely(err)) {
-			page_cache_release(page);
+			page_cache_release(page);	// 释放页面
 			page = NULL;
 			if (err == -EEXIST)
-				goto repeat;
+				goto repeat;	// 重试
 		}
 	}
 	return page;
@@ -739,6 +912,20 @@ EXPORT_SYMBOL(find_or_create_page);
  *
  * find_get_pages() returns the number of pages which were found.
  */
+/**
+ * find_get_pages - 查找并获取一组页面
+ * @mapping: 要搜索的地址空间
+ * @start: 开始搜索的页面索引
+ * @nr_pages: 最多返回的页面数
+ * @nu_pages: 结果放置的页面数组
+ *
+ * find_get_pages() 会在地址空间中搜索并返回最多 @nr_pages 个页面。这些页面放置在 @pages 中。
+ * find_get_pages() 会对返回的页面增加引用计数。
+ *
+ * 搜索返回一组具有连续索引的页面。由于可能存在未出现的页面，索引之间可能存在空洞。
+ *
+ * find_get_pages() 返回找到的页面数量。
+ */
 unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
 			    unsigned int nr_pages, struct page **pages)
 {
@@ -746,38 +933,45 @@ unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
 	unsigned int ret;
 	unsigned int nr_found;
 
-	rcu_read_lock();
+	rcu_read_lock();	// 开启RCU读锁保护
 restart:
+	// 使用 radix tree 查找给定范围内的页面
 	nr_found = radix_tree_gang_lookup_slot(&mapping->page_tree,
 				(void ***)pages, start, nr_pages);
 	ret = 0;
 	for (i = 0; i < nr_found; i++) {
+		// 遍历找到的页面
 		struct page *page;
 repeat:
+		// 解引用radix tree的槽以获取页面
 		page = radix_tree_deref_slot((void **)pages[i]);
+		// 如果页面为空，跳过
 		if (unlikely(!page))
 			continue;
 		/*
 		 * this can only trigger if nr_found == 1, making livelock
 		 * a non issue.
 		 */
+		// 如果槽返回了RETRY指针，需要重新开始查找
 		if (unlikely(page == RADIX_TREE_RETRY))
 			goto restart;
-
+		
+		// 尝试获取页面的引用计数
 		if (!page_cache_get_speculative(page))
 			goto repeat;
 
 		/* Has the page moved? */
+		// 检查页面是否已经移动
 		if (unlikely(page != *((void **)pages[i]))) {
-			page_cache_release(page);
+			page_cache_release(page);	// 释放页面并重试
 			goto repeat;
 		}
 
-		pages[ret] = page;
-		ret++;
+		pages[ret] = page;	// 将找到的页面存入返回数组
+		ret++;		// 更新找到的页面数
 	}
-	rcu_read_unlock();
-	return ret;
+	rcu_read_unlock();	// 释放RCU读锁
+	return ret;					// 返回找到的页面数
 }
 
 /**
@@ -792,49 +986,70 @@ repeat:
  *
  * find_get_pages_contig() returns the number of pages which were found.
  */
+/**
+ * find_get_pages_contig - 连续页面查找
+ * @mapping:	要搜索的地址空间
+ * @index:	起始页面索引
+ * @nr_pages:	最大页面数
+ * @pages:	存放找到的页面的数组
+ *
+ * find_get_pages_contig() 的工作方式与 find_get_pages() 相同，不同之处在于
+ * 它返回的页面数量是连续的。
+ *
+ * find_get_pages_contig() 返回找到的页面数量。
+ */
+
 unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 			       unsigned int nr_pages, struct page **pages)
 {
-	unsigned int i;
-	unsigned int ret;
-	unsigned int nr_found;
+	unsigned int i;  // 循环变量
+	unsigned int ret;  // 返回的页面数量
+	unsigned int nr_found;  // 实际找到的页面数量
 
-	rcu_read_lock();
+	rcu_read_lock();	// 读取锁定，用于防止数据在读取时被修改
 restart:
+	// 使用 radix_tree_gang_lookup_slot 函数从 radix tree 中查找连续的页面
 	nr_found = radix_tree_gang_lookup_slot(&mapping->page_tree,
 				(void ***)pages, index, nr_pages);
-	ret = 0;
+	ret = 0;	// 初始化返回的页面数为0
+	// 遍历找到的页面
 	for (i = 0; i < nr_found; i++) {
-		struct page *page;
+		struct page *page;	// 单个页面的指针
 repeat:
+		// 解引用页面槽位
 		page = radix_tree_deref_slot((void **)pages[i]);
+		// 如果页面不存在，继续下一次循环
 		if (unlikely(!page))
 			continue;
 		/*
 		 * this can only trigger if nr_found == 1, making livelock
 		 * a non issue.
 		 */
+		// 检查页面是否标记为重试
 		if (unlikely(page == RADIX_TREE_RETRY))
-			goto restart;
+			goto restart;	// 如果是，重新开始
 
+		// 检查页面是否被移除或索引改变
 		if (page->mapping == NULL || page->index != index)
-			break;
+			break;	// 如果是，则跳出循环
 
+		// 尝试增加页面的引用计数
 		if (!page_cache_get_speculative(page))
-			goto repeat;
+			goto repeat;	// 如果失败，重试
 
 		/* Has the page moved? */
+		// 检查页面是否移动
 		if (unlikely(page != *((void **)pages[i]))) {
-			page_cache_release(page);
-			goto repeat;
+			page_cache_release(page);	// 释放页面引用
+			goto repeat;	 // 重试
 		}
 
-		pages[ret] = page;
-		ret++;
-		index++;
+		pages[ret] = page;	// 将页面存储到返回数组中
+		ret++;							// 增加返回的页面数量
+		index++;						// 移动到下一个页面索引
 	}
-	rcu_read_unlock();
-	return ret;
+	rcu_read_unlock();		// 解锁
+	return ret;						// 返回找到的页面数量
 }
 EXPORT_SYMBOL(find_get_pages_contig);
 
@@ -849,49 +1064,67 @@ EXPORT_SYMBOL(find_get_pages_contig);
  * Like find_get_pages, except we only return pages which are tagged with
  * @tag.   We update @index to index the next page for the traversal.
  */
+/**
+ * find_get_pages_tag - 查找并返回带有 @tag 标记的页面
+ * @mapping: 要搜索的地址空间
+ * @index: 开始搜索的页面索引
+ * @tag: 标记索引
+ * @nr_pages: 最大页面数量
+ * @post_now: 递归中指向结构体page的指针数组
+ *
+ * 类似于 find_get_pages，但我们只返回带有 @tag 标记的页面。
+ * 我们更新 @index 以索引遍历中的下一个页面。
+ */
 unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
 			int tag, unsigned int nr_pages, struct page **pages)
 {
-	unsigned int i;
-	unsigned int ret;
-	unsigned int nr_found;
+	unsigned int i;  // 循环变量
+	unsigned int ret;  // 返回的页面数量
+	unsigned int nr_found;  // 实际找到的页面数量
 
-	rcu_read_lock();
+	rcu_read_lock();  // 获取读取锁定
 restart:
+	// 使用 radix_tree_gang_lookup_tag_slot 从 radix tree 中查找具有特定标记的页面
 	nr_found = radix_tree_gang_lookup_tag_slot(&mapping->page_tree,
 				(void ***)pages, *index, nr_pages, tag);
-	ret = 0;
+	ret = 0;	// 初始化返回的页面数为0
+	// 遍历找到的页面
 	for (i = 0; i < nr_found; i++) {
-		struct page *page;
+		struct page *page;	// 单个页面的指针
 repeat:
+		// 解引用页面槽位
 		page = radix_tree_deref_slot((void **)pages[i]);
 		if (unlikely(!page))
-			continue;
+			continue;	// 如果页面不存在，继续下一次循环
 		/*
 		 * this can only trigger if nr_found == 1, making livelock
 		 * a non issue.
 		 */
+		// 检查页面是否标记为重试
 		if (unlikely(page == RADIX_TREE_RETRY))
-			goto restart;
+			goto restart;	// 如果是，重新开始
 
+		// 尝试增加页面的引用计数
 		if (!page_cache_get_speculative(page))
-			goto repeat;
+			goto repeat;	// 如果失败，重试
 
 		/* Has the page moved? */
+		// 检查页面是否移动
 		if (unlikely(page != *((void **)pages[i]))) {
-			page_cache_release(page);
-			goto repeat;
+			page_cache_release(page);	// 释放页面引用
+			goto repeat;	// 重试
 		}
 
-		pages[ret] = page;
-		ret++;
-	}
-	rcu_read_unlock();
+		pages[ret] = page;	// 将页面存储到返回数组中
+		ret++;			// 增加返回的页面数量
+	}	
+	rcu_read_unlock();	// 解锁
 
+	// 更新 index 以指向下一个要搜索的页面
 	if (ret)
 		*index = pages[ret - 1]->index + 1;
 
-	return ret;
+	return ret;	// 更新 index 以指向下一个要搜索的页面
 }
 EXPORT_SYMBOL(find_get_pages_tag);
 
@@ -908,21 +1141,36 @@ EXPORT_SYMBOL(find_get_pages_tag);
  * Clear __GFP_FS when allocating the page to avoid recursion into the fs
  * and deadlock against the caller's locked page.
  */
+/**
+ * grab_cache_page_nowait - 返回给定缓存中给定索引的锁定页面
+ * @mapping: 目标地址空间
+ * @index: 页面索引
+ *
+ * 与 grab_cache_page() 相同，但如果页面不可用则不等待。
+ * 这适用于推测性数据生成器，其中如果无法获取页面，则可以重新生成数据。
+ * 在持有另一个页面的锁的同时调用此例程应该是安全的。
+ *
+ * 在分配页面时清除 __GFP_FS 以避免递归进入文件系统并与调用者锁定的页面死锁。
+ */
 struct page *
 grab_cache_page_nowait(struct address_space *mapping, pgoff_t index)
 {
+	// 尝试查找页面
 	struct page *page = find_get_page(mapping, index);
 
-	if (page) {
+	if (page) {	// 如果页面存在
+		// 尝试锁定页面
 		if (trylock_page(page))
-			return page;
-		page_cache_release(page);
-		return NULL;
+			return page;	// 如果成功，返回该页面
+		page_cache_release(page);	// 如果锁定失败，释放页面
+		return NULL;	// 返回 NULL
 	}
+	// 如果页面不存在，尝试分配一个新页面，注意 __GFP_FS 被清除以防止递归和死锁
 	page = __page_cache_alloc(mapping_gfp_mask(mapping) & ~__GFP_FS);
+	// 尝试将新页面添加到 LRU 和缓存中
 	if (page && add_to_page_cache_lru(page, mapping, index, GFP_NOFS)) {
-		page_cache_release(page);
-		page = NULL;
+		page_cache_release(page);	// 如果添加失败，释放页面
+		page = NULL;	// 设置页面为 NULL
 	}
 	return page;
 }
@@ -962,50 +1210,104 @@ static void shrink_readahead_size_eio(struct file *filp,
  * This is really ugly. But the goto's actually try to clarify some
  * of the logic when it comes to error handling etc.
  */
+/**
+ * do_generic_file_read - 通用文件读取例程
+ * @filp:	要读取的文件
+ * @ppos:	当前文件位置
+ * @desc:	读取描述符
+ * @actor:	读取方法
+ *
+ * 这是所有可以直接使用页面缓存的文件系统的通用文件读取例程。
+ * 它使用 mapping->a_ops->readpage() 函数进行实际的底层操作。
+ *
+ * 这实际上很复杂。但是goto语句实际上是为了在错误处理等逻辑时提供清晰度。
+ */
 static void do_generic_file_read(struct file *filp, loff_t *ppos,
 		read_descriptor_t *desc, read_actor_t actor)
 {
-	struct address_space *mapping = filp->f_mapping;
-	struct inode *inode = mapping->host;
-	struct file_ra_state *ra = &filp->f_ra;
-	pgoff_t index;
-	pgoff_t last_index;
-	pgoff_t prev_index;
-	unsigned long offset;      /* offset into pagecache page */
-	unsigned int prev_offset;
-	int error;
+	/**
+	 * // 在页高速缓存找需要的数据
+	 * page = find_get_page(mapping, index)
+	 * // 如果要找的页没在页高速缓存，find_get_page返回NULL。内核需要分配一个新页面，并
+	 * // 将其加入到页高速缓存中
+	 * page = page_cache_alloc_cold(mapping);
+	 * if (!page) {
+	 * // 内存分配出错
+	 * }
+	 * // 然后将其加入到页面调整缓存
+	 * error = add_to_page_cache_lru(page, mapping, index, GFP_KERNEL);
+	 * if (error) {
+	 * // 页面被加入到高速缓存时出错
+	 * }
+	 */
 
+	// 获取文件映射
+	struct address_space *mapping = filp->f_mapping;
+	// 获取inode
+	struct inode *inode = mapping->host;
+	// 预读状态
+	struct file_ra_state *ra = &filp->f_ra;
+	// 页帧索引
+	pgoff_t index;
+	// 最后页帧索引
+	pgoff_t last_index;
+	// 上一个页帧索引
+	pgoff_t prev_index;
+	/* 页面内的偏移量 */
+	unsigned long offset;      /* offset into pagecache page */
+	// 上一个偏移量
+	unsigned int prev_offset;
+	int error;	// 错误码
+
+	// 计算当前偏移对应的页帧索引
 	index = *ppos >> PAGE_CACHE_SHIFT;
+	// 获取上一个位置的页帧索引
 	prev_index = ra->prev_pos >> PAGE_CACHE_SHIFT;
+	// 上一个偏移量
 	prev_offset = ra->prev_pos & (PAGE_CACHE_SIZE-1);
+	// 计算最后的页帧索引
 	last_index = (*ppos + desc->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT;
+	// 页面内的偏移量
 	offset = *ppos & ~PAGE_CACHE_MASK;
 
+	// 循环处理所有页帧
 	for (;;) {
+		// 页面指针
 		struct page *page;
+		// 文件结束的页帧索引
 		pgoff_t end_index;
+		// 文件大小
 		loff_t isize;
+		// 读取的字节数和返回值
 		unsigned long nr, ret;
 
-		cond_resched();
+		cond_resched();	// 让出CPU
 find_page:
+		// 查找并获取页面
 		page = find_get_page(mapping, index);
-		if (!page) {
+		if (!page) {	// 如果页面不存在
+			// 同步预读
 			page_cache_sync_readahead(mapping,
 					ra, filp,
 					index, last_index - index);
+			// 重新获取页面
 			page = find_get_page(mapping, index);
+			// 如果还是没有，处理无缓存页面
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
+		// 如果页面在读取中
 		if (PageReadahead(page)) {
+			// 异步预读
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
 					index, last_index - index);
 		}
+		// 如果页面不是最新的
 		if (!PageUptodate(page)) {
 			if (inode->i_blkbits == PAGE_CACHE_SHIFT ||
 					!mapping->a_ops->is_partially_uptodate)
+				// 页面不是最新的，处理它
 				goto page_not_up_to_date;
 			if (!trylock_page(page))
 				goto page_not_up_to_date;
@@ -1024,28 +1326,42 @@ page_ok:
 		 * another truncate extends the file - this is desired though).
 		 */
 
+		// 以下代码检查文件大小后拷贝页面到用户空间
+		
+		// 读取文件大小
 		isize = i_size_read(inode);
+		// 计算结束的页帧索引
 		end_index = (isize - 1) >> PAGE_CACHE_SHIFT;
+		// 如果索引超过了文件大小
 		if (unlikely(!isize || index > end_index)) {
+			// 释放页面
 			page_cache_release(page);
-			goto out;
+			goto out;	// 退出
 		}
 
 		/* nr is the maximum number of bytes to copy from this page */
+		// 计算从这个页面可以复制的最大字节数
+		// 默认从整个页面复制
 		nr = PAGE_CACHE_SIZE;
+		// 如果是最后一页
 		if (index == end_index) {
+			// 计算剩余的字节数
 			nr = ((isize - 1) & ~PAGE_CACHE_MASK) + 1;
+			// 如果偏移超过了文件大小
 			if (nr <= offset) {
+				// 释放页面
 				page_cache_release(page);
+				// 退出
 				goto out;
 			}
 		}
-		nr = nr - offset;
+		nr = nr - offset;	// 调整读取的字节数
 
 		/* If users can be writing to this page using arbitrary
 		 * virtual addresses, take care about potential aliasing
 		 * before reading the page on the kernel side.
 		 */
+		// 如果映射可以写，确保页面在读取前是干净的
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
@@ -1053,9 +1369,10 @@ page_ok:
 		 * When a sequential read accesses a page several times,
 		 * only mark it as accessed the first time.
 		 */
+		// 如果是连续读取同一页面，只在第一次标记页面被访问
 		if (prev_index != index || offset != prev_offset)
 			mark_page_accessed(page);
-		prev_index = index;
+		prev_index = index;	// 更新上一个索引
 
 		/*
 		 * Ok, we have the page, and it's up-to-date, so
@@ -1067,115 +1384,149 @@ page_ok:
 		 * "pos" here (the actor routine has to update the user buffer
 		 * pointers and the remaining count).
 		 */
+		// 执行实际的读取操作
+		// 调用传入的actor函数进行读取
 		ret = actor(desc, page, offset, nr);
+		// 更新偏移
 		offset += ret;
+		// 更新索引
 		index += offset >> PAGE_CACHE_SHIFT;
+		// 更新偏移
 		offset &= ~PAGE_CACHE_MASK;
+		// 更新上一个偏移
 		prev_offset = offset;
 
-		page_cache_release(page);
-		if (ret == nr && desc->count)
+		page_cache_release(page);	// 释放页面
+		if (ret == nr && desc->count)	// 如果还有数据需要读取
 			continue;
-		goto out;
+		goto out;	// 否则退出
 
-page_not_up_to_date:
+page_not_up_to_date:	// 页面不是最新的，需要锁定并读取
 		/* Get exclusive access to the page ... */
+		// 获取对页面的独占访问
 		error = lock_page_killable(page);
 		if (unlikely(error))
-			goto readpage_error;
+			goto readpage_error;	// 错误处理
 
+// 页面已锁定但不是最新的
 page_not_up_to_date_locked:
 		/* Did it get truncated before we got the lock? */
+		// 检查页面是否在锁定前被截断
 		if (!page->mapping) {
-			unlock_page(page);
-			page_cache_release(page);
-			continue;
+			unlock_page(page);	// 解锁页面
+			page_cache_release(page);	// 释放页面
+			continue;	// 继续处理下一个页面
 		}
 
 		/* Did somebody else fill it already? */
+		// 检查其他人是否已经更新了页面
 		if (PageUptodate(page)) {
-			unlock_page(page);
-			goto page_ok;
+			unlock_page(page);	// 解锁页面
+			goto page_ok;	// 页面是最新的
 		}
 
-readpage:
+readpage:	// 读取页面
 		/* Start the actual read. The read will unlock the page. */
+		// 开始实际的读取，读取操作会解锁页面
+		// 调用readpage方法
 		error = mapping->a_ops->readpage(filp, page);
 
-		if (unlikely(error)) {
+		if (unlikely(error)) {	// 如果读取出错
 			if (error == AOP_TRUNCATED_PAGE) {
-				page_cache_release(page);
-				goto find_page;
+				page_cache_release(page);	// 释放页面
+				goto find_page;	// 重新查找页面
 			}
-			goto readpage_error;
+			goto readpage_error;	// 错误处理
 		}
 
-		if (!PageUptodate(page)) {
+		if (!PageUptodate(page)) {	// 如果页面仍然不是最新的
+		// 再次锁定页面
 			error = lock_page_killable(page);
 			if (unlikely(error))
+				// 错误处理
 				goto readpage_error;
+			// 检查页面是否已更新
 			if (!PageUptodate(page)) {
+				// 页面已被invalidate_mapping_pages处理
 				if (page->mapping == NULL) {
 					/*
 					 * invalidate_mapping_pages got it
 					 */
-					unlock_page(page);
-					page_cache_release(page);
-					goto find_page;
+					unlock_page(page);	// 解锁页面
+					page_cache_release(page);	// 释放页面
+					goto find_page;	// 重新查找页面
 				}
-				unlock_page(page);
+				unlock_page(page);	// 解锁页面
+				// 调整预读大小
 				shrink_readahead_size_eio(filp, ra);
+				// 设置错误码为I/O错误
 				error = -EIO;
-				goto readpage_error;
+				goto readpage_error;	// 错误处理
 			}
-			unlock_page(page);
+			unlock_page(page);	// 解锁页面
 		}
 
-		goto page_ok;
+		goto page_ok;	// 页面已更新，继续处理
 
-readpage_error:
+readpage_error:	// 读取页面出错
 		/* UHHUH! A synchronous read error occurred. Report it */
-		desc->error = error;
-		page_cache_release(page);
-		goto out;
+		// 报告同步读取错误
+		desc->error = error;	// 设置读取描述符的错误码
+		page_cache_release(page);	// 释放页面
+		goto out;	// 退出处理
 
-no_cached_page:
+no_cached_page:	// 未缓存页面处理
 		/*
 		 * Ok, it wasn't cached, so we need to create a new
 		 * page..
 		 */
-		page = page_cache_alloc_cold(mapping);
-		if (!page) {
+		// 页面未缓存，需要创建新页面
+		page = page_cache_alloc_cold(mapping);	// 分配新页面
+		if (!page) {	// 如果页面分配失败
+		// 设置错误为内存不足
 			desc->error = -ENOMEM;
-			goto out;
+			goto out;	// 退出处理
 		}
+		// 将页面添加到页面缓存
 		error = add_to_page_cache_lru(page, mapping,
 						index, GFP_KERNEL);
-		if (error) {
+		if (error) {	// 如果添加失败
+		// 释放页面
 			page_cache_release(page);
+			// 如果是因为页面已存在，则重新查找
 			if (error == -EEXIST)
 				goto find_page;
-			desc->error = error;
-			goto out;
+			desc->error = error;	// 设置错误码
+			goto out;	// 退出处理
 		}
-		goto readpage;
+		goto readpage;	// 读取页面
 	}
 
-out:
+out:	// 退出处理
+	// 更新预读状态的上一个位置
 	ra->prev_pos = prev_index;
+	// 转换为字节偏移
 	ra->prev_pos <<= PAGE_CACHE_SHIFT;
+	// 加上偏移量
 	ra->prev_pos |= prev_offset;
 
+	// 更新文件位置
 	*ppos = ((loff_t)index << PAGE_CACHE_SHIFT) + offset;
+	// 标记文件为已访问
 	file_accessed(filp);
 }
 
+// 从内核映射的页面到用户空间的数据复制操作，首先尝试使用原子操作进行快速复制，
+// 如果失败则采用普通映射方式。通过调整缓冲区大小和处理缺页异常，
+// 确保数据安全有效地从内核传输到用户程序。
 int file_read_actor(read_descriptor_t *desc, struct page *page,
 			unsigned long offset, unsigned long size)
 {
-	char *kaddr;
+	char *kaddr;	// 内核临时映射的地址
+	// `left` 用于记录未复制的字节数
 	unsigned long left, count = desc->count;
 
+	// 调整 size 确保不会超过读描述符所要求的字节数
 	if (size > count)
 		size = count;
 
@@ -1183,28 +1534,43 @@ int file_read_actor(read_descriptor_t *desc, struct page *page,
 	 * Faults on the destination of a read are common, so do it before
 	 * taking the kmap.
 	 */
+	/*
+	 * 读操作目标页的缺页异常是常见的，所以在执行 kmap 之前先处理。
+	 * 如果目标页写入时没有发生缺页异常，即先处理可能的用户空间页错误。
+	 */
 	if (!fault_in_pages_writeable(desc->arg.buf, size)) {
+		// 使用原子操作映射页，KM_USER0 是类型，用于标记临时映射的用途
 		kaddr = kmap_atomic(page, KM_USER0);
+		// 尝试原子地将数据从内核空间复制到用户空间
 		left = __copy_to_user_inatomic(desc->arg.buf,
 						kaddr + offset, size);
+		// 原子解除映射
 		kunmap_atomic(kaddr, KM_USER0);
+		// 如果全部复制成功，跳转到成功处理
 		if (left == 0)
 			goto success;
 	}
 
 	/* Do it the slow way */
-	kaddr = kmap(page);
+	/* 慢速路径 */
+	kaddr = kmap(page);	// 非原子地映射页
+	// 将数据从内核复制到用户空间
 	left = __copy_to_user(desc->arg.buf, kaddr + offset, size);
-	kunmap(page);
+	kunmap(page);	// 解除映射
 
-	if (left) {
-		size -= left;
+	if (left) {	// 如果还有未复制的数据
+		size -= left;	// 调整成功复制的大小
+		// 设置错误码
 		desc->error = -EFAULT;
 	}
 success:
+	// 更新描述符状态
 	desc->count = count - size;
+	// 更新剩余要读的字节数
 	desc->written += size;
+	// 移动缓冲区指针
 	desc->arg.buf += size;
+	// 返回这次操作复制的字节数
 	return size;
 }
 
@@ -1257,60 +1623,88 @@ EXPORT_SYMBOL(generic_segment_checks);
  * This is the "read()" routine for all filesystems
  * that can use the page cache directly.
  */
+/**
+ * 通用文件异步读取 - 所有可以直接使用页面缓存的文件系统的通用文件读取函数
+ * @iocb:	内核I/O控制块
+ * @iov:	I/O向量请求
+ * @nr_segs:	iovec中的段数
+ * @pos:	当前文件位置
+ *
+ * 这是所有可以直接使用页面缓存的文件系统的"read()"函数。
+ */
+// 通用文件异步读取函数
 ssize_t
 generic_file_aio_read(struct kiocb *iocb, const struct iovec *iov,
 		unsigned long nr_segs, loff_t pos)
 {
+	// 获取文件结构体
 	struct file *filp = iocb->ki_filp;
-	ssize_t retval;
-	unsigned long seg;
-	size_t count;
+	ssize_t retval;	// 用于存放返回值
+	unsigned long seg;	// 用于循环的索引
+	size_t count;		// 总读取字节数
+	// 当前文件位置的指针
 	loff_t *ppos = &iocb->ki_pos;
 
-	count = 0;
+	count = 0;	// 当前文件位置的指针
+	// 检查和准备iovec结构体
 	retval = generic_segment_checks(iov, &nr_segs, &count, VERIFY_WRITE);
+	// 如果检查出错，返回错误
 	if (retval)
 		return retval;
 
 	/* coalesce the iovecs and go direct-to-BIO for O_DIRECT */
+	/* 如果是O_DIRECT标志，直接通过BIO进行读取 */
 	if (filp->f_flags & O_DIRECT) {
 		loff_t size;
 		struct address_space *mapping;
 		struct inode *inode;
 
+		// 获取地址空间结构体
 		mapping = filp->f_mapping;
+		// 获取inode结构体
 		inode = mapping->host;
+		// 如果没有数据需要读取，则直接退出
 		if (!count)
 			goto out; /* skip atime */
+		// 读取文件大小
 		size = i_size_read(inode);
+		// 如果当前位置小于文件大小
 		if (pos < size) {
 			retval = filemap_write_and_wait_range(mapping, pos,
 					pos + iov_length(iov, nr_segs) - 1);
+			// 如果没有错误
 			if (!retval) {
+					// 执行直接IO操作
 				retval = mapping->a_ops->direct_IO(READ, iocb,
 							iov, pos, nr_segs);
 			}
 			if (retval > 0)
+				// 更新位置
 				*ppos = pos + retval;
 			if (retval) {
+				// 更新文件访问时间
 				file_accessed(filp);
 				goto out;
 			}
 		}
 	}
 
+	// 循环处理每个iovec
 	for (seg = 0; seg < nr_segs; seg++) {
 		read_descriptor_t desc;
 
 		desc.written = 0;
 		desc.arg.buf = iov[seg].iov_base;
 		desc.count = iov[seg].iov_len;
+		// 如果当前段没有数据，则继续下一段
 		if (desc.count == 0)
 			continue;
 		desc.error = 0;
+		// 执行通用文件读取
 		do_generic_file_read(filp, ppos, &desc, file_read_actor);
-		retval += desc.written;
-		if (desc.error) {
+		retval += desc.written;	// 累加写入的字节数
+		if (desc.error) {	// 如果有错误
+			// 使用错误码作为返回值
 			retval = retval ?: desc.error;
 			break;
 		}
@@ -1318,7 +1712,7 @@ generic_file_aio_read(struct kiocb *iocb, const struct iovec *iov,
 			break;
 	}
 out:
-	return retval;
+	return retval;	// 返回读取结果
 }
 EXPORT_SYMBOL(generic_file_aio_read);
 
@@ -1326,31 +1720,39 @@ static ssize_t
 do_readahead(struct address_space *mapping, struct file *filp,
 	     pgoff_t index, unsigned long nr)
 {
+	// 如果 mapping 或者 mapping->a_ops 或者 mapping->a_ops->readpage 为空，
+	// 则返回 -EINVAL 错误
 	if (!mapping || !mapping->a_ops || !mapping->a_ops->readpage)
 		return -EINVAL;
 
+	// 强制执行页缓存预读
 	force_page_cache_readahead(mapping, filp, index, nr);
-	return 0;
+	return 0;	// 成功返回 0
 }
 
 SYSCALL_DEFINE(readahead)(int fd, loff_t offset, size_t count)
 {
-	ssize_t ret;
-	struct file *file;
+	ssize_t ret;	// 定义返回值变量
+	struct file *file;	// 定义文件指针
 
-	ret = -EBADF;
-	file = fget(fd);
-	if (file) {
+	ret = -EBADF;		// 如果文件描述符无效，默认返回 -EBADF 错误
+	file = fget(fd);	// 获取文件结构
+	if (file) {	// 如果文件以读模式打开
 		if (file->f_mode & FMODE_READ) {
+			// 获取文件的地址空间映射
 			struct address_space *mapping = file->f_mapping;
+			// 计算起始页号
 			pgoff_t start = offset >> PAGE_CACHE_SHIFT;
+			// 计算结束页号
 			pgoff_t end = (offset + count - 1) >> PAGE_CACHE_SHIFT;
+			// 计算页数
 			unsigned long len = end - start + 1;
+			// 执行预读操作
 			ret = do_readahead(mapping, file, start, len);
 		}
-		fput(file);
+		fput(file);		// 释放文件结构
 	}
-	return ret;
+	return ret;			// 返回结果
 }
 #ifdef CONFIG_HAVE_SYSCALL_WRAPPERS
 asmlinkage long SyS_readahead(long fd, loff_t offset, long count)
@@ -1838,22 +2240,33 @@ EXPORT_SYMBOL(file_remove_suid);
 static size_t __iovec_copy_from_user_inatomic(char *vaddr,
 			const struct iovec *iov, size_t base, size_t bytes)
 {
+	// 已复制和剩余未复制的字节数
 	size_t copied = 0, left = 0;
 
-	while (bytes) {
+	while (bytes) {	// 当还有字节需要复制时
+		// 用户空间的数据源地址
 		char __user *buf = iov->iov_base + base;
+		// 计算这次需要复制的字节数
 		int copy = min(bytes, iov->iov_len - base);
 
+		// 基础偏移设置为0，因为在第一次循环后应从iov的开始复制
 		base = 0;
+		// 从用户空间复制数据到内核空间
 		left = __copy_from_user_inatomic(vaddr, buf, copy);
+		// 更新已复制的字节数
 		copied += copy;
+		// 减少剩余需要复制的字节数
 		bytes -= copy;
+		// 移动目标内存地址
 		vaddr += copy;
+		// 移动到下一个iovec元素
 		iov++;
 
+		// 如果剩余未复制字节数不为零，即复制过程中出错
 		if (unlikely(left))
 			break;
 	}
+	// 返回成功复制的总字节数
 	return copied - left;
 }
 
@@ -1862,26 +2275,35 @@ static size_t __iovec_copy_from_user_inatomic(char *vaddr,
  * were successfully copied.  If a fault is encountered then return the number of
  * bytes which were copied.
  */
+/*
+ * 复制尽可能多的数据到页面，并返回成功复制的字节数。如果遇到错误，则返回已复制的字节数。
+ */
 size_t iov_iter_copy_from_user_atomic(struct page *page,
 		struct iov_iter *i, unsigned long offset, size_t bytes)
 {
-	char *kaddr;
-	size_t copied;
+	char *kaddr;		// 内核空间的地址
+	size_t copied;	// 已复制的字节数
 
-	BUG_ON(!in_atomic());
+	BUG_ON(!in_atomic());	// 确认当前在原子上下文中
+	// 将页面映射到内核地址空间
 	kaddr = kmap_atomic(page, KM_USER0);
+	// 如果只有一个段
 	if (likely(i->nr_segs == 1)) {
 		int left;
+		// 用户空间的数据源地址
 		char __user *buf = i->iov->iov_base + i->iov_offset;
+		// 从用户空间复制数据到内核空间
 		left = __copy_from_user_inatomic(kaddr + offset, buf, bytes);
+		// 计算成功复制的字节数
 		copied = bytes - left;
-	} else {
+	} else {	// 如果有多个段
+		// 使用专门的函数处理多段复制
 		copied = __iovec_copy_from_user_inatomic(kaddr + offset,
 						i->iov, i->iov_offset, bytes);
 	}
-	kunmap_atomic(kaddr, KM_USER0);
+	kunmap_atomic(kaddr, KM_USER0);	// 取消映射
 
-	return copied;
+	return copied;	// 返回成功复制的字节数
 }
 EXPORT_SYMBOL(iov_iter_copy_from_user_atomic);
 
@@ -2092,12 +2514,15 @@ generic_file_direct_write(struct kiocb *iocb, const struct iovec *iov,
 	size_t		write_len;
 	pgoff_t		end;
 
+	// 如果请求写入的长度小于原始长度，调整iov长度。
 	if (count != ocount)
 		*nr_segs = iov_shorten((struct iovec *)iov, *nr_segs, count);
 
+	// 计算实际写入的长度。
 	write_len = iov_length(iov, *nr_segs);
 	end = (pos + write_len - 1) >> PAGE_CACHE_SHIFT;
 
+	// 执行写入，等待文件映射区间中所有已有的写入完成。
 	written = filemap_write_and_wait_range(mapping, pos, pos + write_len - 1);
 	if (written)
 		goto out;
@@ -2108,6 +2533,7 @@ generic_file_direct_write(struct kiocb *iocb, const struct iovec *iov,
 	 * about to write.  We do this *before* the write so that we can return
 	 * without clobbering -EIOCBQUEUED from ->direct_IO().
 	 */
+	// 写入前，使缓存中的干净页无效，确保读取到的是新数据。
 	if (mapping->nrpages) {
 		written = invalidate_inode_pages2_range(mapping,
 					pos >> PAGE_CACHE_SHIFT, end);
@@ -2115,6 +2541,7 @@ generic_file_direct_write(struct kiocb *iocb, const struct iovec *iov,
 		 * If a page can not be invalidated, return 0 to fall back
 		 * to buffered write.
 		 */
+		// 如果页无法无效化，返回0退回到缓冲写。
 		if (written) {
 			if (written == -EBUSY)
 				return 0;
@@ -2122,6 +2549,7 @@ generic_file_direct_write(struct kiocb *iocb, const struct iovec *iov,
 		}
 	}
 
+	// 执行直接I/O操作。
 	written = mapping->a_ops->direct_IO(WRITE, iocb, iov, pos, *nr_segs);
 
 	/*
@@ -2132,11 +2560,13 @@ generic_file_direct_write(struct kiocb *iocb, const struct iovec *iov,
 	 * so we don't support it 100%.  If this invalidation
 	 * fails, tough, the write still worked...
 	 */
+	// 写入后，再次尝试使缓存中的干净页无效。
 	if (mapping->nrpages) {
 		invalidate_inode_pages2_range(mapping,
 					      pos >> PAGE_CACHE_SHIFT, end);
 	}
 
+	// 如果写入成功，更新文件大小。
 	if (written > 0) {
 		loff_t end = pos + written;
 		if (end > i_size_read(inode) && !S_ISBLK(inode->i_mode)) {
@@ -2182,31 +2612,54 @@ repeat:
 }
 EXPORT_SYMBOL(grab_cache_page_write_begin);
 
+// 执行文件写入操作。它处理了从用户空间到文件页缓存的数据拷贡，并且处理了相关的页缓存管理和脏页的平衡。
 static ssize_t generic_perform_write(struct file *file,
 				struct iov_iter *i, loff_t pos)
 {
+	/**
+	 * page = __grab_cache_page(mapping, index, &cached_page, &lru_prev);
+	 * status = a_ops->prepare_write(file, page, offset, offset + bytes);
+	 * page_fault = filemap_copy_from_user(page, offset, buf, bytes);
+	 * status = a_ops->commit_write(file, page, offset, offset + bytes);
+	 * 在高速缓存查找需要的页。如果页不在高速缓存，则在高速缓存中新分配一个空闲项；
+	 * 接下来，创建一个写请求；接着数据从用户空间缓冲区拷贝到内核缓冲区；
+	 * 最后将数据写入磁盘
+	 */
+
+	// 获取文件的地址空间
 	struct address_space *mapping = file->f_mapping;
+	// 地址空间操作集
 	const struct address_space_operations *a_ops = mapping->a_ops;
-	long status = 0;
-	ssize_t written = 0;
-	unsigned int flags = 0;
+	long status = 0;	// 状态变量，用于记录操作的结果
+	ssize_t written = 0;	// 已写入的字节数
+	unsigned int flags = 0;	// 标志位
 
 	/*
 	 * Copies from kernel address space cannot fail (NFSD is a big user).
 	 */
+	// 如果当前上下文是内核数据段，则设置不可中断标志
 	if (segment_eq(get_fs(), KERNEL_DS))
 		flags |= AOP_FLAG_UNINTERRUPTIBLE;
 
 	do {
+		// 页面指针
 		struct page *page;
+		// 当前页在页缓存中的索引
 		pgoff_t index;		/* Pagecache index for current page */
+		// 页内偏移
 		unsigned long offset;	/* Offset into pagecache page */
+		// 要写入的字节数
 		unsigned long bytes;	/* Bytes to write to page */
+		// 实际从用户空间拷贡的字节数
 		size_t copied;		/* Bytes copied from user */
+		// 文件系统相关数据，由write_begin返回
 		void *fsdata;
 
+		// 计算页内偏移
 		offset = (pos & (PAGE_CACHE_SIZE - 1));
+		// 计算页索引
 		index = pos >> PAGE_CACHE_SHIFT;
+		// 计算此次操作的最大字节数
 		bytes = min_t(unsigned long, PAGE_CACHE_SIZE - offset,
 						iov_iter_count(i));
 
@@ -2222,33 +2675,40 @@ again:
 		 * to check that the address is actually valid, when atomic
 		 * usercopies are used, below.
 		 */
+		// 检查是否有足够的用户空间可以读取
 		if (unlikely(iov_iter_fault_in_readable(i, bytes))) {
-			status = -EFAULT;
+			status = -EFAULT;	// 地址错误
 			break;
 		}
 
+		// 开始写操作之前的准备，可能包括锁定页等
 		status = a_ops->write_begin(file, mapping, pos, bytes, flags,
 						&page, &fsdata);
 		if (unlikely(status))
 			break;
 
+		// 如果地址空间被映射为可写，则刷新页面缓存
 		if (mapping_writably_mapped(mapping))
 			flush_dcache_page(page);
 
-		pagefault_disable();
+		pagefault_disable();	// 禁用页错误
+		// 从用户空间拷贡数据
 		copied = iov_iter_copy_from_user_atomic(page, i, offset, bytes);
-		pagefault_enable();
-		flush_dcache_page(page);
+		pagefault_enable();	// 启用页错误
+		flush_dcache_page(page);	// 刷新页面缓存
 
-		mark_page_accessed(page);
+		mark_page_accessed(page);	// 标记页面为已访问
+		// 完成写操作，解锁页等
 		status = a_ops->write_end(file, mapping, pos, bytes, copied,
 						page, fsdata);
 		if (unlikely(status < 0))
 			break;
 		copied = status;
 
+		// 条件调度，允许其他进程运行
 		cond_resched();
 
+		// 推进迭代器
 		iov_iter_advance(i, copied);
 		if (unlikely(copied == 0)) {
 			/*
@@ -2261,15 +2721,19 @@ again:
 			 */
 			bytes = min_t(unsigned long, PAGE_CACHE_SIZE - offset,
 						iov_iter_single_seg_count(i));
+			// 如果未拷贡任何数据，尝试更小的单片段写入
 			goto again;
 		}
-		pos += copied;
-		written += copied;
+		pos += copied;	 // 更新位置
+		written += copied;	// 更新写入字节数
 
+		// 平衡脏页，按需写入
 		balance_dirty_pages_ratelimited(mapping);
 
+		// 如果还有数据未写入，则继续循环
 	} while (iov_iter_count(i));
 
+	// 返回写入的字节数或错误状态
 	return written ? written : status;
 }
 
@@ -2278,18 +2742,25 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
 		unsigned long nr_segs, loff_t pos, loff_t *ppos,
 		size_t count, ssize_t written)
 {
+	// 从IO控制块获取文件指针
 	struct file *file = iocb->ki_filp;
+	// 用来存储写操作的返回状态
 	ssize_t status;
+	// iov迭代器，用于处理多段IO
 	struct iov_iter i;
 
+	// 初始化iov迭代器，设置其起始位置和长度
 	iov_iter_init(&i, iov, nr_segs, count, written);
+	// 执行缓冲写操作
 	status = generic_perform_write(file, &i, pos);
 
+	// 检查写操作的状态，如果成功，则更新已写入的总字节数和文件位置指针
 	if (likely(status >= 0)) {
-		written += status;
-		*ppos = pos + status;
+		written += status;	// 累加已写入字节数
+		*ppos = pos + status;	// 更新文件位置指针
   	}
 	
+	// 返回已写入的字节数或错误状态
 	return written ? written : status;
 }
 EXPORT_SYMBOL(generic_file_buffered_write);
@@ -2313,18 +2784,35 @@ EXPORT_SYMBOL(generic_file_buffered_write);
  * A caller has to handle it. This is mainly due to the fact that we want to
  * avoid syncing under i_mutex.
  */
+/**
+ * __generic_file_aio_write - 实际将数据写入文件的函数
+ * @iocb: 描述IO状态的结构体（包含文件、偏移等信息）
+ * @iov: 包含要写入数据的向量
+ * @nr_segs: 向量中段的数量
+ * @ppos: 要写入的位置
+ *
+ * 该函数完成将数据实际写入文件所需的所有工作。它进行所有基本检查，移除文件的SUID，更新修改时间，
+ * 并根据是否执行直接IO或标准缓冲写入调用相应的子程序。
+ *
+ * 除非我们操作的是块设备或类似不需要锁定的对象，否则期望在调用此函数之前已获取i_mutex。
+ *
+ * 该函数不负责同步数据以处理O_SYNC写入。调用者需要处理它。这主要是因为我们想避免在i_mutex下同步。
+ */
 ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 				 unsigned long nr_segs, loff_t *ppos)
 {
 	struct file *file = iocb->ki_filp;
 	struct address_space * mapping = file->f_mapping;
+	/* 原始计数 */
 	size_t ocount;		/* original count */
+	/* 文件限制检查后的计数 */
 	size_t count;		/* after file limit checks */
 	struct inode 	*inode = mapping->host;
 	loff_t		pos;
 	ssize_t		written;
 	ssize_t		err;
 
+	// 对iov进行基本的安全性检查，确认读取操作是安全的
 	ocount = 0;
 	err = generic_segment_checks(iov, &nr_segs, &ocount, VERIFY_READ);
 	if (err)
@@ -2333,30 +2821,38 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	count = ocount;
 	pos = *ppos;
 
+	// 检查文件系统是否冻结
 	vfs_check_frozen(inode->i_sb, SB_FREEZE_WRITE);
 
 	/* We can write back this queue in page reclaim */
+	// 关联当前任务的后备设备信息
 	current->backing_dev_info = mapping->backing_dev_info;
 	written = 0;
 
+	// 检查写入操作是否合法（文件大小、权限等）
 	err = generic_write_checks(file, &pos, &count, S_ISBLK(inode->i_mode));
 	if (err)
 		goto out;
 
+	// 如果没有什么要写的，直接退出
 	if (count == 0)
 		goto out;
 
+	// 移除文件的set-user-ID和set-group-ID位
 	err = file_remove_suid(file);
 	if (err)
 		goto out;
 
+	// 更新文件的访问时间和修改时间
 	file_update_time(file);
 
 	/* coalesce the iovecs and go direct-to-BIO for O_DIRECT */
+	// 如果文件以O_DIRECT标志打开，使用直接I/O
 	if (unlikely(file->f_flags & O_DIRECT)) {
 		loff_t endbyte;
 		ssize_t written_buffered;
 
+		// 执行直接写入
 		written = generic_file_direct_write(iocb, iov, &nr_segs, pos,
 							ppos, count, ocount);
 		if (written < 0 || written == count)
@@ -2365,6 +2861,7 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		 * direct-io write to a hole: fall through to buffered I/O
 		 * for completing the rest of the request.
 		 */
+		// 如果直接I/O只完成了部分写入，则使用缓冲写入完成剩余部分
 		pos += written;
 		count -= written;
 		written_buffered = generic_file_buffered_write(iocb, iov,
@@ -2377,6 +2874,7 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		 * that this differs from normal direct-io semantics, which
 		 * will return -EFOO even if some bytes were written.
 		 */
+		// 如果缓冲写入发生错误，则处理错误
 		if (written_buffered < 0) {
 			err = written_buffered;
 			goto out;
@@ -2387,6 +2885,7 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		 * disk and invalidated to preserve the expected O_DIRECT
 		 * semantics.
 		 */
+		// 确保缓存中的页被写入磁盘并且失效
 		endbyte = pos + written_buffered - written - 1;
 		err = filemap_write_and_wait_range(file->f_mapping, pos, endbyte);
 		if (err == 0) {
@@ -2399,12 +2898,15 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 			 * We don't know how much we wrote, so just return
 			 * the number of bytes which were direct-written
 			 */
+			// 只返回直接写入的字节数
 		}
 	} else {
+		// 执行缓冲写入
 		written = generic_file_buffered_write(iocb, iov, nr_segs,
 				pos, ppos, count, written);
 	}
 out:
+	// 清除任务的后备设备信息
 	current->backing_dev_info = NULL;
 	return written ? written : err;
 }
@@ -2421,27 +2923,46 @@ EXPORT_SYMBOL(__generic_file_aio_write);
  * filesystems. It takes care of syncing the file in case of O_SYNC file
  * and acquires i_mutex as needed.
  */
+/**
+ * generic_file_aio_write - 向文件写入数据
+ * @iocb:	IO 状态结构
+ * @iov:	包含待写数据的向量
+ * @nr_segs:	向量中的段数
+ * @pos:	写入文件的位置
+ *
+ * 这是 __generic_file_aio_write() 的一个包装函数，大多数文件系统都应使用它。
+ * 它处理了 O_SYNC 文件的同步写入，并在需要时获取 i_mutex。
+ */
 ssize_t generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		unsigned long nr_segs, loff_t pos)
 {
+	// 从 IO 控制块获取文件指针
 	struct file *file = iocb->ki_filp;
+	// 从文件映射中获取 inode
 	struct inode *inode = file->f_mapping->host;
 	ssize_t ret;
 
+	// 确保传入的位置与 IO 控制块中的位置一致
 	BUG_ON(iocb->ki_pos != pos);
 
+	// 锁定 inode 互斥锁以保护文件写入操作
 	mutex_lock(&inode->i_mutex);
+	// 执行实际的异步写操作
 	ret = __generic_file_aio_write(iocb, iov, nr_segs, &iocb->ki_pos);
+	// 解锁 inode 互斥锁
 	mutex_unlock(&inode->i_mutex);
 
+	// 如果写入成功或操作已排队
 	if (ret > 0 || ret == -EIOCBQUEUED) {
 		ssize_t err;
 
+		// 执行写入后的同步操作
 		err = generic_write_sync(file, pos, ret);
+		// 如果同步操作失败但写入成功，返回错误
 		if (err < 0 && ret > 0)
 			ret = err;
 	}
-	return ret;
+	return ret;	// 返回写入结果
 }
 EXPORT_SYMBOL(generic_file_aio_write);
 

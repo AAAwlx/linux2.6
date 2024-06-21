@@ -1,9 +1,12 @@
+// 时钟中断的代码（和体系结构无关的代码）
 /*
  * linux/kernel/time/tick-common.c
  *
  * This file contains the base functions to manage periodic tick
  * related events.
- *
+ * 此文件包含管理周期性tick相关事件的基本函数。
+ * 这段注释说明了tick-common.c文件的主要目的，即提供用于管理周期性tick相关事件的基本函数。
+ * 
  * Copyright(C) 2005-2006, Thomas Gleixner <tglx@linutronix.de>
  * Copyright(C) 2005-2007, Red Hat, Inc., Ingo Molnar
  * Copyright(C) 2006-2007, Timesys Corp., Thomas Gleixner
@@ -32,6 +35,7 @@ DEFINE_PER_CPU(struct tick_device, tick_cpu_device);
  * Tick next event: keeps track of the tick time
  */
 ktime_t tick_next_period;
+// sec和nsec，分别为0和一个时钟中断所经过的纳秒数(NSEC_PER_SEC / HZ)
 ktime_t tick_period;
 int tick_do_timer_cpu __read_mostly = TICK_DO_TIMER_BOOT;
 static DEFINE_RAW_SPINLOCK(tick_device_lock);
@@ -57,25 +61,45 @@ int tick_is_oneshot_available(void)
 /*
  * Periodic tick
  */
+/**
+ * 该段代码是与体系结构无关的时钟中断处理程序，执行完后返回与体系结构相关的时钟中断处理程序
+ * 
+ * 给jiffies_64变量+1
+ * 更新资源消耗的统计值，比如当前进程所消耗的时间
+ * 执行已到期的定时器
+ * 执行scheduler_tick()函数
+ * 更新墙上时间（实际时间），该时间放在xtime变量中
+ * 计算平均负载值
+ */
 static void tick_periodic(int cpu)
 {
+	// 检查当前CPU是否是要执行定时器处理的CPU
 	if (tick_do_timer_cpu == cpu) {
+		// 加锁，确保对xtime_lock和jiffies的独占访问
 		write_seqlock(&xtime_lock);
 
 		/* Keep track of the next tick event */
+		// 记录下一个节拍事件
+		// 更新下一个节拍事件的时间，将当前的tick_period值加到tick_next_period上
 		tick_next_period = ktime_add(tick_next_period, tick_period);
 
-		do_timer(1);
+		do_timer(1);	// 对jiffies_64加1，根据流逝的时间更新墙上时钟，更新系统的平均负载统计值
+		// 解锁，释放对xtime_lock的访问
 		write_sequnlock(&xtime_lock);
 	}
 
+	// 调用该函数更新所耗费的各种节拍数，触发软中断去执行已经到期的动态定时器。
+	// user_mode通过检查CS寄存器的低2位来判断是在内核空间还是在用户空间
 	update_process_times(user_mode(get_irq_regs()));
+	// 进行CPU性能分析
 	profile_tick(CPU_PROFILING);
+	// 执行完后返回与体系结构相关的时钟中断处理程序
 }
 
 /*
  * Event handler for periodic ticks
  */
+// 周期性时钟的事件处理程序
 void tick_handle_periodic(struct clock_event_device *dev)
 {
 	int cpu = smp_processor_id();
@@ -162,7 +186,7 @@ static void tick_setup_device(struct tick_device *td,
 		if (tick_do_timer_cpu == TICK_DO_TIMER_BOOT) {
 			tick_do_timer_cpu = cpu;
 			tick_next_period = ktime_get();
-			tick_period = ktime_set(0, NSEC_PER_SEC / HZ);
+			tick_period = ktime_set(0, NSEC_PER_SEC / HZ);	// 设置sec和nsec，分别为0和一个时钟中断所经过的纳秒数
 		}
 
 		/*

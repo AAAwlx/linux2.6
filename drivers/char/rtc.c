@@ -235,7 +235,12 @@ static inline unsigned char rtc_is_updating(void)
  *	architecture should implement in the timer code.
  *	(See ./arch/XXXX/kernel/time.c for the set_rtc_mmss() function.)
  */
+<<<<<<< HEAD
 // rtc（real-time clock）中断处理程序
+=======
+// RTC驱动程序装载时，rtc_init会被调用，对这个驱动初始化，同时也注册下面这个中断处理程序，
+// rtc（real-time clock）中断处理程序，用于设置系统时钟，提供报警器（alarm）或周期性定时器。
+>>>>>>> ccc/main
 static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 {
 	/*
@@ -251,16 +256,26 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 	 */
 
 	spin_lock(&rtc_lock);		// 自旋锁，保证rtc_irq_dat不被其他SMP机器上其他处理器同时访问
+<<<<<<< HEAD
 	rtc_irq_data += 0x100;
 	rtc_irq_data &= ~0xff;
+=======
+	rtc_irq_data += 0x100;	// 增加rtc_irq_data的值，用于记录自上次读取后接收到的中断数量。
+	rtc_irq_data &= ~0xff;	// 清除低8位，准备设置新的中断状态。
+>>>>>>> ccc/main
 	if (is_hpet_enabled()) {
 		/*
 		 * In this case it is HPET RTC interrupt handler
 		 * calling us, with the interrupt information
 		 * passed as arg1, instead of irq.
 		 */
-		rtc_irq_data |= (unsigned long)irq & 0xF0;
+		/*
+		 * 在这种情况下，是HPET（高精度事件定时器）的RTC中断处理程序调用了我们，
+		 * 使用的是作为arg1传递的中断信息，而不是irq。
+		 */
+		rtc_irq_data |= (unsigned long)irq & 0xF0;	// 使用HPET中断的信息更新rtc_irq_data的状态。
 	} else {
+		// 使用CMOS中读取的中断标志来更新rtc_irq_data的状态。
 		rtc_irq_data |= (CMOS_READ(RTC_INTR_FLAGS) & 0xF0);
 	}
 
@@ -273,12 +288,16 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
 	/* Now do the rest of the actions */
 	// 现在执行其余操作，此处会执行一个可能被预先设置好的回调函数。RTC驱动程序注册一个回调函数，并在每个RTC中断到来时执行。
 	spin_lock(&rtc_task_lock);	// 加锁为了避免rtc_callback出现相同的情况（和第一次加锁原因相同）
+<<<<<<< HEAD
 	if (rtc_callback)
+=======
+	if (rtc_callback)	// 如果设置了回调函数，执行它。
+>>>>>>> ccc/main
 		rtc_callback->func(rtc_callback->private_data);
 	spin_unlock(&rtc_task_lock);
-	wake_up_interruptible(&rtc_wait);
+	wake_up_interruptible(&rtc_wait);	// 唤醒等待RTC事件的进程。
 
-	kill_fasync(&rtc_async_queue, SIGIO, POLL_IN);
+	kill_fasync(&rtc_async_queue, SIGIO, POLL_IN);	// 发送一个异步信号给注册了这个队列的进程。
 
 	// 这个中断处理程序不支持共享，而且RTC也没有用来测试虚假的机制，所以总返回IRQ_HANDLED
 	return IRQ_HANDLED;
@@ -1006,7 +1025,11 @@ found:
 	 * XXX Interrupt pin #7 in Espresso is shared between RTC and
 	 * PCI Slot 2 INTA# (and some INTx# in Slot 1).
 	 */
+<<<<<<< HEAD
 	// 对rtc_irq注册rtc_interrupt
+=======
+	// 对rtc_irq注册rtc_interrupt，共享中断线
+>>>>>>> ccc/main
 	if (request_irq(rtc_irq, rtc_interrupt, IRQF_SHARED, "rtc",
 			(void *)&rtc_port)) {
 		rtc_has_irq = 0;

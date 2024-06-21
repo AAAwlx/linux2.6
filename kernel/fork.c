@@ -193,6 +193,9 @@ void __init fork_init(unsigned long mempages)
 #define ARCH_MIN_TASKALIGN	L1_CACHE_BYTES
 #endif
 	/* create a slab on which task_structs can be allocated */
+	// 内核初始化期间，创建一个名为task_struct的高速缓存，其中存放的类型为struct taks_struct的对象。
+	// 该对象被创建后存放在slab中偏移量为ARCH_MIN_TASKALIGN个字节的地方。不需要检查返回值，因为SLAB_PANIC已经被设置。
+	// 如果分配失败，slab分配器就会调用panic()函数。
 	task_struct_cachep =
 		kmem_cache_create("task_struct", sizeof(struct task_struct),
 			ARCH_MIN_TASKALIGN, SLAB_PANIC | SLAB_NOTRACK, NULL);
@@ -227,7 +230,7 @@ int __attribute__((weak)) arch_dup_task_struct(struct task_struct *dst,
 	return 0;
 }
 
-// 为新进程创建一个内核栈，thread_info结构和task_struct，此值与父进程完全相同
+// 为新进程创建一个内核栈，thread_info结构和task_struct，此值与父进程完全相同.该函数被do_fork调用
 static struct task_struct *dup_task_struct(struct task_struct *orig)
 {
 	struct task_struct *tsk;
@@ -238,12 +241,14 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 
 	prepare_to_copy(orig);
 
+	// 分配一个进程描述符，该宏是kmem_cache_alloc(task_struct_cachep, GFP_KERNEL)的封装
 	tsk = alloc_task_struct();
 	if (!tsk)
 		return NULL;
 
 	ti = alloc_thread_info(tsk);
 	if (!ti) {
+		// 释放进程描述符,并返回给task_struct_cachep的slab高速缓存,free_task_struct宏是kmem_cache_free(task_struct_cachep, (tsk))的封装
 		free_task_struct(tsk);
 		return NULL;
 	}
@@ -432,6 +437,7 @@ static inline void mm_free_pgd(struct mm_struct * mm)
 
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(mmlist_lock);
 
+// 从mm_cachep的slab中分配一个mm_struct
 #define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))
 #define free_mm(mm)	(kmem_cache_free(mm_cachep, (mm)))
 
@@ -491,6 +497,7 @@ struct mm_struct * mm_alloc(void)
 {
 	struct mm_struct * mm;
 
+	// 从mm_cachep的slab中分配一个mm_struct
 	mm = allocate_mm();
 	if (mm) {
 		memset(mm, 0, sizeof(*mm));
@@ -504,12 +511,37 @@ struct mm_struct * mm_alloc(void)
  * is dropped: either by a lazy thread or by
  * mmput. Free the page directory and the mm.
  */
+/*
+ * 当mm的最后一个引用被释放时调用此函数：可能是由于懒惰线程或者通过mmput调用。
+ * 释放页目录和mm。
+ */
 void __mmdrop(struct mm_struct *mm)
 {
+	/*
+     * 检查mm是否指向init_mm（初始化的内存管理结构）。
+     * 如果是，则触发BUG_ON宏，这通常会导致内核崩溃。
+     * 这是一个安全检查，以确保不会释放内核的初始化内存管理结构。
+     */
 	BUG_ON(mm == &init_mm);
+	/*
+	 * 释放mm使用的页全局目录（page global directory）。
+	 * 这是管理页表的顶层结构，释放它意味着释放与该mm关联的所有页表结构。
+	 */
 	mm_free_pgd(mm);
+	/*
+   * 销毁与mm关联的任何CPU上下文信息。
+   * 这个步骤确保所有与进程相关的硬件上下文被正确地清理，如TLB（Translation Lookaside Buffer）条目。
+   */
 	destroy_context(mm);
+	/*
+   * 通知所有注册的MMU（内存管理单元）通知者，该mm即将被销毁。
+   * 这允许外部模块做一些必要的清理工作。
+   */
 	mmu_notifier_mm_destroy(mm);
+	/*
+   * 释放mm结构本身所占用的内存。
+   * 在此之后，mm指向的内存管理结构已经完全释放，不应再被访问。
+   */
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -517,23 +549,41 @@ EXPORT_SYMBOL_GPL(__mmdrop);
 /*
  * Decrement the use count and release all resources for an mm.
  */
+/*
+ * 减少内存描述符的使用计数并释放所有资源。
+ */
+// 减少内存描述符中的mm_users用户计数，如果用户计数降为0将调用mmdrop函数，减少mm_count计数
+// 如果mm_count也为0,将调用free_mm，free_mm宏通过kmem_cache_free将内存还给mm_cachep 的slab
 void mmput(struct mm_struct *mm)
 {
+	/* 可能会睡眠，因此调用者不能在中断上下文中 */
 	might_sleep();
 
+	/* 原子减少mm_users并检测结果是否为0 */
 	if (atomic_dec_and_test(&mm->mm_users)) {
+		/* 清理异步IO上下文 */
 		exit_aio(mm);
+		/* 退出内核同页合并KSM */
 		ksm_exit(mm);
+		/* 卸载映射的内存区域 */
 		exit_mmap(mm);
+		/* 清除指向可执行文件的引用 */
 		set_mm_exe_file(mm, NULL);
+		/* 如果mm结构在mmlist列表中，则将其删除 */
 		if (!list_empty(&mm->mmlist)) {
+			/* 锁定mmlist */
 			spin_lock(&mmlist_lock);
+			/* 从列表中删除mm */
 			list_del(&mm->mmlist);
+			/* 解锁mmlist */
 			spin_unlock(&mmlist_lock);
 		}
+		/* 释放交换令牌 */
 		put_swap_token(mm);
+		/* 如果有二进制格式模块，减少其使用计数 */
 		if (mm->binfmt)
 			module_put(mm->binfmt->module);
+		/* 减少内存描述符的mm_count计数，可能释放内存描述符 */
 		mmdrop(mm);
 	}
 }
@@ -634,39 +684,53 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
  * Allocate a new mm structure and copy contents from the
  * mm structure of the passed in task structure.
  */
+/**
+ * 分配一个新的 mm 结构并从传入的任务结构的 mm 结构复制内容。
+ */
 struct mm_struct *dup_mm(struct task_struct *tsk)
 {
+	// oldmm 指向当前任务的内存管理结构
 	struct mm_struct *mm, *oldmm = current->mm;
 	int err;
 
 	if (!oldmm)
-		return NULL;
+		return NULL;	// 如果当前任务没有内存管理结构，则返回 NULL
 
+	// 从mm_cachep的slab中分配一个mm_struct
 	mm = allocate_mm();
 	if (!mm)
 		goto fail_nomem;
 
+	// 复制内存管理结构
 	memcpy(mm, oldmm, sizeof(*mm));
 
 	/* Initializing for Swap token stuff */
+	/* 初始化交换令牌信息 */
 	mm->token_priority = 0;
 	mm->last_interval = 0;
 
 	if (!mm_init(mm, tsk))
+		// 初始化 mm 失败，跳转到 fail_nomem
 		goto fail_nomem;
 
+	// 初始化新的内存上下文失败，跳转到 fail_nocontext
 	if (init_new_context(tsk, mm))
 		goto fail_nocontext;
 
+	// 复制可执行文件引用
 	dup_mm_exe_file(oldmm, mm);
 
+	// 复制内存映射
 	err = dup_mmap(mm, oldmm);
 	if (err)
 		goto free_pt;
 
+	// 设置新 mm 的最高常驻集大小
 	mm->hiwater_rss = get_mm_rss(mm);
+	// 设置新 mm 的最高虚拟内存大小
 	mm->hiwater_vm = mm->total_vm;
 
+	// 尝试增加二进制格式处理模块的引用计数，失败则跳转
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
 
@@ -674,10 +738,12 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 
 free_pt:
 	/* don't put binfmt in mmput, we haven't got module yet */
+	// 清理资源的代码
 	mm->binfmt = NULL;
-	mmput(mm);
+	mmput(mm);	// 释放 mm 结构
 
 fail_nomem:
+	// 内存分配失败，返回 NULL
 	return NULL;
 
 fail_nocontext:
@@ -685,56 +751,64 @@ fail_nocontext:
 	 * If init_new_context() failed, we cannot use mmput() to free the mm
 	 * because it calls destroy_context()
 	 */
-	mm_free_pgd(mm);
-	free_mm(mm);
+	// 初始化新上下文失败，需要特殊处理来释放 mm
+	mm_free_pgd(mm); // 释放页全局目录
+	free_mm(mm); // 释放 mm 结构
 	return NULL;
 }
 
+// 复制进程的内存描述符
 static int copy_mm(unsigned long clone_flags, struct task_struct * tsk)
 {
 	struct mm_struct * mm, *oldmm;
 	int retval;
 
+	// 初始化新进程的缺页计数器
 	tsk->min_flt = tsk->maj_flt = 0;
+	// 初始化新进程的上下文切换计数器
 	tsk->nvcsw = tsk->nivcsw = 0;
 #ifdef CONFIG_DETECT_HUNG_TASK
+	// 初始化检测僵死任务的切换计数
 	tsk->last_switch_count = tsk->nvcsw + tsk->nivcsw;
 #endif
 
-	tsk->mm = NULL;
-	tsk->active_mm = NULL;
+	tsk->mm = NULL;	// 初始化新进程的内存描述符指针
+	tsk->active_mm = NULL;	// 初始化新进程的活跃内存区域指针
 
 	/*
 	 * Are we cloning a kernel thread?
 	 *
 	 * We need to steal a active VM for that..
 	 */
-	oldmm = current->mm;
+	oldmm = current->mm;	// 获取当前进程的内存描述符
 	if (!oldmm)
-		return 0;
+		return 0;	// 如果当前进程没有内存描述符（即为内核线程），则直接返回
 
+	// 检查是否共享内存空间
 	if (clone_flags & CLONE_VM) {
-		atomic_inc(&oldmm->mm_users);
-		mm = oldmm;
-		goto good_mm;
+		// 存在CLONE_VM标志时，不需要调用allocate_mm分配mm_struct函数，只需要将oldmm的mm_users加1,并赋值给新进程即可。
+		atomic_inc(&oldmm->mm_users);	// 增加旧内存描述符的引用计数
+		mm = oldmm;	// 新进程使用相同的内存描述符
+		goto good_mm;	// 跳转到设置新进程的内存描述符
 	}
 
-	retval = -ENOMEM;
+	retval = -ENOMEM;	// 默认设置错误码为内存不足
+	// 复制父进程的mm给子进程
 	mm = dup_mm(tsk);
 	if (!mm)
-		goto fail_nomem;
+		goto fail_nomem;	// 如果复制失败，跳转到错误处理
 
 good_mm:
 	/* Initializing for Swap token stuff */
-	mm->token_priority = 0;
-	mm->last_interval = 0;
+	mm->token_priority = 0;	// 初始化交换令牌优先级
+	mm->last_interval = 0;	// 初始化最后间隔
 
-	tsk->mm = mm;
-	tsk->active_mm = mm;
+	tsk->mm = mm;	// 设置新进程的内存描述符
+	tsk->active_mm = mm;	// 设置新进程的活跃内存区域
 	return 0;
 
 fail_nomem:
-	return retval;
+	return retval;	// 返回内存不足错误
 }
 
 static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
@@ -1139,6 +1213,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto bad_fork_cleanup_fs;
 	if ((retval = copy_signal(clone_flags, p)))
 		goto bad_fork_cleanup_sighand;
+	// 复制进程的内存描述符
 	if ((retval = copy_mm(clone_flags, p)))
 		goto bad_fork_cleanup_signal;
 	if ((retval = copy_namespaces(clone_flags, p)))
@@ -1476,7 +1551,8 @@ static void sighand_ctor(void *data)
 }
 
 void __init proc_caches_init(void)
-{
+{	
+	// 创建高速缓存（slab），然后通过kmem_cache_alloc从高速缓存中分配
 	sighand_cachep = kmem_cache_create("sighand_cache",
 			sizeof(struct sighand_struct), 0,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_DESTROY_BY_RCU|

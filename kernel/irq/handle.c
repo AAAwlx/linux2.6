@@ -378,7 +378,11 @@ irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
 	irqreturn_t ret, retval = IRQ_NONE;
 	unsigned int status = 0;
 
+<<<<<<< HEAD
 	// 因为处理器禁止中断，这里要把它打开，就必须在处理程序注册期间指定IRQF_DISABLE标志。
+=======
+	// 因为处理器禁止中断，这里要把它打开，就必须在处理程序注册期间指定未IRQF_DISABLE标志。
+>>>>>>> ccc/main
 	if (!(action->flags & IRQF_DISABLED))
 		local_irq_enable_in_hardirq();
 

@@ -1,6 +1,8 @@
 /*
  * elevator noop
  */
+
+// 空操作的I/O调度程序
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
 #include <linux/bio.h>
@@ -85,6 +87,7 @@ static void noop_exit_queue(struct elevator_queue *e)
 	kfree(nd);
 }
 
+// 定义空操作IO调度
 static struct elevator_type elevator_noop = {
 	.ops = {
 		.elevator_merge_req_fn		= noop_merged_requests,

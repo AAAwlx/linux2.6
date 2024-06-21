@@ -6,6 +6,8 @@
  *
  *  Copyright (C) 2003 Jens Axboe <axboe@kernel.dk>
  */
+
+// 完全公正的排队I/O调度程序
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/blkdev.h>
@@ -3866,6 +3868,7 @@ static struct elv_fs_entry cfq_attrs[] = {
 	__ATTR_NULL
 };
 
+// 定义cfq IO 调度
 static struct elevator_type iosched_cfq = {
 	.ops = {
 		.elevator_merge_fn = 		cfq_merge,

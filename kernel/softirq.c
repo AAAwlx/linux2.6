@@ -48,7 +48,7 @@
  */
 
 #ifndef __ARCH_IRQ_STAT
-irq_cpustat_t irq_stat[NR_CPUS] ____cacheline_aligned;
+irq_cpustat_t irq_stat[NR_CPUS] ____cacheline_aligned;	// 每个cpu一个irq_stat
 EXPORT_SYMBOL(irq_stat);
 #endif
 
@@ -123,7 +123,11 @@ static inline void __local_bh_disable(unsigned long ip)
 }
 #endif /* CONFIG_TRACE_IRQFLAGS */
 
+<<<<<<< HEAD
 // 通过增加preempt_count禁止本地中断下半部。有几次local_bh_disable，就需要有几次local_bh_enable
+=======
+// 通过增加preempt_count禁止本地中断的下半部(软中断和tasklet)。有几次local_bh_disable，就需要有几次local_bh_enable
+>>>>>>> ccc/main
 void local_bh_disable(void)
 {
 	__local_bh_disable((unsigned long)__builtin_return_address(0));
@@ -165,6 +169,7 @@ static inline void _local_bh_enable_ip(unsigned long ip)
  	 */
  	sub_preempt_count(SOFTIRQ_OFFSET - 1);
 
+	// 不在软中断和硬中断中，并且有软中断待处理
 	if (unlikely(!in_interrupt() && local_softirq_pending()))
 		do_softirq();
 
@@ -175,7 +180,11 @@ static inline void _local_bh_enable_ip(unsigned long ip)
 	preempt_check_resched();
 }
 
+<<<<<<< HEAD
 // 通过减少preempt_count来激活本地下半部。有几次local_bh_disable，就需要有几次local_bh_enable
+=======
+// 通过减少preempt_count来激活本地中断的下半部。有几次local_bh_disable，就需要有几次local_bh_enable
+>>>>>>> ccc/main
 // 如果preempt_count返回值为0,则将导致自动激活下半部（即该函数内部判断preempt_count是否为0,如果为0就主动调用do_softirq()）
 void local_bh_enable(void)
 {
@@ -197,6 +206,11 @@ EXPORT_SYMBOL(local_bh_enable_ip);
  * The two things to balance is latency against fairness -
  * we want to handle softirqs as soon as possible, but they
  * should not be able to lock up the box.
+ */
+/*
+ * 定义了软中断（softirq）处理的重启次数上限。如果处理次数达到这个上限，
+ * 之后的处理会退回到软中断守护进程（softirqd）进行。这个上限值是通过实验确定的。
+ * 要平衡的两个因素是延迟与公平性——我们希望尽可能快地处理软中断，但它们不应该导致系统锁死。
  */
 #define MAX_SOFTIRQ_RESTART 10
 
@@ -251,13 +265,18 @@ restart:
 
 	local_irq_disable();		// 关中断
 
-	pending = local_softirq_pending();
+	pending = local_softirq_pending();	// 再次获取软中断位图
+	// 如果还有软中断没处理（因为软中断中可能调用raise_softirq再次触发软中断）而且最大重启次数大与0,就再次去处理软中断
 	if (pending && --max_restart)
 		goto restart;
 
 	// 只要do_softirq()函数发现已经执行过的内核线程重新触发了它自己，软中断内核线程就会被唤醒
 	// 唤醒ksoftirqd，即执行软中断的内核线程
+<<<<<<< HEAD
 	if (pending)
+=======
+	if (pending)	// 如果还有软中断没处理就唤醒softirqd/n
+>>>>>>> ccc/main
 		wakeup_softirqd();
 
 	lockdep_softirq_exit();
@@ -276,7 +295,7 @@ asmlinkage void do_softirq(void)
 	__u32 pending;	// 全局变量pending保存local_softirq_pending的返回值，它时待处理的软中断的32位位图，如果第n位被设置为1,那么对应类型的软中断等待处理
 	unsigned long flags;
 
-	if (in_interrupt())
+	if (in_interrupt())		// 已经在中断中（软中断或硬中断）
 		return;
 
 	local_irq_save(flags);		// 禁用中断，防止在保存位图和清除它的间隙，有一个新的软中断，这可能会造成对待次处理的位进行不应该的清0
@@ -460,7 +479,11 @@ static void tasklet_action(struct softirq_action *a)
 					BUG();
 				t->func(t->data);			// 执行tasklet
 				tasklet_unlock(t);		// 清除tasklet的state域的TASKLET_STATE_RUN状态标志
+<<<<<<< HEAD
 				continue;
+=======
+				continue;							// 进入下次循环执行下一个tasklet
+>>>>>>> ccc/main
 			}
 			tasklet_unlock(t);
 		}
@@ -528,7 +551,7 @@ EXPORT_SYMBOL(tasklet_init);
 // 在处理一个经常重新调度它自身的tasklet的时候，从挂起队列中移除已调度的tasklet很有用。该函数首先等待tasklet执行完，再将它移去
 void tasklet_kill(struct tasklet_struct *t)
 {
-	if (in_interrupt())
+	if (in_interrupt())	// 检查是否在软中断或中断中
 		printk("Attempt to kill tasklet from interrupt\n");
 
 	// 检查tasklet是否正在等待调度，如果正在等待调度就进入循环。
@@ -719,6 +742,7 @@ static struct notifier_block __cpuinitdata remote_softirq_cpu_notifier = {
 	.notifier_call	= remote_softirq_cpu_notify,
 };
 
+// 初始化软中断
 void __init softirq_init(void)
 {
 	int cpu;
@@ -748,8 +772,13 @@ static int run_ksoftirqd(void * __bind_cpu)
 	// 只要do_softirq()函数发现已经执行过的内核线程重新触发了它自己，软中断内核线程就会被唤醒
 	while (!kthread_should_stop()) {
 		// 一直死循环
+<<<<<<< HEAD
 		preempt_disable();
 		if (!local_softirq_pending()) {
+=======
+		preempt_disable();	// 禁止内核抢占
+		if (!local_softirq_pending()) {	// 没有任何软中断触发
+>>>>>>> ccc/main
 			preempt_enable_no_resched();
 			schedule();
 			preempt_disable();
@@ -761,7 +790,7 @@ static int run_ksoftirqd(void * __bind_cpu)
 			/* Preempt disable stops cpu going offline.
 			   If already offline, we'll be on wrong CPU:
 			   don't process */
-			if (cpu_is_offline((long)__bind_cpu))
+			if (cpu_is_offline((long)__bind_cpu))	// cpu离线
 				goto wait_to_die;
 			do_softirq();		// 执行软中断
 			preempt_enable_no_resched();
@@ -798,17 +827,29 @@ wait_to_die:
  *
  * When this function is called, @cpu must be in the CPU_DEAD state.
  */
+/*
+ * 当调用tasklet_kill_immediate时，用于移除一个可能已经被安排在@cpu上执行的tasklet。
+ *
+ * 与tasklet_kill不同，此函数_立即_移除tasklet，即使tasklet处于TASKLET_STATE_SCHED状态。
+ *
+ * 调用此函数时，@cpu必须处于CPU_DEAD状态。
+ */
 void tasklet_kill_immediate(struct tasklet_struct *t, unsigned int cpu)
 {
 	struct tasklet_struct **i;
 
+	// 确保指定的CPU已经离线，如果还在线则报错。
 	BUG_ON(cpu_online(cpu));
+	// 确保tasklet没有在运行，如果在运行则报错。
 	BUG_ON(test_bit(TASKLET_STATE_RUN, &t->state));
 
+	// 如果tasklet没有被调度执行，就直接返回。
 	if (!test_bit(TASKLET_STATE_SCHED, &t->state))
 		return;
 
 	/* CPU is dead, so no lock needed. */
+	/* 由于CPU已经死亡，所以不需要锁。 */
+	// 遍历指定CPU的tasklet向量，查找并移除指定的tasklet。
 	for (i = &per_cpu(tasklet_vec, cpu).head; *i; i = &(*i)->next) {
 		if (*i == t) {
 			*i = t->next;
@@ -818,6 +859,7 @@ void tasklet_kill_immediate(struct tasklet_struct *t, unsigned int cpu)
 			return;
 		}
 	}
+	// 如果遍历结束都没有找到指定的tasklet，则报错。
 	BUG();
 }
 

@@ -20,7 +20,16 @@ struct vfsmount;
  * (C) Copyright 1997 Thomas Schoebel-Theuer,
  * with heavy changes by Linus Torvalds
  */
+/*
+ * linux/include/linux/dcache.h
+ *
+ * 目录项缓存（Dirent cache）数据结构
+ *
+ * (C) 版权1997 Thomas Schoebel-Theuer,
+ * 经过Linus Torvalds的重大修改
+ */
 
+// 宏定义，用于判断给定的目录项是否是根目录项
 #define IS_ROOT(x) ((x) == (x)->d_parent)
 
 /*
@@ -30,26 +39,35 @@ struct vfsmount;
  * hash comes first so it snuggles against d_parent in the
  * dentry.
  */
+/*
+ * “快速字符串”（quick string）-- 简化参数传递，并且更重要的是，
+ * 保存了字符串的“元数据”（即长度和哈希值）。
+ *
+ * 哈希值位于首位，因此它可以紧靠在dentry的d_parent成员旁边。
+ */
 struct qstr {
-	unsigned int hash;
-	unsigned int len;
-	const unsigned char *name;
+	unsigned int hash;		// 字符串的哈希值
+	unsigned int len;			// 字符串的长度
+	const unsigned char *name;		// 指向字符串的指针
 };
 
+// 目录项统计结构
 struct dentry_stat_t {
-	int nr_dentry;
-	int nr_unused;
-	int age_limit;          /* age in seconds */
-	int want_pages;         /* pages requested by system */
-	int dummy[2];
+	int nr_dentry;          // 目录项数量
+	int nr_unused;          // 未使用的目录项数量
+	int age_limit;          // 目录项的年龄限制（秒）
+	int want_pages;         // 系统请求的页面数量
+	int dummy[2];           // 预留字段
 };
-extern struct dentry_stat_t dentry_stat;
+extern struct dentry_stat_t dentry_stat;	// 声明一个全局的目录项统计结构
 
 /* Name hashing routines. Initial hash value */
 /* Hash courtesy of the R5 hash in reiserfs modulo sign bits */
+/* 名称哈希函数的初始化值 */
 #define init_name_hash()		0
 
 /* partial hash update function. Assume roughly 4 bits per character */
+/* 部分哈希更新函数。假设每个字符大约占4位 */
 static inline unsigned long
 partial_name_hash(unsigned long c, unsigned long prevhash)
 {
@@ -60,12 +78,16 @@ partial_name_hash(unsigned long c, unsigned long prevhash)
  * Finally: cut down the number of bits to a int value (and try to avoid
  * losing bits)
  */
+/*
+ * 最后：减少位数到一个整数值（尝试避免丢失位）
+ */
 static inline unsigned long end_name_hash(unsigned long hash)
 {
 	return (unsigned int) hash;
 }
 
 /* Compute the hash for a name string. */
+/* 计算字符串名称的哈希值 */
 static inline unsigned int
 full_name_hash(const unsigned char *name, unsigned int len)
 {
@@ -80,43 +102,72 @@ full_name_hash(const unsigned char *name, unsigned int len)
  * give reasonable cacheline footprint with larger lines without the
  * large memory footprint increase).
  */
+
+/*
+ * 尝试使结构体dentry在64字节缓存行上对齐（这将在不增加
+ * 大量内存占用的情况下，对于更大的缓存行提供合理的缓存行足迹）。
+ */
 #ifdef CONFIG_64BIT
 #define DNAME_INLINE_LEN_MIN 32 /* 192 bytes */
 #else
 #define DNAME_INLINE_LEN_MIN 40 /* 128 bytes */
 #endif
 
+/* 目录项对象结构 */
 struct dentry {
-	atomic_t d_count;
-	unsigned int d_flags;		/* protected by d_lock */
-	spinlock_t d_lock;		/* per dentry lock */
-	int d_mounted;
+	/**
+	 * 每个目录项对象都有3种状态：被使用，未使用和负状态
+	 * 被使用：对应一个有效的索引节点（d_inode指向相应的索引节点），并且该对象由一个或多个使用者(d_count为正值)
+	 * 未使用：对应一个有效的索引节点，但是VFS当前并没有使用这个目录项(d_count为0)
+	 * 负状态：没有对应的有效索引节点（d_inode为NULL），因为索引节点被删除或者路径不存在了，但目录项仍然保留，以便快速解析以后的路径查询。
+	 */
+	// 目录项对象引用计数器  
+	atomic_t d_count;		/* 使用计数 */
+	unsigned int d_flags;		/* protected by d_lock */		/* 目录项标识 */
+	spinlock_t d_lock;		/* per dentry lock */		/* 单目录项锁 */
+	/* 表示dentry是否是一个挂载点，如果是挂载点，该成员不为0 */
+	int d_mounted;		/* 是否是挂载点 */
+	// inode节点的指针，便于快速找到对应的索引节点
 	struct inode *d_inode;		/* Where the name belongs to - NULL is
-					 * negative */
+					 * negative */		/* 相关联的索引节点 */
 	/*
 	 * The next three fields are touched by __d_lookup.  Place them here
 	 * so they all fit in a cache line.
 	 */
-	struct hlist_node d_hash;	/* lookup hash list */
-	struct dentry *d_parent;	/* parent directory */
-	struct qstr d_name;
+	/* 链接到dentry_hashtable的hash链表 */
+	// dentry_hashtable哈希表维护在内存中的所有目录项，哈希表中每个元素都是一个双向循环链表，
+	// 用于维护哈希值相等的目录项，这个双向循环链表是通过dentry中的d_hash成员来链接在一起的。
+	// 利用d_lookup函数查找散列表，如果该函数在dcache中发现了匹配的目录项对象，则匹配对象被返回，
+	// 否则，返回NULL指针。
+	struct hlist_node d_hash;	/* lookup hash list */		/* 散列表 */
+	/* 指向父dentry结构的指针 */  
+	struct dentry *d_parent;	/* parent directory */		/* 父目录的目录项对象 */
+	// 文件名  
+	struct qstr d_name;		/* 目录项名称 */
 
-	struct list_head d_lru;		/* LRU list */
+	struct list_head d_lru;		/* LRU list */	/* 未使用的链表 */
 	/*
 	 * d_child and d_rcu can share memory
 	 */
 	union {
-		struct list_head d_child;	/* child of parent list */
-	 	struct rcu_head d_rcu;
+		struct list_head d_child;	/* child of parent list */	/* 目录项内部形成的链表 */
+	 	struct rcu_head d_rcu;		/* RCU加锁 */
 	} d_u;
-	struct list_head d_subdirs;	/* our children */
-	struct list_head d_alias;	/* inode alias list */
-	unsigned long d_time;		/* used by d_revalidate */
-	const struct dentry_operations *d_op;
-	struct super_block *d_sb;	/* The root of the dentry tree */
-	void *d_fsdata;			/* fs-specific data */
+	/* 是子项的链表头，子项可能是目录也可能是文件，所有子项都要链接到这个链表， */ 
+	// 某目录的d_subdirs与该目录下所有文件的d_child成员一起形成一个双向循环链表，
+	// 将该目录下的所有文件连接在一起，目的是保留文件的目录结构，即一个d_subdirs和
+	// 多个d_child一起形成链表，d_subdirs对应文件在d_child对应文件的上一层目录。
+	struct list_head d_subdirs;	/* our children */		/* 子目录链表 */
+	// d_alias会插入到对应inode的i_dentry链表中
+	struct list_head d_alias;	/* inode alias list */	/* 索引节点别名链表 */
+	unsigned long d_time;		/* used by d_revalidate */	/* 重置时间 */
+	// 指向dentry对应的操作函数集
+	const struct dentry_operations *d_op;	/* 目录项操作相关函数 */
+	// 指向对应超级块的指针
+	struct super_block *d_sb;	/* The root of the dentry tree */	/* 文件的超级块 */
+	void *d_fsdata;			/* fs-specific data */	/* 文件系统特有数据 */
 
-	unsigned char d_iname[DNAME_INLINE_LEN_MIN];	/* small names */
+	unsigned char d_iname[DNAME_INLINE_LEN_MIN];	/* small names */	/* 短文件名 */
 };
 
 /*
@@ -131,13 +182,27 @@ enum dentry_d_lock_class
 	DENTRY_D_LOCK_NESTED
 };
 
+/* 目录项相关操作函数 */
+// 其中包括内核针对特定目录所能调用的方法,比如d_compare()和d_delete()等方法
 struct dentry_operations {
+	/* 该函数判断目录项对象是否有效。VFS准备从dcache中使用一个目录项时会调用这个函数，
+	 * 大部分文件系统将其置为NULL，因为它们认为dcache(缓存，即dentry_hashtable)目录项对象总是有效的 */
 	int (*d_revalidate)(struct dentry *, struct nameidata *);
+	/* 为目录项对象生成散列值（hash值），当目录项需要加入到散列表中时，VFS调用该函数 */
+	// 散列表为dentry_hashtable，通过该函数计算散列值。
 	int (*d_hash) (struct dentry *, struct qstr *);
-	int (*d_compare) (struct dentry *, struct qstr *, struct qstr *);
+	/* VFS调用该函数来比较name1和name2这两个文件名。多数文件系统使用VFS的默认操作，仅仅作字符串比较。使用该函数时需加dcache_lock锁 */
+	int (*d_compare) (struct dentry *, struct qstr *name1, struct qstr *name2);
+	/* 当目录项对象的 d_count 为0时，VFS调用这个函数。使用该函数时需加dcache_lock锁和目录项的d_lock */
 	int (*d_delete)(struct dentry *);
+	/* 当目录项对象将要被释放时，VFS调用该函数,该函数默认什么也不做 */
 	void (*d_release)(struct dentry *);
+	/* 
+	 * 当目录项对象丢失其索引节点时（也就是磁盘索引节点被删除了），VFS会调用该函数。默认VFS会调用input()释放索引节点。
+	 * 如果文件系统重载了该函数，那么除了执行此文件系统特殊的工作外，还必须调用input()函数。
+	 */
 	void (*d_iput)(struct dentry *, struct inode *);
+	/* 自定义函数用于生成目录项的显示名，通常在调试中使用，用来打印目录项的路径等信息。 */
 	char *(*d_dname)(struct dentry *, char *, int);
 };
 
@@ -301,6 +366,7 @@ extern void d_move(struct dentry *, struct dentry *);
 extern struct dentry *d_ancestor(struct dentry *, struct dentry *);
 
 /* appendix may either be NULL or be used for transname suffixes */
+// 如果在dcache（缓存，即dentry_hashtable）中发现了与其匹配的目录项对象，则匹配的对象被返回，否则返回NULL。
 extern struct dentry * d_lookup(struct dentry *, struct qstr *);
 extern struct dentry * __d_lookup(struct dentry *, struct qstr *);
 extern struct dentry * d_hash_and_lookup(struct dentry *, struct qstr *);
