@@ -54,7 +54,7 @@ static struct backing_dev_info ramfs_backing_dev_info = {
 
 struct inode *ramfs_get_inode(struct super_block *sb, int mode, dev_t dev)
 {
-	struct inode * inode = new_inode(sb);
+	struct inode * inode = new_inode(sb);//这个inode最后在内存中
 
 	if (inode) {
 		inode->i_mode = mode;

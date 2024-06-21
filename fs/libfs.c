@@ -202,6 +202,7 @@ static const struct super_operations simple_super_operations = {
 };
 
 /*
+ *用于创建一个虚拟文件系统（pseudo filesystem）的超级块
  * Common helper for pseudo-filesystems (sockfs, pipefs, bdev - stuff that
  * will never be mountable)
  */
@@ -209,48 +210,52 @@ int get_sb_pseudo(struct file_system_type *fs_type, char *name,
 	const struct super_operations *ops, unsigned long magic,
 	struct vfsmount *mnt)
 {
+	// 分配并初始化超级块（superblock）
 	struct super_block *s = sget(fs_type, NULL, set_anon_super, NULL);
 	struct dentry *dentry;
 	struct inode *root;
 	struct qstr d_name = {.name = name, .len = strlen(name)};
 
+	// 如果超级块分配失败，则返回错误指针
 	if (IS_ERR(s))
 		return PTR_ERR(s);
 
-	s->s_flags = MS_NOUSER;
-	s->s_maxbytes = MAX_LFS_FILESIZE;
-	s->s_blocksize = PAGE_SIZE;
-	s->s_blocksize_bits = PAGE_SHIFT;
-	s->s_magic = magic;
-	s->s_op = ops ? ops : &simple_super_operations;
-	s->s_time_gran = 1;
+	// 初始化超级块的各种字段
+	s->s_flags = MS_NOUSER;                    // 标记超级块不允许用户直接访问
+	s->s_maxbytes = MAX_LFS_FILESIZE;          // 设置文件系统支持的最大文件大小
+	s->s_blocksize = PAGE_SIZE;                // 设置块大小为页面大小
+	s->s_blocksize_bits = PAGE_SHIFT;          // 设置块大小的位移量
+	s->s_magic = magic;                        // 设置文件系统的魔数，用于标识文件系统类型
+	s->s_op = ops ? ops : &simple_super_operations; // 设置超级块操作指针
+	s->s_time_gran = 1;                        // 设置时间粒度
+
+	// 创建根目录 inode
 	root = new_inode(s);
 	if (!root)
 		goto Enomem;
-	/*
-	 * since this is the first inode, make it number 1. New inodes created
-	 * after this must take care not to collide with it (by passing
-	 * max_reserved of 1 to iunique).
-	 */
-	root->i_ino = 1;
-	root->i_mode = S_IFDIR | S_IRUSR | S_IWUSR;
-	root->i_atime = root->i_mtime = root->i_ctime = CURRENT_TIME;
+
+	// 设置根目录 inode 的属性
+	root->i_ino = 1;                           // 将根目录 inode 编号设置为 1
+	root->i_mode = S_IFDIR | S_IRUSR | S_IWUSR; // 设置根目录的模式为目录，可读可写
+	root->i_atime = root->i_mtime = root->i_ctime = CURRENT_TIME; // 设置时间戳
+
+	// 分配并初始化目录项（dentry）
 	dentry = d_alloc(NULL, &d_name);
 	if (!dentry) {
-		iput(root);
+		iput(root);  // 释放 inode
 		goto Enomem;
 	}
-	dentry->d_sb = s;
-	dentry->d_parent = dentry;
-	d_instantiate(dentry, root);
-	s->s_root = dentry;
-	s->s_flags |= MS_ACTIVE;
-	simple_set_mnt(mnt, s);
-	return 0;
+	dentry->d_sb = s;          // 将超级块指针赋给目录项
+	dentry->d_parent = dentry; // 将父目录项指针指向自己（根目录的父目录就是自己）
+	d_instantiate(dentry, root); // 将 inode 与目录项关联
+	s->s_root = dentry;        // 将目录项赋给超级块的根目录项指针
+	s->s_flags |= MS_ACTIVE;   // 标记超级块为活跃状态
+	simple_set_mnt(mnt, s);    // 设置挂载点的超级块
+	return 0;                  // 返回成功
 
 Enomem:
-	deactivate_locked_super(s);
-	return -ENOMEM;
+	deactivate_locked_super(s); // 释放超级块
+	return -ENOMEM;             // 返回内存不足错误
 }
 
 int simple_link(struct dentry *old_dentry, struct inode *dir, struct dentry *dentry)

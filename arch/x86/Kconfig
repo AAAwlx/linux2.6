@@ -1,6 +1,3 @@
-# x86 configuration
-mainmenu "Linux Kernel Configuration for x86"
-
 # Select 32 or 64 bit
 config 64BIT
 	bool "64-bit kernel" if ARCH = "x86"
@@ -241,11 +238,10 @@ config X86_32_LAZY_GS
 config KTIME_SCALAR
 	def_bool X86_32
 source "init/Kconfig"
-source "kernel/Kconfig.freezer"
 
 menu "Processor type and features"
 
-source "kernel/time/Kconfig"
+# source "kernel/time/Kconfig"
 
 config SMP
 	bool "Symmetric multi-processing support"
@@ -506,7 +502,7 @@ menuconfig PARAVIRT_GUEST
 
 if PARAVIRT_GUEST
 
-source "arch/x86/xen/Kconfig"
+# source "arch/x86/xen/Kconfig"
 
 config VMI
 	bool "VMI Guest support (DEPRECATED)"
@@ -545,7 +541,7 @@ config KVM_GUEST
 	  This option enables various optimizations for running under the KVM
 	  hypervisor.
 
-source "arch/x86/lguest/Kconfig"
+# source "arch/x86/lguest/Kconfig"
 
 config PARAVIRT
 	bool "Enable paravirtualization code"
@@ -612,7 +608,7 @@ config X86_CYCLONE_TIMER
 	def_bool y
 	depends on X86_32_NON_STANDARD
 
-source "arch/x86/Kconfig.cpu"
+# source "arch/x86/Kconfig.cpu"
 
 config HPET_TIMER
 	def_bool X86_64
@@ -788,7 +784,7 @@ config SCHED_MC
 	  making when dealing with multi-core CPU chips at a cost of slightly
 	  increased overhead in some places. If unsure say N here.
 
-source "kernel/Kconfig.preempt"
+# source "kernel/Kconfig.preempt"
 
 config X86_UP_APIC
 	bool "Local APIC support on uniprocessors"
@@ -1281,7 +1277,7 @@ config ILLEGAL_POINTER_VALUE
        default 0 if X86_32
        default 0xdead000000000000 if X86_64
 
-source "mm/Kconfig"
+# source "mm/Kconfig"
 
 config HIGHPTE
 	bool "Allocate 3rd-level pagetables from highmem"
@@ -1501,7 +1497,7 @@ config CC_STACKPROTECTOR
 	  detected and for those versions, this configuration option is
 	  ignored. (and a warning is printed during bootup)
 
-source kernel/Kconfig.hz
+# source kernel/Kconfig.hz
 
 config KEXEC
 	bool "kexec system call"
@@ -1716,11 +1712,11 @@ config ARCH_HIBERNATION_HEADER
 	def_bool y
 	depends on X86_64 && HIBERNATION
 
-source "kernel/power/Kconfig"
+# source "kernel/power/Kconfig"
 
-source "drivers/acpi/Kconfig"
+# source "drivers/acpi/Kconfig"
 
-source "drivers/sfi/Kconfig"
+# source "drivers/sfi/Kconfig"
 
 config X86_APM_BOOT
 	bool
@@ -1848,11 +1844,11 @@ config APM_ALLOW_INTS
 
 endif # APM
 
-source "arch/x86/kernel/cpu/cpufreq/Kconfig"
+# source "arch/x86/kernel/cpu/cpufreq/Kconfig"
 
-source "drivers/cpuidle/Kconfig"
+# source "drivers/cpuidle/Kconfig"
 
-source "drivers/idle/Kconfig"
+# source "drivers/idle/Kconfig"
 
 endmenu
 
@@ -1981,9 +1977,9 @@ config INTR_REMAP
 	  To use x2apic mode in the CPU's which support x2APIC enhancements or
 	  to support platforms with CPU's having > 8 bit APIC ID, say Y.
 
-source "drivers/pci/pcie/Kconfig"
+# source "drivers/pci/pcie/Kconfig"
 
-source "drivers/pci/Kconfig"
+# source "drivers/pci/Kconfig"
 
 # x86_64 have no ISA slots, but do have ISA-style DMA.
 config ISA_DMA_API
@@ -2016,7 +2012,7 @@ config EISA
 
 	  Otherwise, say N.
 
-source "drivers/eisa/Kconfig"
+# source "drivers/eisa/Kconfig"
 
 config MCA
 	bool "MCA support"
@@ -2026,7 +2022,7 @@ config MCA
 	  <file:Documentation/mca.txt> (and especially the web page given
 	  there) before attempting to build an MCA bus kernel.
 
-source "drivers/mca/Kconfig"
+# source "drivers/mca/Kconfig"
 
 config SCx200
 	tristate "NatSemi SCx200 support"
@@ -2063,16 +2059,16 @@ config K8_NB
 	def_bool y
 	depends on CPU_SUP_AMD && PCI
 
-source "drivers/pcmcia/Kconfig"
+# source "drivers/pcmcia/Kconfig"
 
-source "drivers/pci/hotplug/Kconfig"
+# source "drivers/pci/hotplug/Kconfig"
 
 endmenu
 
 
 menu "Executable file formats / Emulations"
 
-source "fs/Kconfig.binfmt"
+# source "fs/Kconfig.binfmt"
 
 config IA32_EMULATION
 	bool "IA32 Emulation"
@@ -2108,20 +2104,20 @@ config HAVE_ATOMIC_IOMAP
 	def_bool y
 	depends on X86_32
 
-source "net/Kconfig"
+# source "net/Kconfig"
 
 source "drivers/Kconfig"
 
 source "drivers/firmware/Kconfig"
 
-source "fs/Kconfig"
+# source "fs/Kconfig"
 
-source "arch/x86/Kconfig.debug"
+# source "arch/x86/Kconfig.debug"
 
-source "security/Kconfig"
+# source "security/Kconfig"
 
-source "crypto/Kconfig"
+# source "crypto/Kconfig"
 
-source "arch/x86/kvm/Kconfig"
+# source "arch/x86/kvm/Kconfig"
 
 source "lib/Kconfig"
