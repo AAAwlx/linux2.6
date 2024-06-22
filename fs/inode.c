@@ -663,12 +663,12 @@ struct inode *new_inode(struct super_block *sb)
 	 * error if st_ino won't fit in target struct field. Use 32bit counter
 	 * here to attempt to avoid that.
 	 */
-	static unsigned int last_ino;
+	static unsigned int last_ino;//用于保存上一个被分配的inode号
 	struct inode *inode;
 
 	spin_lock_prefetch(&inode_lock);
 
-	inode = alloc_inode(sb);
+	inode = alloc_inode(sb);//分配inode
 	if (inode) {
 		spin_lock(&inode_lock);
 		__inode_add_to_lists(sb, NULL, inode);

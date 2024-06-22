@@ -43,7 +43,7 @@
 
 static const struct super_operations ramfs_ops;
 static const struct inode_operations ramfs_dir_inode_operations;
-/*填写文件系统设备的信息*/
+/*填写文件系统后备设备的信息*/
 static struct backing_dev_info ramfs_backing_dev_info = {
 	.name		= "ramfs",
 	.ra_pages	= 0,	/* No readahead */
@@ -62,25 +62,27 @@ struct inode *ramfs_get_inode(struct super_block *sb, int mode, dev_t dev)
 		inode->i_gid = current_fsgid();
 		inode->i_mapping->a_ops = &ramfs_aops;
 		inode->i_mapping->backing_dev_info = &ramfs_backing_dev_info;
+		这些操作设置了 inode 的映射信息
 		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
 		mapping_set_unevictable(inode->i_mapping);
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+		//根据文件属性设置inode的操作函数
 		switch (mode & S_IFMT) {
 		default:
 			init_special_inode(inode, mode, dev);
 			break;
-		case S_IFREG:
+		case S_IFREG://普通文件
 			inode->i_op = &ramfs_file_inode_operations;
 			inode->i_fop = &ramfs_file_operations;
 			break;
-		case S_IFDIR:
+		case S_IFDIR://目录
 			inode->i_op = &ramfs_dir_inode_operations;
 			inode->i_fop = &simple_dir_operations;
 
 			/* directory inodes start off with i_nlink == 2 (for "." entry) */
 			inc_nlink(inode);
 			break;
-		case S_IFLNK:
+		case S_IFLNK://链接文件
 			inode->i_op = &page_symlink_inode_operations;
 			break;
 		}
@@ -95,7 +97,7 @@ struct inode *ramfs_get_inode(struct super_block *sb, int mode, dev_t dev)
 static int
 ramfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 {
-	struct inode * inode = ramfs_get_inode(dir->i_sb, mode, dev);
+	struct inode * inode = ramfs_get_inode(dir->i_sb, mode, dev);//分配一个inode
 	int error = -ENOSPC;
 
 	if (inode) {
@@ -104,8 +106,8 @@ ramfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 			if (S_ISDIR(mode))
 				inode->i_mode |= S_ISGID;
 		}
-		d_instantiate(dentry, inode);
-		dget(dentry);	/* Extra count - pin the dentry in core */
+		d_instantiate(dentry, inode);//将inode与direnty建立联系
+		dget(dentry);	/* 增加目录项的引用计数 */
 		error = 0;
 		dir->i_mtime = dir->i_ctime = CURRENT_TIME;
 	}
@@ -213,59 +215,65 @@ static int ramfs_parse_options(char *data, struct ramfs_mount_opts *opts)
 
 	return 0;
 }
-
 static int ramfs_fill_super(struct super_block * sb, void * data, int silent)
 {
-	struct ramfs_fs_info *fsi;
-	struct inode *inode = NULL;
-	struct dentry *root;
-	int err;
+    struct ramfs_fs_info *fsi;          // 定义文件系统信息结构指针
+    struct inode *inode = NULL;         // 定义 inode 指针并初始化为 NULL
+    struct dentry *root;                // 定义目录项指针
+    int err;                            // 定义错误码变量
 
-	save_mount_options(sb, data);
+    // 保存挂载选项
+    save_mount_options(sb, data);
 
-	fsi = kzalloc(sizeof(struct ramfs_fs_info), GFP_KERNEL);
-	sb->s_fs_info = fsi;
-	if (!fsi) {
-		err = -ENOMEM;
-		goto fail;
-	}
+    // 分配并初始化 ramfs_fs_info 结构
+    fsi = kzalloc(sizeof(struct ramfs_fs_info), GFP_KERNEL);
+    sb->s_fs_info = fsi;
+    if (!fsi) {                         // 检查内存分配是否成功
+        err = -ENOMEM;                  // 设置错误码为内存不足
+        goto fail;                      // 跳转到错误处理
+    }
 
-	err = ramfs_parse_options(data, &fsi->mount_opts);
-	if (err)
-		goto fail;
+    // 解析挂载选项
+    err = ramfs_parse_options(data, &fsi->mount_opts);
+    if (err)
+        goto fail;                      // 如果解析选项失败，跳转到错误处理
 
-	sb->s_maxbytes		= MAX_LFS_FILESIZE;
-	sb->s_blocksize		= PAGE_CACHE_SIZE;
-	sb->s_blocksize_bits	= PAGE_CACHE_SHIFT;
-	sb->s_magic		= RAMFS_MAGIC;
-	sb->s_op		= &ramfs_ops;
-	sb->s_time_gran		= 1;
+    // 设置超级块的各项参数
+    sb->s_maxbytes       = MAX_LFS_FILESIZE; // 最大文件大小
+    sb->s_blocksize      = PAGE_CACHE_SIZE;  // 块大小
+    sb->s_blocksize_bits = PAGE_CACHE_SHIFT; // 块大小位移
+    sb->s_magic          = RAMFS_MAGIC;      // 文件系统魔数
+    sb->s_op             = &ramfs_ops;       // 操作集合
+    sb->s_time_gran      = 1;                // 时间粒度
 
-	inode = ramfs_get_inode(sb, S_IFDIR | fsi->mount_opts.mode, 0);
-	if (!inode) {
-		err = -ENOMEM;
-		goto fail;
-	}
+    // 获取根目录的 inode
+    inode = ramfs_get_inode(sb, S_IFDIR | fsi->mount_opts.mode, 0);
+    if (!inode) {                        // 检查是否成功获取 inode
+        err = -ENOMEM;                   // 设置错误码为内存不足
+        goto fail;                       // 跳转到错误处理
+    }
 
-	root = d_alloc_root(inode);
-	sb->s_root = root;
-	if (!root) {
-		err = -ENOMEM;
-		goto fail;
-	}
+    // 分配根目录项
+    root = d_alloc_root(inode);
+    sb->s_root = root;
+    if (!root) {                         // 检查是否成功分配根目录项
+        err = -ENOMEM;                   // 设置错误码为内存不足
+        goto fail;                       // 跳转到错误处理
+    }
 
-	return 0;
+    return 0;                            // 成功返回 0
+
 fail:
-	kfree(fsi);
-	sb->s_fs_info = NULL;
-	iput(inode);
-	return err;
+    kfree(fsi);                          // 释放分配的文件系统信息结构
+    sb->s_fs_info = NULL;                // 将超级块的文件系统信息指针置空
+    iput(inode);                         // 释放 inode
+    return err;                          // 返回错误码
 }
 
 int ramfs_get_sb(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return get_sb_nodev(fs_type, flags, data, ramfs_fill_super, mnt);
+	return get_sb_nodev(fs_type, flags, data, ramfs_fill_super, mnt);//设置超级块，ramfs_fill_super做回调函数
 }
 
 static int rootfs_get_sb(struct file_system_type *fs_type,

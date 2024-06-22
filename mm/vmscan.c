@@ -158,7 +158,7 @@ static unsigned long zone_nr_lru_pages(struct zone *zone,
 
 
 /*
- * Add a shrinker callback to be called from the vm
+ * 将一个shrinker结构体注册到系统中，以便在系统需要释放内存时调用注册的回调函数，函数在结构体中
  */
 void register_shrinker(struct shrinker *shrinker)
 {

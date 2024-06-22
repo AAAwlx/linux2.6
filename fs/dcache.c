@@ -526,15 +526,14 @@ restart:
 		list_splice(&referenced, &sb->s_dentry_lru);
 	spin_unlock(&dcache_lock);
 }
-
-/**
- * prune_dcache - shrink the dcache
- * @count: number of entries to try to free
+/*
+ * prune_dcache() - 收缩dcache
+ * @count: 尝试释放的条目数
  *
- * Shrink the dcache. This is done when we need more memory, or simply when we
- * need to unmount something (at which point we need to unuse all dentries).
+ * 收缩dcache。当系统需要更多内存时或者需要卸载文件系统（此时需要释放所有dentries）时，
+ * 就会执行此操作。
  *
- * This function may fail to free any resources if all the dentries are in use.
+ * 如果所有的dentries都在使用中，此函数可能无法释放任何资源。
  */
 static void prune_dcache(int count)
 {
@@ -557,14 +556,13 @@ restart:
 		if (sb->s_nr_dentry_unused == 0)
 			continue;
 		sb->s_count++;
-		/* Now, we reclaim unused dentrins with fairness.
-		 * We reclaim them same percentage from each superblock.
-		 * We calculate number of dentries to scan on this sb
-		 * as follows, but the implementation is arranged to avoid
-		 * overflows:
-		 * number of dentries to scan on this sb =
-		 * count * (number of dentries on this sb /
-		 * number of dentries in the machine)
+		/* 现在，我们公平地回收未使用的dentries。
+		 * 我们从每个superblock中按相同的百分比回收它们。
+		 * 我们计算要在此sb上扫描的dentries数量如下，
+		 * 但是实现已经安排好以避免溢出：
+		 * 在这个sb上扫描的dentries数量 =
+		 * count * （此sb上的dentries数量 /
+		 * 机器中的dentries数量）
 		 */
 		spin_unlock(&sb_lock);
 		if (prune_ratio != 1)
@@ -573,11 +571,10 @@ restart:
 			w_count = sb->s_nr_dentry_unused;
 		pruned = w_count;
 		/*
-		 * We need to be sure this filesystem isn't being unmounted,
-		 * otherwise we could race with generic_shutdown_super(), and
-		 * end up holding a reference to an inode while the filesystem
-		 * is unmounted.  So we try to get s_umount, and make sure
-		 * s_root isn't NULL.
+		 * 我们需要确保此文件系统没有被卸载，
+		 * 否则我们可能会与generic_shutdown_super()竞争，
+		 * 并在文件系统卸载时保持对inode的引用。
+		 * 因此，我们尝试获取s_umount，并确保s_root不为NULL。
 		 */
 		if (down_read_trylock(&sb->s_umount)) {
 			if ((sb->s_root != NULL) &&
@@ -593,8 +590,8 @@ restart:
 		spin_lock(&sb_lock);
 		count -= pruned;
 		/*
-		 * restart only when sb is no longer on the list and
-		 * we have more work to do.
+		 * 当sb不再在列表中且我们有更多工作要做时，
+		 * 仅在重启时才重新开始。
 		 */
 		if (__put_super_and_need_restart(sb) && count > 0) {
 			spin_unlock(&sb_lock);
@@ -602,7 +599,7 @@ restart:
 		}
 	}
 	spin_unlock(&sb_lock);
-	spin_unlock(&dcache_lock);
+	spin_un
 }
 
 /**
@@ -924,26 +921,29 @@ static struct shrinker dcache_shrinker = {
  * copied and the copy passed in may be reused after this call.
  */
  
-struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
+struct dentry *d_alloc(struct dentry *parent, const struct qstr *name)
 {
 	struct dentry *dentry;
 	char *dname;
 
+	/* 为dentry结构体分配内存 */
 	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL);
 	if (!dentry)
 		return NULL;
 
+	/* 如果名称长度超过内联长度，则分配内存来存储名称 */
 	if (name->len > DNAME_INLINE_LEN-1) {
 		dname = kmalloc(name->len + 1, GFP_KERNEL);
 		if (!dname) {
-			kmem_cache_free(dentry_cache, dentry); 
+			kmem_cache_free(dentry_cache, dentry);
 			return NULL;
 		}
-	} else  {
+	} else {
 		dname = dentry->d_iname;
-	}	
-	dentry->d_name.name = dname;
+	}
 
+	/* 初始化dentry的各个字段 */
+	dentry->d_name.name = dname;
 	dentry->d_name.len = name->len;
 	dentry->d_name.hash = name->hash;
 	memcpy(dname, name->name, name->len);
@@ -963,6 +963,7 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	INIT_LIST_HEAD(&dentry->d_subdirs);
 	INIT_LIST_HEAD(&dentry->d_alias);
 
+	/* 如果提供了父dentry，则设置父子关系 */
 	if (parent) {
 		dentry->d_parent = dget(parent);
 		dentry->d_sb = parent->d_sb;
@@ -970,6 +971,7 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 		INIT_LIST_HEAD(&dentry->d_u.d_child);
 	}
 
+	/* 将新的dentry添加到父dentry的子目录列表中 */
 	spin_lock(&dcache_lock);
 	if (parent)
 		list_add(&dentry->d_u.d_child, &parent->d_subdirs);
@@ -991,12 +993,24 @@ struct dentry *d_alloc_name(struct dentry *parent, const char *name)
 }
 EXPORT_SYMBOL(d_alloc_name);
 
-/* the caller must hold dcache_lock */
+/**
+ * __d_instantiate - 将 inode 关联到 dentry
+ * @dentry: 目录项对象
+ * @inode: 需要关联的 inode 对象
+ *
+ * 如果提供了 inode，对其进行处理，将其添加到 inode 的 dentry 列表中，
+ * 并将 inode 关联到 dentry。最后，发送文件系统通知。
+ */
 static void __d_instantiate(struct dentry *dentry, struct inode *inode)
 {
+	// 如果提供了 inode，将 dentry 添加到 inode 的 dentry 列表中
 	if (inode)
 		list_add(&dentry->d_alias, &inode->i_dentry);
+	
+	// 将 inode 关联到 dentry
 	dentry->d_inode = inode;
+	
+	// 发送文件系统通知，告知 dentry 和 inode 的关联已建立
 	fsnotify_d_instantiate(dentry, inode);
 }
 
@@ -1014,7 +1028,7 @@ static void __d_instantiate(struct dentry *dentry, struct inode *inode)
  * (or otherwise set) by the caller to indicate that it is now
  * in use by the dcache.
  */
- 
+ //将inode与direnty项建立联系
 void d_instantiate(struct dentry *entry, struct inode * inode)
 {
 	BUG_ON(!list_empty(&entry->d_alias));
@@ -1104,7 +1118,7 @@ EXPORT_SYMBOL(d_instantiate_unique);
  * memory or the inode passed is %NULL.
  */
  
-struct dentry * d_alloc_root(struct inode * root_inode)
+struct dentry * d_alloc_root(struct inode * root_inode)//分配一个根目录项
 {
 	struct dentry *res = NULL;
 
@@ -2313,21 +2327,28 @@ static void __init dcache_init_early(void)
 		INIT_HLIST_HEAD(&dentry_hashtable[loop]);
 }
 
+
+/*
+ * dcache_init() - 初始化dentry缓存
+ *
+ * 此函数用于初始化dentry缓存。它设置了dentry缓存的一些参数，并注册了一个shrinker。
+ * 如果哈希表已经在dcache_init_early中设置，则不进行额外的哈希表设置。
+ *
+ * 此函数还为dentry哈希表分配内存，并对哈希表中的每个条目进行初始化。
+ */
 static void __init dcache_init(void)
 {
 	int loop;
 
 	/* 
-	 * A constructor could be added for stable state like the lists,
-	 * but it is probably not worth it because of the cache nature
-	 * of the dcache. 
+	 * 可以为稳定状态（如列表）添加构造函数，但由于dentry缓存的缓存特性，这可能不值得。
 	 */
 	dentry_cache = KMEM_CACHE(dentry,
 		SLAB_RECLAIM_ACCOUNT|SLAB_PANIC|SLAB_MEM_SPREAD);
 	
 	register_shrinker(&dcache_shrinker);
 
-	/* Hash may have been set up in dcache_init_early */
+	/* 如果在dcache_init_early中未设置哈希表，则设置哈希表 */
 	if (!hashdist)
 		return;
 
