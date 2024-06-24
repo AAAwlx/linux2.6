@@ -645,38 +645,48 @@ void inode_add_to_lists(struct super_block *sb, struct inode *inode)
 EXPORT_SYMBOL_GPL(inode_add_to_lists);
 
 /**
- *	new_inode 	- obtain an inode
- *	@sb: superblock
+ * new_inode - 分配并初始化一个新的 inode 结构
+ * @sb: 指向超级块结构的指针
  *
- *	Allocates a new inode for given superblock. The default gfp_mask
- *	for allocations related to inode->i_mapping is GFP_HIGHUSER_MOVABLE.
- *	If HIGHMEM pages are unsuitable or it is known that pages allocated
- *	for the page cache are not reclaimable or migratable,
- *	mapping_set_gfp_mask() must be called with suitable flags on the
- *	newly created inode's mapping
+ * 该函数负责分配一个新的 inode 结构，并将其初始化。inode 号使用一个静态的
+ * 32 位计数器来分配，以避免在 32 位系统上的非 LFS (Large File Support) 的
+ * stat() 调用中产生 EOVERFLOW 错误。
  *
+ * 返回: 指向新分配的 inode 结构的指针，如果分配失败则返回 NULL。
  */
 struct inode *new_inode(struct super_block *sb)
 {
-	/*
-	 * On a 32bit, non LFS stat() call, glibc will generate an EOVERFLOW
-	 * error if st_ino won't fit in target struct field. Use 32bit counter
-	 * here to attempt to avoid that.
-	 */
-	static unsigned int last_ino;//用于保存上一个被分配的inode号
-	struct inode *inode;
+    /*
+     * 在 32 位非 LFS 的 stat() 调用中，如果 st_ino 不能适配目标结构字段，
+     * glibc 会生成一个 EOVERFLOW 错误。使用 32 位计数器来尝试避免这种情况。
+     */
+    static unsigned int last_ino; // 用于保存上一个被分配的 inode 号
+    struct inode *inode;
 
-	spin_lock_prefetch(&inode_lock);
+    // 预取自旋锁，优化性能
+    spin_lock_prefetch(&inode_lock);
 
-	inode = alloc_inode(sb);//分配inode
-	if (inode) {
-		spin_lock(&inode_lock);
-		__inode_add_to_lists(sb, NULL, inode);
-		inode->i_ino = ++last_ino;
-		inode->i_state = 0;
-		spin_unlock(&inode_lock);
-	}
-	return inode;
+    // 分配 inode 结构
+    inode = alloc_inode(sb);
+    if (inode) {
+        // 获取自旋锁，保护临界区
+        spin_lock(&inode_lock);
+
+        // 将新分配的 inode 添加到超级块的 inode 列表中
+        __inode_add_to_lists(sb, NULL, inode);
+
+        // 为新 inode 分配一个唯一的 inode 号
+        inode->i_ino = ++last_ino;
+
+        // 初始化 inode 状态
+        inode->i_state = 0;
+
+        // 释放自旋锁
+        spin_unlock(&inode_lock);
+    }
+
+    // 返回新分配并初始化的 inode 结构
+    return inode;
 }
 EXPORT_SYMBOL(new_inode);
 

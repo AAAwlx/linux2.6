@@ -2305,13 +2305,13 @@ static void __init init_mount_tree(void)
 	mnt = do_kern_mount("rootfs", 0, "rootfs", NULL);
 	if (IS_ERR(mnt))
 		panic("Can't create rootfs");
-	// 创建一个新的挂载命名空间
+	// 创建一个新的挂载命名空间，即分配并初始化结构体mnt_namespace
 	ns = create_mnt_ns(mnt);
 	if (IS_ERR(ns))
 		panic("Can't allocate initial namespace");
 
 	init_task.nsproxy->mnt_ns = ns;
-	get_mnt_ns(ns);
+	get_mnt_ns(ns);//增加 mnt_namespace 的引用计数
 	// 设置根路径
 	root.mnt = ns->root;
 	root.dentry = ns->root->mnt_root;
@@ -2347,8 +2347,8 @@ void __init mnt_init(void)
 	fs_kobj = kobject_create_and_add("fs", NULL);
 	if (!fs_kobj)
 		printk(KERN_WARNING "%s: kobj create error\n", __func__);
-	init_rootfs();
-	init_mount_tree();
+	init_rootfs();//初始化根文件系统
+	init_mount_tree();//初始化根目录树
 }
 
 void put_mnt_ns(struct mnt_namespace *ns)

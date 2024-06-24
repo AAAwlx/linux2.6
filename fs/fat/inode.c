@@ -1193,41 +1193,67 @@ out:
 	return 0;
 }
 
+/**
+ * fat_read_root - 初始化FAT文件系统根目录的inode
+ * @inode: 指向要初始化的inode结构体的指针
+ *
+ * 该函数负责初始化FAT文件系统的根目录inode。根目录在FAT16和FAT32中有所不同，
+ * FAT32根目录位于一个特定的集群，而FAT16根目录位于磁盘的固定位置。
+ *
+ * 返回：0表示成功，负数表示出错。
+ */
 static int fat_read_root(struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
-	struct msdos_sb_info *sbi = MSDOS_SB(sb);
-	int error;
+    // 获取超级块和文件系统信息
+    struct super_block *sb = inode->i_sb;
+    struct msdos_sb_info *sbi = MSDOS_SB(sb);
+    int error;
 
-	MSDOS_I(inode)->i_pos = 0;
-	inode->i_uid = sbi->options.fs_uid;
-	inode->i_gid = sbi->options.fs_gid;
-	inode->i_version++;
-	inode->i_generation = 0;
-	inode->i_mode = fat_make_mode(sbi, ATTR_DIR, S_IRWXUGO);
-	inode->i_op = sbi->dir_ops;
-	inode->i_fop = &fat_dir_operations;
-	if (sbi->fat_bits == 32) {
-		MSDOS_I(inode)->i_start = sbi->root_cluster;
-		error = fat_calc_dir_size(inode);
-		if (error < 0)
-			return error;
-	} else {
-		MSDOS_I(inode)->i_start = 0;
-		inode->i_size = sbi->dir_entries * sizeof(struct msdos_dir_entry);
-	}
-	inode->i_blocks = ((inode->i_size + (sbi->cluster_size - 1))
-			   & ~((loff_t)sbi->cluster_size - 1)) >> 9;
-	MSDOS_I(inode)->i_logstart = 0;
-	MSDOS_I(inode)->mmu_private = inode->i_size;
+    // 初始化inode的位置和用户、组ID
+    MSDOS_I(inode)->i_pos = 0;
+    inode->i_uid = sbi->options.fs_uid;
+    inode->i_gid = sbi->options.fs_gid;
+    inode->i_version++;
+    inode->i_generation = 0;
 
-	fat_save_attrs(inode, ATTR_DIR);
-	inode->i_mtime.tv_sec = inode->i_atime.tv_sec = inode->i_ctime.tv_sec = 0;
-	inode->i_mtime.tv_nsec = inode->i_atime.tv_nsec = inode->i_ctime.tv_nsec = 0;
-	inode->i_nlink = fat_subdirs(inode)+2;
+    // 设置inode的权限模式
+    inode->i_mode = fat_make_mode(sbi, ATTR_DIR, S_IRWXUGO);
+    inode->i_op = sbi->dir_ops;
+    inode->i_fop = &fat_dir_operations;
 
-	return 0;
+    // FAT32根目录处理
+    if (sbi->fat_bits == 32) {
+        MSDOS_I(inode)->i_start = sbi->root_cluster;
+        error = fat_calc_dir_size(inode);
+        if (error < 0)
+            return error;
+    } else {
+        // FAT16根目录处理
+        MSDOS_I(inode)->i_start = 0;
+        inode->i_size = sbi->dir_entries * sizeof(struct msdos_dir_entry);
+    }
+
+    // 设置inode的块数
+    inode->i_blocks = ((inode->i_size + (sbi->cluster_size - 1))
+                       & ~((loff_t)sbi->cluster_size - 1)) >> 9;
+
+    // 初始化其他inode字段
+    MSDOS_I(inode)->i_logstart = 0;
+    MSDOS_I(inode)->mmu_private = inode->i_size;
+
+    // 保存目录属性
+    fat_save_attrs(inode, ATTR_DIR);
+
+    // 初始化时间戳
+    inode->i_mtime.tv_sec = inode->i_atime.tv_sec = inode->i_ctime.tv_sec = 0;
+    inode->i_mtime.tv_nsec = inode->i_atime.tv_nsec = inode->i_ctime.tv_nsec = 0;
+
+    // 设置链接计数
+    inode->i_nlink = fat_subdirs(inode) + 2;
+
+    return 0;
 }
+
 
 /*
  * Read the super block of an MS-DOS FS.
@@ -1572,7 +1598,7 @@ int fat_flush_inodes(struct super_block *sb, struct inode *i1, struct inode *i2)
 }
 EXPORT_SYMBOL_GPL(fat_flush_inodes);
 
-static int __init init_fat_fs(void)
+static int __init init_fat_fs(void)//初始化缓存
 {
 	int err;
 
