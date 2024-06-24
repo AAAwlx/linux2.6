@@ -111,17 +111,27 @@ static DECLARE_RWSEM(iprune_sem);
  */
 struct inodes_stat_t inodes_stat;
 
-static struct kmem_cache *inode_cachep __read_mostly;
+static struct kmem_cache *inode_cachep __read_mostly;//存放vfs中的inode的缓存结构
 
+/**
+ * wake_up_inode - 唤醒等待 inode 状态改变的进程
+ * @inode: 指向 inode 结构的指针
+ *
+ * 该函数用于唤醒等待特定 inode 状态改变的进程。在释放自旋锁之前，
+ * 插入内存屏障以防止推测性执行带来的问题。
+ */
 static void wake_up_inode(struct inode *inode)
 {
-	/*
-	 * Prevent speculative execution through spin_unlock(&inode_lock);
-	 */
-	smp_mb();
-	wake_up_bit(&inode->i_state, __I_NEW);
+    /*
+     * 防止通过 spin_unlock(&inode_lock) 进行推测性执行。
+     * smp_mb() 是一个内存屏障指令，用于确保在此之前的所有内存操作
+     * 在继续执行之后的操作之前完成，以防止重排序。
+     */
+    smp_mb();
+    
+    // 唤醒等待 inode->i_state 上 __I_NEW 位改变的进程
+    wake_up_bit(&inode->i_state, __I_NEW);
 }
-
 /**
  * inode_init_always - perform inode structure intialisation
  * @sb: superblock inode belongs to
