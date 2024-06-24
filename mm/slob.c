@@ -97,13 +97,26 @@ typedef struct slob_block slob_t;
 struct slob_page {
 	union {
 		struct {
+			// 页的标志位，通常用于管理页的状态
 			unsigned long flags;	/* mandatory */
+			
+			// 引用计数，记录该页被引用的次数
 			atomic_t _count;	/* mandatory */
+			
+			// 页中剩余的空闲单位数量
 			slobidx_t units;	/* free units left in page */
+			
+			// 填充，为了对齐或其他用途
 			unsigned long pad[2];
+			
+			// 指向页中第一个空闲的 slob_t 块
 			slob_t *free;		/* first free slob_t in page */
+			
+			// 空闲页的链表节点，用于连接空闲页列表
 			struct list_head list;	/* linked list of free pages */
 		};
+		
+		// 将 slob_page 结构体视为一个 page 结构体，以便与其他内核代码兼容
 		struct page page;
 	};
 };
