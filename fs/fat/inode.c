@@ -284,23 +284,35 @@ EXPORT_SYMBOL_GPL(fat_detach);
 
 struct inode *fat_iget(struct super_block *sb, loff_t i_pos)
 {
-	struct msdos_sb_info *sbi = MSDOS_SB(sb);
-	struct hlist_head *head = sbi->inode_hashtable + fat_hash(i_pos);
-	struct hlist_node *_p;
-	struct msdos_inode_info *i;
-	struct inode *inode = NULL;
+    // 获取 FAT 文件系统超级块的信息
+    struct msdos_sb_info *sbi = MSDOS_SB(sb);
+    // 计算 inode 哈希表的头部位置
+    struct hlist_head *head = sbi->inode_hashtable + fat_hash(i_pos);
+    // 定义一个用于遍历哈希表的指针
+    struct hlist_node *_p;
+    // 定义一个指向 FAT inode 信息结构的指针
+    struct msdos_inode_info *i;
+    // 初始化 inode 指针为空
+    struct inode *inode = NULL;
 
-	spin_lock(&sbi->inode_hash_lock);
-	hlist_for_each_entry(i, _p, head, i_fat_hash) {
-		BUG_ON(i->vfs_inode.i_sb != sb);
-		if (i->i_pos != i_pos)
-			continue;
-		inode = igrab(&i->vfs_inode);
-		if (inode)
-			break;
-	}
-	spin_unlock(&sbi->inode_hash_lock);
-	return inode;
+    // 加锁，保护 inode 哈希表的访问
+    spin_lock(&sbi->inode_hash_lock);
+    // 遍历哈希表中与计算的哈希值对应的链表
+    hlist_for_each_entry(i, _p, head, i_fat_hash) {
+        // 检查当前 inode 是否属于给定的超级块
+        BUG_ON(i->vfs_inode.i_sb != sb);
+        // 如果 inode 位置不匹配，则继续查找下一个
+        if (i->i_pos != i_pos)
+            continue;
+        // 尝试增加 inode 的引用计数，如果成功，则返回该 inode
+        inode = igrab(&i->vfs_inode);
+        if (inode)
+            break;
+    }
+    // 释放锁
+    spin_unlock(&sbi->inode_hash_lock);
+    // 返回找到的 inode 或者 NULL
+    return inode;
 }
 
 static int is_exec(unsigned char *extension)

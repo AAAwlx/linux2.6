@@ -310,7 +310,7 @@ static void __exit exit_ramfs_fs(void)
 	unregister_filesystem(&ramfs_fs_type);
 }
 
-module_init(init_ramfs_fs)
+module_init(init_ramfs_fs)//注册模块
 module_exit(exit_ramfs_fs)
 
 int __init init_rootfs(void)//初始化根文件系统

@@ -555,41 +555,52 @@ size_t ksize(const void *block)
 EXPORT_SYMBOL(ksize);
 
 struct kmem_cache {
-	unsigned int size, align;
-	unsigned long flags;
-	const char *name;
-	void (*ctor)(void *);
+    unsigned int size;          // 缓存中每个对象的大小（以字节为单位）
+    unsigned int align;         // 缓存中对象的对齐要求（以字节为单位）
+    unsigned long flags;        // 缓存的标志，用于指定缓存的特性和行为
+    const char *name;           // 缓存的名称，便于调试和管理
+    void (*ctor)(void *);       // 对象的构造函数指针，用于初始化新分配的对象
 };
 
 struct kmem_cache *kmem_cache_create(const char *name, size_t size,
 	size_t align, unsigned long flags, void (*ctor)(void *))
 {
+	// 定义一个指向 kmem_cache 结构体的指针
 	struct kmem_cache *c;
 
+	// 分配 kmem_cache 结构体的内存
 	c = slob_alloc(sizeof(struct kmem_cache),
 		GFP_KERNEL, ARCH_KMALLOC_MINALIGN, -1);
 
+	// 如果内存分配成功
 	if (c) {
-		c->name = name;
-		c->size = size;
+		// 初始化 kmem_cache 结构体的各个字段
+		c->name = name;  // 设置缓存的名称
+		c->size = size;  // 设置缓存中对象的大小
 		if (flags & SLAB_DESTROY_BY_RCU) {
-			/* leave room for rcu footer at the end of object */
+			// 如果标志中包含 SLAB_DESTROY_BY_RCU，则在对象末尾留出 RCU（Read-Copy Update）页脚的空间
 			c->size += sizeof(struct slob_rcu);
 		}
-		c->flags = flags;
-		c->ctor = ctor;
-		/* ignore alignment unless it's forced */
+		c->flags = flags;  // 设置标志
+		c->ctor = ctor;    // 设置构造函数指针
+		// 忽略对齐除非强制要求
 		c->align = (flags & SLAB_HWCACHE_ALIGN) ? SLOB_ALIGN : 0;
 		if (c->align < ARCH_SLAB_MINALIGN)
 			c->align = ARCH_SLAB_MINALIGN;
 		if (c->align < align)
 			c->align = align;
-	} else if (flags & SLAB_PANIC)
+	} else if (flags & SLAB_PANIC) {
+		// 如果内存分配失败，并且标志中包含 SLAB_PANIC，则内核会触发恐慌
 		panic("Cannot create slab cache %s\n", name);
+	}
 
+	// 记录分配的内存块，以便内存泄漏检测工具使用
 	kmemleak_alloc(c, sizeof(struct kmem_cache), 1, GFP_KERNEL);
+	
+	// 返回指向 kmem_cache 结构体的指针
 	return c;
 }
+
 EXPORT_SYMBOL(kmem_cache_create);
 
 void kmem_cache_destroy(struct kmem_cache *c)

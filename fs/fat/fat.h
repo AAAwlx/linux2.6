@@ -49,42 +49,46 @@ struct fat_mount_options {
 };
 
 #define FAT_HASH_BITS	8
-#define FAT_HASH_SIZE	(1UL << FAT_HASH_BITS)
+#define FAT_HASH_SIZE	(1UL << FAT_HASH_BITS)//512bety
 
 /*
  * MS-DOS file system in-core superblock data
  */
+/*
+ * MS-DOS 文件系统内存中的超级块数据
+ */
 struct msdos_sb_info {
-	unsigned short sec_per_clus; /* sectors/cluster */
-	unsigned short cluster_bits; /* log2(cluster_size) */
-	unsigned int cluster_size;   /* cluster size */
-	unsigned char fats,fat_bits; /* number of FATs, FAT bits (12 or 16) */
-	unsigned short fat_start;
-	unsigned long fat_length;    /* FAT start & length (sec.) */
-	unsigned long dir_start;
-	unsigned short dir_entries;  /* root dir start & entries */
-	unsigned long data_start;    /* first data sector */
-	unsigned long max_cluster;   /* maximum cluster number */
-	unsigned long root_cluster;  /* first cluster of the root directory */
-	unsigned long fsinfo_sector; /* sector number of FAT32 fsinfo */
-	struct mutex fat_lock;
-	unsigned int prev_free;      /* previously allocated cluster number */
-	unsigned int free_clusters;  /* -1 if undefined */
-	unsigned int free_clus_valid; /* is free_clusters valid? */
-	struct fat_mount_options options;
-	struct nls_table *nls_disk;  /* Codepage used on disk */
-	struct nls_table *nls_io;    /* Charset used for input and display */
-	const void *dir_ops;		     /* Opaque; default directory operations */
-	int dir_per_block;	     /* dir entries per block */
-	int dir_per_block_bits;	     /* log2(dir_per_block) */
+    unsigned short sec_per_clus; /* 每簇的扇区数 */
+    unsigned short cluster_bits; /* 簇大小的对数值（log2(cluster_size)） */
+    unsigned int cluster_size;   /* 簇大小 */
+    unsigned char fats, fat_bits; /* FAT 表的数量和 FAT 表的位数（12 或 16 位） */
+    unsigned short fat_start;    /* FAT 表的起始扇区 */
+    unsigned long fat_length;    /* FAT 表的长度（扇区数） */
+    unsigned long dir_start;     /* 根目录的起始扇区 */
+    unsigned short dir_entries;  /* 根目录中的条目数 */
+    unsigned long data_start;    /* 数据区的起始扇区 */
+    unsigned long max_cluster;   /* 最大簇号 */
+    unsigned long root_cluster;  /* 根目录的第一个簇号（用于 FAT32） */
+    unsigned long fsinfo_sector; /* FAT32 文件系统信息扇区号 */
+    struct mutex fat_lock;       /* 用于保护 FAT 表的互斥锁 */
+    unsigned int prev_free;      /* 上一个已分配的簇号 */
+    unsigned int free_clusters;  /* 空闲簇的数量，-1 表示未定义 */
+    unsigned int free_clus_valid; /* free_clusters 是否有效 */
+    struct fat_mount_options options; /* FAT 文件系统挂载选项 */
+    struct nls_table *nls_disk;  /* 磁盘上使用的代码页 */
+    struct nls_table *nls_io;    /* 用于输入和显示的字符集 */
+    const void *dir_ops;         /* 不透明；默认的目录操作 */
+    int dir_per_block;           /* 每块中的目录条目数 */
+    int dir_per_block_bits;      /* log2(dir_per_block) */
 
-	int fatent_shift;
-	struct fatent_operations *fatent_ops;
-	struct inode *fat_inode;
+    int fatent_shift;            /* FAT 表条目移位值 */
+    struct fatent_operations *fatent_ops; /* FAT 表条目操作 */
+    struct inode *fat_inode;     /* FAT 表的 inode */
 
-	spinlock_t inode_hash_lock;
-	struct hlist_head inode_hashtable[FAT_HASH_SIZE];
+    spinlock_t inode_hash_lock;  /* inode 哈希表的自旋锁 */
+    struct hlist_head inode_hashtable[FAT_HASH_SIZE]; /* inode 哈希表 */
 };
+
 
 #define FAT_CACHE_VALID	0	/* special case for valid cache */
 

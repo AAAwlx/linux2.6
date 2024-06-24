@@ -237,40 +237,56 @@ error:
 
 /***** Creates a directory entry (name is already formatted). */
 static int msdos_add_entry(struct inode *dir, const unsigned char *name,
-			   int is_dir, int is_hid, int cluster,
-			   struct timespec *ts, struct fat_slot_info *sinfo)
+                           int is_dir, int is_hid, int cluster,
+                           struct timespec *ts, struct fat_slot_info *sinfo)
 {
-	struct msdos_sb_info *sbi = MSDOS_SB(dir->i_sb);
-	struct msdos_dir_entry de;
-	__le16 time, date;
-	int err;
+    // 获取 MS-DOS 文件系统超级块的信息
+    struct msdos_sb_info *sbi = MSDOS_SB(dir->i_sb);
+    // 定义一个 MS-DOS 目录项结构体
+    struct msdos_dir_entry de;
+    __le16 time, date;
+    int err;
 
-	memcpy(de.name, name, MSDOS_NAME);
-	de.attr = is_dir ? ATTR_DIR : ATTR_ARCH;
-	if (is_hid)
-		de.attr |= ATTR_HIDDEN;
-	de.lcase = 0;
-	fat_time_unix2fat(sbi, ts, &time, &date, NULL);
-	de.cdate = de.adate = 0;
-	de.ctime = 0;
-	de.ctime_cs = 0;
-	de.time = time;
-	de.date = date;
-	de.start = cpu_to_le16(cluster);
-	de.starthi = cpu_to_le16(cluster >> 16);
-	de.size = 0;
+    // 将传入的文件名复制到目录项的 name 字段中
+    memcpy(de.name, name, MSDOS_NAME);
+    // 设置目录项的属性，如果是目录则设置为 ATTR_DIR，否则设置为 ATTR_ARCH（归档）
+    de.attr = is_dir ? ATTR_DIR : ATTR_ARCH;
+    // 如果是隐藏文件，则在属性中添加 ATTR_HIDDEN
+    if (is_hid)
+        de.attr |= ATTR_HIDDEN;
+    // 初始化小写标志位
+    de.lcase = 0;
+    // 将 Unix 时间转换为 FAT 文件系统的时间格式
+    fat_time_unix2fat(sbi, ts, &time, &date, NULL);
+    // 初始化创建日期、访问日期、创建时间和创建时间的 10 毫秒字段
+    de.cdate = de.adate = 0;
+    de.ctime = 0;
+    de.ctime_cs = 0;
+    // 设置目录项的时间和日期
+    de.time = time;
+    de.date = date;
+    // 设置起始簇号（低 16 位和高 16 位）
+    de.start = cpu_to_le16(cluster);
+    de.starthi = cpu_to_le16(cluster >> 16);
+    // 初始化文件大小为 0
+    de.size = 0;
 
-	err = fat_add_entries(dir, &de, 1, sinfo);
-	if (err)
-		return err;
+    // 将目录项添加到指定目录中
+    err = fat_add_entries(dir, &de, 1, sinfo);
+    // 如果添加失败，则返回错误代码
+    if (err)
+        return err;
 
-	dir->i_ctime = dir->i_mtime = *ts;
-	if (IS_DIRSYNC(dir))
-		(void)fat_sync_inode(dir);
-	else
-		mark_inode_dirty(dir);
+    // 更新目录的 ctime 和 mtime
+    dir->i_ctime = dir->i_mtime = *ts;
+    // 如果目录是同步的，则同步 inode，否则将 inode 标记为脏
+    if (IS_DIRSYNC(dir))
+        (void)fat_sync_inode(dir);
+    else
+        mark_inode_dirty(dir);
 
-	return 0;
+    // 返回成功
+    return 0;
 }
 
 /***** Create a file */
