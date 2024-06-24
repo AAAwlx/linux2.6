@@ -26,11 +26,13 @@
 #include <linux/types.h>
 
 /* Bit indices that affect a whole block of pages */
+// 定义一个枚举类型 pageblock_bits
 enum pageblock_bits {
-	PB_migrate,
-	PB_migrate_end = PB_migrate + 3 - 1,
-			/* 3 bits required for migrate types */
-	NR_PAGEBLOCK_BITS
+    PB_migrate,                          // PB_migrate 表示迁移类型的起始值
+    PB_migrate_end = PB_migrate + 3 - 1, // PB_migrate_end 表示迁移类型的结束值，这里使用 3 位来表示不同的迁移类型
+                                          // 计算方式是从 PB_migrate 开始，加上 3 (表示 3 位)减去 1，得到结束值
+                                          // PB_migrate 到 PB_migrate_end 共占用 3 位
+    NR_PAGEBLOCK_BITS                    // NR_PAGEBLOCK_BITS 表示 pageblock_bits 枚举类型中的总位数
 };
 
 #ifdef CONFIG_HUGETLB_PAGE
