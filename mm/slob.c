@@ -265,124 +265,138 @@ static void slob_free_pages(void *b, int order)
 /*
  * Allocate a slob block within a given slob_page sp.
  */
+// slob_page_alloc: 在指定的SLOB页面上分配内存块
+// sp: 指向要分配内存块的SLOB页面
+// size: 要分配的内存块大小
+// align: 内存块的对齐要求
+
 static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 {
-	slob_t *prev, *cur, *aligned = NULL;
-	int delta = 0, units = SLOB_UNITS(size);
+    slob_t *prev, *cur, *aligned = NULL;
+    int delta = 0, units = SLOB_UNITS(size); // 将字节大小转换为SLOB单位
 
-	for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) {
-		slobidx_t avail = slob_units(cur);
+    // 遍历页面上的空闲块链表
+    for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) {
+        slobidx_t avail = slob_units(cur); // 获取当前空闲块的大小
 
-		if (align) {
-			aligned = (slob_t *)ALIGN((unsigned long)cur, align);
-			delta = aligned - cur;
-		}
-		if (avail >= units + delta) { /* room enough? */
-			slob_t *next;
+        // 如果有对齐要求，计算对齐后的地址和需要的偏移量
+        if (align) {
+            aligned = (slob_t *)ALIGN((unsigned long)cur, align);
+            delta = aligned - cur;
+        }
 
-			if (delta) { /* need to fragment head to align? */
-				next = slob_next(cur);
-				set_slob(aligned, avail - delta, next);
-				set_slob(cur, delta, aligned);
-				prev = cur;
-				cur = aligned;
-				avail = slob_units(cur);
-			}
+        // 检查当前空闲块是否有足够的空间分配请求的内存块
+        if (avail >= units + delta) { // 是否有足够的空间？
+            slob_t *next;
 
-			next = slob_next(cur);
-			if (avail == units) { /* exact fit? unlink. */
-				if (prev)
-					set_slob(prev, slob_units(prev), next);
-				else
-					sp->free = next;
-			} else { /* fragment */
-				if (prev)
-					set_slob(prev, slob_units(prev), cur + units);
-				else
-					sp->free = cur + units;
-				set_slob(cur + units, avail - units, next);
-			}
+            // 如果需要对齐，碎片化当前空闲块的头部
+            if (delta) {
+                next = slob_next(cur);
+                set_slob(aligned, avail - delta, next); // 设置对齐后的空闲块
+                set_slob(cur, delta, aligned); // 设置对齐前的空闲块
+                prev = cur;
+                cur = aligned;
+                avail = slob_units(cur); // 更新当前空闲块的大小
+            }
 
-			sp->units -= units;
-			if (!sp->units)
-				clear_slob_page_free(sp);
-			return cur;
-		}
-		if (slob_last(cur))
-			return NULL;
-	}
+            next = slob_next(cur);
+            if (avail == units) { // 如果刚好匹配，直接取消链接
+                if (prev)
+                    set_slob(prev, slob_units(prev), next);
+                else
+                    sp->free = next; // 更新页面的空闲链表头
+            } else { // 如果需要分裂当前空闲块
+                if (prev)
+                    set_slob(prev, slob_units(prev), cur + units);
+                else
+                    sp->free = cur + units; // 更新页面的空闲链表头
+                set_slob(cur + units, avail - units, next); // 设置剩余的空闲块
+            }
+
+            sp->units -= units; // 更新页面的空闲单元数
+            if (!sp->units)
+                clear_slob_page_free(sp); // 如果页面已满，清除页面的空闲标记
+            return cur; // 返回分配的内存块
+        }
+        if (slob_last(cur)) // 如果当前块是最后一个空闲块，返回NULL
+            return NULL;
+    }
 }
-
 /*
  * slob_alloc: entry point into the slob allocator.
  */
+// slob_alloc: SLOB分配器的核心函数，用于分配内存块
+// size: 要分配的内存块大小
+// gfp: 获取内存的标志，控制内存分配行为
+// align: 内存块的对齐要求
+// node: NUMA节点ID
+
 static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 {
-	struct slob_page *sp;
-	struct list_head *prev;
-	struct list_head *slob_list;
-	slob_t *b = NULL;
-	unsigned long flags;
+    struct slob_page *sp;
+    struct list_head *prev;
+    struct list_head *slob_list;
+    slob_t *b = NULL;
+    unsigned long flags;
 
-	if (size < SLOB_BREAK1)
-		slob_list = &free_slob_small;
-	else if (size < SLOB_BREAK2)
-		slob_list = &free_slob_medium;
-	else
-		slob_list = &free_slob_large;
+    // 根据请求的内存大小选择相应的空闲列表
+    if (size < SLOB_BREAK1)
+        slob_list = &free_slob_small;   // 小内存块的空闲列表
+    else if (size < SLOB_BREAK2)
+        slob_list = &free_slob_medium;  // 中等内存块的空闲列表
+    else
+        slob_list = &free_slob_large;   // 大内存块的空闲列表
 
-	spin_lock_irqsave(&slob_lock, flags);
-	/* Iterate through each partially free page, try to find room */
-	list_for_each_entry(sp, slob_list, list) {
+    spin_lock_irqsave(&slob_lock, flags); // 获取锁，保护空闲列表
+
+    // 遍历选定的空闲列表，尝试找到足够空间的部分空闲页面
+    list_for_each_entry(sp, slob_list, list) {
 #ifdef CONFIG_NUMA
-		/*
-		 * If there's a node specification, search for a partial
-		 * page with a matching node id in the freelist.
-		 */
-		if (node != -1 && page_to_nid(&sp->page) != node)
-			continue;
+        // 如果有节点要求，搜索匹配节点ID的部分空闲页面
+        if (node != -1 && page_to_nid(&sp->page) != node)
+            continue;
 #endif
-		/* Enough room on this page? */
-		if (sp->units < SLOB_UNITS(size))
-			continue;
+        // 检查这个页面是否有足够的空间
+        if (sp->units < SLOB_UNITS(size))
+            continue;
 
-		/* Attempt to alloc */
-		prev = sp->list.prev;
-		b = slob_page_alloc(sp, size, align);
-		if (!b)
-			continue;
+        // 尝试分配内存
+        prev = sp->list.prev;
+        b = slob_page_alloc(sp, size, align);
+        if (!b)
+            continue;
 
-		/* Improve fragment distribution and reduce our average
-		 * search time by starting our next search here. (see
-		 * Knuth vol 1, sec 2.5, pg 449) */
-		if (prev != slob_list->prev &&
-				slob_list->next != prev->next)
-			list_move_tail(slob_list, prev->next);
-		break;
-	}
-	spin_unlock_irqrestore(&slob_lock, flags);
+        // 改善碎片分布和减少平均搜索时间，下一次搜索从当前找到的部分页面开始
+        if (prev != slob_list->prev && slob_list->next != prev->next)
+            list_move_tail(slob_list, prev->next);
+        break;
+    }
+    spin_unlock_irqrestore(&slob_lock, flags); // 释放锁
 
-	/* Not enough space: must allocate a new page */
-	if (!b) {
-		b = slob_new_pages(gfp & ~__GFP_ZERO, 0, node);
-		if (!b)
-			return NULL;
-		sp = slob_page(b);
-		set_slob_page(sp);
+    // 如果没有足够空间，需要分配一个新页面
+    if (!b) {
+        b = slob_new_pages(gfp & ~__GFP_ZERO, 0, node);
+        if (!b)
+            return NULL;
+        sp = slob_page(b);
+        set_slob_page(sp);
 
-		spin_lock_irqsave(&slob_lock, flags);
-		sp->units = SLOB_UNITS(PAGE_SIZE);
-		sp->free = b;
-		INIT_LIST_HEAD(&sp->list);
-		set_slob(b, SLOB_UNITS(PAGE_SIZE), b + SLOB_UNITS(PAGE_SIZE));
-		set_slob_page_free(sp, slob_list);
-		b = slob_page_alloc(sp, size, align);
-		BUG_ON(!b);
-		spin_unlock_irqrestore(&slob_lock, flags);
-	}
-	if (unlikely((gfp & __GFP_ZERO) && b))
-		memset(b, 0, size);
-	return b;
+        spin_lock_irqsave(&slob_lock, flags); // 获取锁
+        sp->units = SLOB_UNITS(PAGE_SIZE); // 设置页面的单元数
+        sp->free = b;                      // 初始化页面的空闲块
+        INIT_LIST_HEAD(&sp->list);         // 初始化页面的空闲列表
+        set_slob(b, SLOB_UNITS(PAGE_SIZE), b + SLOB_UNITS(PAGE_SIZE)); // 设置页面的内存块
+        set_slob_page_free(sp, slob_list); // 将新页面添加到空闲列表中
+        b = slob_page_alloc(sp, size, align); // 再次尝试分配内存
+        BUG_ON(!b);                        // 确保分配成功
+        spin_unlock_irqrestore(&slob_lock, flags); // 释放锁
+    }
+
+    // 如果请求标志包含__GFP_ZERO且内存分配成功，清零内存
+    if (unlikely((gfp & __GFP_ZERO) && b))
+        memset(b, 0, size);
+
+    return b; // 返回分配的内存块
 }
 
 /*
