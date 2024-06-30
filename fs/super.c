@@ -331,15 +331,15 @@ void generic_shutdown_super(struct super_block *sb)
 EXPORT_SYMBOL(generic_shutdown_super);
 
 /**
- *	sget	-	find or create a superblock
- *	@type:	filesystem type superblock should belong to
- *	@test:	comparison callback
- *	@set:	setup callback
- *	@data:	argument to each of them
+ * sget - 遍历超级块链表查找或创建一个超级块
+ * @type: 超级块应该属于的文件系统类型
+ * @test: 比较回调函数，用于测试超级块是否符合条件
+ * @set: 设置回调函数，用于设置超级块的状态
+ * @data: 传递给上述回调函数的参数
  */
 struct super_block *sget(struct file_system_type *type,
-			int (*test)(struct super_block *,void *),
-			int (*set)(struct super_block *,void *),
+			int (*test)(struct super_block *, void *),
+			int (*set)(struct super_block *, void *),
 			void *data)
 {
 	struct super_block *s = NULL;
@@ -347,44 +347,59 @@ struct super_block *sget(struct file_system_type *type,
 	int err;
 
 retry:
+	// 获取全局超级块链表的自旋锁
 	spin_lock(&sb_lock);
+	
+	// 如果有测试函数，则遍历文件系统类型 type 的超级块链表
 	if (test) {
 		list_for_each_entry(old, &type->fs_supers, s_instances) {
+			// 如果不符合测试条件，则继续下一个超级块
 			if (!test(old, data))
 				continue;
+			// 尝试获取超级块的引用计数
 			if (!grab_super(old))
-				goto retry;
+				goto retry; // 如果获取失败，则重新尝试
+			// 如果当前已经有 s 指向其他超级块，则释放之前的超级块
 			if (s) {
 				up_write(&s->s_umount);
 				destroy_super(s);
 			}
+			// 返回找到的超级块
 			return old;
 		}
 	}
+
+	// 如果没有符合条件的超级块，则尝试分配一个新的超级块
 	if (!s) {
-		spin_unlock(&sb_lock);
-		s = alloc_super(type);
+		spin_unlock(&sb_lock); // 释放自旋锁
+		s = alloc_super(type); // 分配新的超级块
 		if (!s)
-			return ERR_PTR(-ENOMEM);
-		goto retry;
+			return ERR_PTR(-ENOMEM); // 分配失败，返回内存不足错误
+		goto retry; // 重新尝试获取超级块
 	}
 		
+	// 如果有设置函数，则尝试设置超级块的状态
 	err = set(s, data);
 	if (err) {
-		spin_unlock(&sb_lock);
-		up_write(&s->s_umount);
-		destroy_super(s);
-		return ERR_PTR(err);
+		spin_unlock(&sb_lock); // 设置失败，释放自旋锁
+		up_write(&s->s_umount); // 释放超级块的卸载写锁
+		destroy_super(s); // 销毁超级块
+		return ERR_PTR(err); // 返回错误码
 	}
+	
+	// 设置超级块的类型和标识符
 	s->s_type = type;
 	strlcpy(s->s_id, type->name, sizeof(s->s_id));
+	
+	// 将超级块添加到全局超级块链表和文件系统类型的超级块链表中
 	list_add_tail(&s->s_list, &super_blocks);
 	list_add(&s->s_instances, &type->fs_supers);
-	spin_unlock(&sb_lock);
-	get_filesystem(type);
-	return s;
-}
+	
+	spin_unlock(&sb_lock); // 释放自旋锁
+	get_filesystem(type); // 增加文件系统类型的引用计数
 
+	return s; // 返回创建或找到的超级块
+}
 EXPORT_SYMBOL(sget);
 
 void drop_super(struct super_block *sb)
@@ -866,7 +881,7 @@ void kill_block_super(struct super_block *sb)
 
 EXPORT_SYMBOL(kill_block_super);
 #endif
-
+/*获取没有后备设备的超级块*/
 int get_sb_nodev(struct file_system_type *fs_type,
 	int flags, void *data,
 	int (*fill_super)(struct super_block *, void *, int),

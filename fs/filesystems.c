@@ -231,26 +231,30 @@ int __init get_filesystem_list(char *buf)
 }
 
 #ifdef CONFIG_PROC_FS
+/*用于处理 /proc/filesystems 文件的实现*/
 static int filesystems_proc_show(struct seq_file *m, void *v)
 {
-	struct file_system_type * tmp;
+	struct file_system_type *tmp;
 
-	read_lock(&file_systems_lock);
-	tmp = file_systems;
+	read_lock(&file_systems_lock); // 获取文件系统列表的读锁
+	tmp = file_systems; // 获取文件系统链表的头指针
 	while (tmp) {
+		// 打印文件系统类型和相关信息到序列文件结构 m
 		seq_printf(m, "%s\t%s\n",
-			(tmp->fs_flags & FS_REQUIRES_DEV) ? "" : "nodev",
-			tmp->name);
-		tmp = tmp->next;
+			(tmp->fs_flags & FS_REQUIRES_DEV) ? "" : "nodev", // 根据文件系统标志判断是否需要设备
+			tmp->name); // 打印文件系统名
+		tmp = tmp->next; // 遍历下一个文件系统类型
 	}
-	read_unlock(&file_systems_lock);
-	return 0;
+	read_unlock(&file_systems_lock); // 释放文件系统列表的读锁
+	return 0; // 返回操作成功
 }
 
 static int filesystems_proc_open(struct inode *inode, struct file *file)
 {
+	// 打开文件时调用 single_open 函数，传入文件处理函数 filesystems_proc_show
 	return single_open(file, filesystems_proc_show, NULL);
 }
+
 
 static const struct file_operations filesystems_proc_fops = {
 	.open		= filesystems_proc_open,

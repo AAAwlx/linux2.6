@@ -1623,20 +1623,20 @@ static int unshare_thread(unsigned long unshare_flags)
  */
 static int unshare_fs(unsigned long unshare_flags, struct fs_struct **new_fsp)
 {
-	struct fs_struct *fs = current->fs;
+	struct fs_struct *fs = current->fs;  // 获取当前进程的文件系统结构指针
 
-	if (!(unshare_flags & CLONE_FS) || !fs)
-		return 0;
+	if (!(unshare_flags & CLONE_FS) || !fs)  // 检查是否设置了 CLONE_FS 标志并且 fs 指针有效
+		return 0;  // 返回 0，表示不需要执行操作或操作成功
 
-	/* don't need lock here; in the worst case we'll do useless copy */
-	if (fs->users == 1)
-		return 0;
+	/* 不需要在此处加锁；在最坏的情况下会执行无用的复制 */
+	if (fs->users == 1)  // 检查当前进程是否是文件系统结构的唯一使用者
+		return 0;  // 返回 0，表示不需要执行操作
 
-	*new_fsp = copy_fs_struct(fs);
-	if (!*new_fsp)
-		return -ENOMEM;
+	*new_fsp = copy_fs_struct(fs);  // 复制当前进程的文件系统结构
+	if (!*new_fsp)  // 检查内存分配是否失败
+		return -ENOMEM;  // 返回 -ENOMEM，表示内存分配错误
 
-	return 0;
+	return 0;  // 返回 0，表示操作成功
 }
 
 /*

@@ -90,27 +90,27 @@ struct msdos_sb_info {
 };
 
 
-#define FAT_CACHE_VALID	0	/* special case for valid cache */
+#define FAT_CACHE_VALID	0	/* special case for valid cache 保证缓存有效*/
 
 /*
  * MS-DOS file system inode data in memory
  */
 struct msdos_inode_info {
-	spinlock_t cache_lru_lock;
-	struct list_head cache_lru;
-	int nr_caches;
-	/* for avoiding the race between fat_free() and fat_get_cluster() */
-	unsigned int cache_valid_id;
+	spinlock_t cache_lru_lock;  // 自旋锁，用于保护缓存 LRU（Least Recently Used）链表
+	struct list_head cache_lru;  // 缓存 LRU 链表头，用于管理缓存项
+	int nr_caches;  // 缓存项的数量
+	/* 用于避免 fat_free() 和 fat_get_cluster() 之间的竞争 */
+	unsigned int cache_valid_id;  // 缓存有效 ID，用于同步缓存操作
 
-	/* NOTE: mmu_private is 64bits, so must hold ->i_mutex to access */
-	loff_t mmu_private;	/* physically allocated size */
+	/* 注意：mmu_private 是 64 位的，因此访问时必须持有 ->i_mutex 锁 */
+	loff_t mmu_private;  // 实际分配的大小（以字节为单位）
 
-	int i_start;		/* first cluster or 0 */
-	int i_logstart;		/* logical first cluster */
-	int i_attrs;		/* unused attribute bits */
-	loff_t i_pos;		/* on-disk position of directory entry or 0 */
-	struct hlist_node i_fat_hash;	/* hash by i_location */
-	struct inode vfs_inode;
+	int i_start;  // 起始簇号，0 表示没有起始簇
+	int i_logstart;  // 逻辑起始簇号
+	int i_attrs;  // 未使用的属性位
+	loff_t i_pos;  // 目录项在磁盘上的位置，0 表示没有位置
+	struct hlist_node i_fat_hash;  // 根据 i_location 进行哈希的链表节点
+	struct inode vfs_inode;  // 通用 VFS（虚拟文件系统） inode 结构
 };
 
 struct fat_slot_info {

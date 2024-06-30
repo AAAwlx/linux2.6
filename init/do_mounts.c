@@ -362,11 +362,13 @@ void __init mount_root(void)
 
 /*
  * Prepare the namespace - decide what/where to mount, load ramdisks, etc.
+ * 准备命名空间 - 决定何时/何地挂载，加载ramdisk等。
  */
 void __init prepare_namespace(void)
 {
 	int is_floppy;
 
+	// 如果设置了延迟挂载根设备，则等待指定的秒数
 	if (root_delay) {
 		printk(KERN_INFO "Waiting %dsec before mounting root device...\n",
 		       root_delay);
@@ -374,16 +376,17 @@ void __init prepare_namespace(void)
 	}
 
 	/*
-	 * wait for the known devices to complete their probing
+	 * 等待已知设备完成它们的探测
 	 *
-	 * Note: this is a potential source of long boot delays.
-	 * For example, it is not atypical to wait 5 seconds here
-	 * for the touchpad of a laptop to initialize.
+	 * 注意：这里是潜在的引起长时间启动延迟的地方。
+	 * 例如，等待触摸板初始化可能需要5秒。
 	 */
 	wait_for_device_probe();
 
+	// 运行多设备（md）的设置
 	md_run_setup();
 
+	// 如果保存的根设备名称存在，则使用它进行挂载
 	if (saved_root_name[0]) {
 		root_device_name = saved_root_name;
 		if (!strncmp(root_device_name, "mtd", 3) ||
@@ -396,10 +399,11 @@ void __init prepare_namespace(void)
 			root_device_name += 5;
 	}
 
+	// 加载initrd ramdisk
 	if (initrd_load())
 		goto out;
 
-	/* wait for any asynchronous scanning to complete */
+	// 如果根设备仍然为0且设置了根设备等待，则等待根设备就绪
 	if ((ROOT_DEV == 0) && root_wait) {
 		printk(KERN_INFO "Waiting for root device %s...\n",
 			saved_root_name);
@@ -409,14 +413,24 @@ void __init prepare_namespace(void)
 		async_synchronize_full();
 	}
 
+	// 检测根设备是否为软盘
 	is_floppy = MAJOR(ROOT_DEV) == FLOPPY_MAJOR;
 
+	// 如果是软盘并且需要加载ramdisk，则加载ramdisk
 	if (is_floppy && rd_doload && rd_load_disk(0))
 		ROOT_DEV = Root_RAM0;
 
+	// 进行挂载根文件系统
 	mount_root();
+
 out:
+	// 挂载devtmpfs文件系统到"/dev"目录
 	devtmpfs_mount("dev");
+
+	// 移动当前进程的根目录到根文件系统的根目录
 	sys_mount(".", "/", NULL, MS_MOVE, NULL);
+
+	// 改变当前进程的根目录为"/"
 	sys_chroot(".");
 }
+

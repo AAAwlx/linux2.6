@@ -516,14 +516,14 @@ static void fat_destroy_inode(struct inode *inode)
 
 static void init_once(void *foo)
 {
-	struct msdos_inode_info *ei = (struct msdos_inode_info *)foo;
+	struct msdos_inode_info *ei = (struct msdos_inode_info *)foo;//将传入的 foo 指针转换为 msdos_inode_info 类型的指针 ei，以便访问结构体的成员
 
-	spin_lock_init(&ei->cache_lru_lock);
-	ei->nr_caches = 0;
+	spin_lock_init(&ei->cache_lru_lock);//初始化 cache_lru_lock 自旋锁，用于保护 cache_lru 列表的访问
+	ei->nr_caches = 0;//
 	ei->cache_valid_id = FAT_CACHE_VALID + 1;
-	INIT_LIST_HEAD(&ei->cache_lru);
-	INIT_HLIST_NODE(&ei->i_fat_hash);
-	inode_init_once(&ei->vfs_inode);
+	INIT_LIST_HEAD(&ei->cache_lru);//初始化 cache_lru 成员，将其设为空的双向链表头
+	INIT_HLIST_NODE(&ei->i_fat_hash);//初始化 i_fat_hash 成员，将其设为空的哈希链表节点
+	inode_init_once(&ei->vfs_inode);//调用 inode_init_once 函数，初始化 vfs_inode 成员。inode_init_once 函数通常用于初始化 VFS 层的 inode 结构体，确保其处于一个干净的状态
 }
 
 static int __init fat_init_inodecache(void)

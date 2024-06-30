@@ -433,67 +433,69 @@ struct ext4_mount_options {
 /* Max physical block we can addres w/o extents */
 #define EXT4_MAX_BLOCK_FILE_PHYS	0xFFFFFFFF
 
-/*
- * Structure of an inode on the disk
+/**
+ * ext4文件系统的原生inode
+ * 该结构体中的内容会被填入到ext4_inode_info
  */
 struct ext4_inode {
-	__le16	i_mode;		/* File mode */
-	__le16	i_uid;		/* Low 16 bits of Owner Uid */
-	__le32	i_size_lo;	/* Size in bytes */
-	__le32	i_atime;	/* Access time */
-	__le32	i_ctime;	/* Inode Change time */
-	__le32	i_mtime;	/* Modification time */
-	__le32	i_dtime;	/* Deletion Time */
-	__le16	i_gid;		/* Low 16 bits of Group Id */
-	__le16	i_links_count;	/* Links count */
-	__le32	i_blocks_lo;	/* Blocks count */
-	__le32	i_flags;	/* File flags */
+	__le16	i_mode;             /* 文件模式 */
+	__le16	i_uid;              /* 低16位的所有者用户ID */
+	__le32	i_size_lo;          /* 文件大小（以字节为单位） */
+	__le32	i_atime;            /* 最后访问时间 */
+	__le32	i_ctime;            /* inode更改时间 */
+	__le32	i_mtime;            /* 最后修改时间 */
+	__le32	i_dtime;            /* 删除时间 */
+	__le16	i_gid;              /* 低16位的组ID */
+	__le16	i_links_count;      /* 链接计数 */
+	__le32	i_blocks_lo;        /* 块计数 */
+	__le32	i_flags;            /* 文件标志 */
 	union {
 		struct {
-			__le32  l_i_version;
+			__le32  l_i_version;   /* 版本号 */
 		} linux1;
 		struct {
-			__u32  h_i_translator;
+			__u32  h_i_translator; /* 翻译器ID（适用于Hurd系统） */
 		} hurd1;
 		struct {
-			__u32  m_i_reserved1;
+			__u32  m_i_reserved1;  /* 保留字段（适用于Masix系统） */
 		} masix1;
-	} osd1;				/* OS dependent 1 */
-	__le32	i_block[EXT4_N_BLOCKS];/* Pointers to blocks */
-	__le32	i_generation;	/* File version (for NFS) */
-	__le32	i_file_acl_lo;	/* File ACL */
-	__le32	i_size_high;
-	__le32	i_obso_faddr;	/* Obsoleted fragment address */
+	} osd1;                     /* 操作系统相关字段 1 */
+	__le32	i_block[EXT4_N_BLOCKS]; /* 块指针数组 */
+	__le32	i_generation;        /* 文件版本（用于NFS） */
+	__le32	i_file_acl_lo;       /* 文件ACL */
+	__le32	i_size_high;         /* 文件大小（高位） */
+	__le32	i_obso_faddr;        /* 废弃的片段地址 */
 	union {
 		struct {
-			__le16	l_i_blocks_high; /* were l_i_reserved1 */
-			__le16	l_i_file_acl_high;
-			__le16	l_i_uid_high;	/* these 2 fields */
-			__le16	l_i_gid_high;	/* were reserved2[0] */
-			__u32	l_i_reserved2;
+			__le16	l_i_blocks_high;   /* 块计数（高位） */
+			__le16	l_i_file_acl_high; /* 文件ACL（高位） */
+			__le16	l_i_uid_high;      /* 用户ID（高位） */
+			__le16	l_i_gid_high;      /* 组ID（高位） */
+			__u32	l_i_reserved2;     /* 保留字段 */
 		} linux2;
 		struct {
-			__le16	h_i_reserved1;	/* Obsoleted fragment number/size which are removed in ext4 */
-			__u16	h_i_mode_high;
-			__u16	h_i_uid_high;
-			__u16	h_i_gid_high;
-			__u32	h_i_author;
+			__le16	h_i_reserved1;     /* 废弃的片段号/大小 */
+			__u16	h_i_mode_high;      /* 模式（高位） */
+			__u16	h_i_uid_high;       /* 用户ID（高位） */
+			__u16	h_i_gid_high;       /* 组ID（高位） */
+			__u32	h_i_author;         /* 作者ID */
 		} hurd2;
 		struct {
-			__le16	h_i_reserved1;	/* Obsoleted fragment number/size which are removed in ext4 */
-			__le16	m_i_file_acl_high;
-			__u32	m_i_reserved2[2];
+			__le16	h_i_reserved1;     /* 废弃的片段号/大小 */
+			__le16	m_i_file_acl_high; /* 文件ACL（高位） */
+			__u32	m_i_reserved2[2];  /* 保留字段 */
 		} masix2;
-	} osd2;				/* OS dependent 2 */
-	__le16	i_extra_isize;
-	__le16	i_pad1;
-	__le32  i_ctime_extra;  /* extra Change time      (nsec << 2 | epoch) */
-	__le32  i_mtime_extra;  /* extra Modification time(nsec << 2 | epoch) */
-	__le32  i_atime_extra;  /* extra Access time      (nsec << 2 | epoch) */
-	__le32  i_crtime;       /* File Creation time */
-	__le32  i_crtime_extra; /* extra FileCreationtime (nsec << 2 | epoch) */
-	__le32  i_version_hi;	/* high 32 bits for 64-bit version */
+	} osd2;                     /* 操作系统相关字段 2 */
+	__le16	i_extra_isize;       /* 额外的inode大小 */
+	__le16	i_pad1;              /* 填充字段 */
+	__le32  i_ctime_extra;      /* 额外的更改时间（纳秒<<2 | 纪元） */
+	__le32  i_mtime_extra;      /* 额外的修改时间（纳秒<<2 | 纪元） */
+	__le32  i_atime_extra;      /* 额外的访问时间（纳秒<<2 | 纪元） */
+	__le32  i_crtime;           /* 文件创建时间 */
+	__le32  i_crtime_extra;     /* 额外的文件创建时间（纳秒<<2 | 纪元） */
+	__le32  i_version_hi;       /* 64位版本的高32位 */
 };
+
 
 struct move_extent {
 	__u32 reserved;		/* should be zero */

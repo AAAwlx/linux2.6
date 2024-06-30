@@ -413,39 +413,48 @@ static void __init setup_command_line(char *command_line)
 }
 
 /*
- * We need to finalize in a non-__init function or else race conditions
- * between the root thread and the init thread may cause start_kernel to
- * be reaped by free_initmem before the root thread has proceeded to
- * cpu_idle.
+ * rest_init - 系统启动后的初始化函数
  *
- * gcc-3.4 accidentally inlines this function, so use noinline.
+ * 这个函数是系统启动后的初始化函数，在内核初始化的最后阶段调用。
+ * 在释放内核锁后，它启动了两个内核线程：kernel_init 和 kthreadd。
+ * 然后设置了默认的 NUMA 策略，并根据新线程的 PID 获取了对应的任务结构。
+ * 最后初始化了引导空闲线程，并调用 schedule() 开始系统的调度。
+ *
+ * 注意事项：
+ *   - 这个函数在释放内核锁后运行，并且声明为 noinline，确保不会被内联优化。
+ *   - 在调用 schedule() 之前，需要禁用抢占，并在调用 cpu_idle() 之前再次启用。
  */
-
 static noinline void __init_refok rest_init(void)
 	__releases(kernel_lock)
 {
 	int pid;
 
-	rcu_scheduler_starting();
-	kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND);
-	numa_default_policy();
-	pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);
-	rcu_read_lock();
+	rcu_scheduler_starting();  // RCU调度器启动
+
+	kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND);  // 创建内核线程 kernel_init
+	numa_default_policy();  // 设置默认的NUMA策略
+
+	pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);  // 创建内核线程 kthreadd
+	rcu_read_lock();  // 获取RCU读锁
+
+	// 根据线程的PID获取对应的任务结构
 	kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
-	rcu_read_unlock();
-	unlock_kernel();
+
+	rcu_read_unlock();  // 释放RCU读锁
+	unlock_kernel();  // 释放内核锁
 
 	/*
-	 * The boot idle thread must execute schedule()
-	 * at least once to get things moving:
+	 * 引导空闲线程必须至少执行一次 schedule() 来启动系统：
 	 */
 	init_idle_bootup_task(current);
-	preempt_enable_no_resched();
-	schedule();
-	preempt_disable();
 
-	/* Call into cpu_idle with preempt disabled */
-	cpu_idle();
+	preempt_enable_no_resched();  // 启用抢占，不重新调度
+	schedule();  // 调度器启动
+
+	preempt_disable();  // 禁用抢占
+
+	/* 在禁用抢占的情况下调用 cpu_idle() */
+	cpu_idle();  // 进入CPU空闲状态
 }
 
 /* Check for early params. */
@@ -579,7 +588,7 @@ asmlinkage void __init start_kernel(void)
 	 * kmem_cache_init()
 	 */
 	pidhash_init();
-	vfs_caches_init_early();
+	vfs_caches_init_early();//初始化vfs数据结构的缓存
 	sort_main_extable();
 	trap_init();		// 初始化异常处理
 	mm_init();
@@ -675,7 +684,7 @@ asmlinkage void __init start_kernel(void)
 	buffer_init();
 	key_init();
 	security_init();
-	vfs_caches_init(totalram_pages);
+	vfs_caches_init(totalram_pages);//初始化vfs，构建 /
 	signals_init();
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
@@ -695,7 +704,7 @@ asmlinkage void __init start_kernel(void)
 	ftrace_init();
 
 	/* Do the rest non-__init'ed, we're now alive */
-	rest_init();
+	rest_init();//系统启动后的初始化函数
 }
 
 /* Call all constructor functions linked into the kernel. */
@@ -788,10 +797,10 @@ static void __init do_basic_setup(void)
 	cpuset_init_smp();
 	usermodehelper_init();
 	init_tmpfs();
-	driver_init();
+	driver_init();//初始化设备
 	init_irq_proc();
 	do_ctors();
-	do_initcalls();
+	do_initcalls();//执行初始化的initcall
 }
 
 static void __init do_pre_smp_initcalls(void)
@@ -851,65 +860,75 @@ static noinline int init_post(void)
 	      "See Linux Documentation/init.txt for guidance.");
 }
 
+/*
+ * kernel_init - 内核初始化函数
+ *
+ * 这个函数是Linux内核的初始化入口，负责在系统引导时完成各种核心的初始化工作。
+ * 它被设计为在内核锁的保护下执行，确保在启动过程中的关键步骤中不会被中断。
+ *
+ * 注意事项：
+ *   - 在初始化过程中，通过设置内存和CPU允许的节点和CPU掩码来确保init进程能够在任何节点和CPU上运行。
+ *   - 设置了当前进程为PID命名空间的child_reaper，用于处理孤儿进程。
+ *   - 执行了多个SMP初始化函数来准备对称多处理系统。
+ *   - 最后通过prepare_namespace()函数准备根文件系统，然后清理init内存段并启动用户模式进程。
+ */
 static int __init kernel_init(void * unused)
 {
-	lock_kernel();
+	lock_kernel();  // 加锁内核，防止在关键初始化阶段被中断
 
 	/*
-	 * init can allocate pages on any node
+	 * init可以在任何节点上分配页面
 	 */
 	set_mems_allowed(node_states[N_HIGH_MEMORY]);
+
 	/*
-	 * init can run on any cpu.
+	 * init可以在任何CPU上运行
 	 */
 	set_cpus_allowed_ptr(current, cpu_all_mask);
+
 	/*
-	 * Tell the world that we're going to be the grim
-	 * reaper of innocent orphaned children.
+	 * 告诉系统，我们将成为无辜孤儿进程的处理者。
 	 *
-	 * We don't want people to have to make incorrect
-	 * assumptions about where in the task array this
-	 * can be found.
+	 * 我们不希望人们对这个任务数组中的位置有错误的假设。
 	 */
 	init_pid_ns.child_reaper = current;
 
-	cad_pid = task_pid(current);
+	cad_pid = task_pid(current);  // 获取当前进程的PID
 
-	smp_prepare_cpus(setup_max_cpus);
+	smp_prepare_cpus(setup_max_cpus);  // 准备多处理器系统
 
-	do_pre_smp_initcalls();
-	start_boot_trace();
+	do_pre_smp_initcalls();  // 执行早期的SMP初始化调用
 
-	smp_init();
-	sched_init_smp();
+	start_boot_trace();  // 启动引导跟踪
 
-	do_basic_setup();
+	smp_init();  // 初始化SMP
 
-	/* Open the /dev/console on the rootfs, this should never fail */
+	sched_init_smp();  // 初始化调度器的SMP部分
+
+	do_basic_setup();  // 执行基本的系统设置
+
+	/* 打开根文件系统上的/dev/console，这一步不应失败 */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
 		printk(KERN_WARNING "Warning: unable to open an initial console.\n");
 
-	(void) sys_dup(0);
-	(void) sys_dup(0);
-	/*
-	 * check if there is an early userspace init.  If yes, let it do all
-	 * the work
-	 */
+	(void) sys_dup(0);  // 复制标准输入
+	(void) sys_dup(0);  // 复制标准输入
 
+	/*
+	 * 检查是否存在早期用户空间初始化程序。如果存在，则让它完成所有工作。
+	 */
 	if (!ramdisk_execute_command)
 		ramdisk_execute_command = "/init";
 
-	if (sys_access((const char __user *) ramdisk_execute_command, 0) != 0) {
+	if (sys_access((const char __user *) ramdisk_execute_command, 0) != 0) {//检查文件的存在性，与当前进程是否具有权限
 		ramdisk_execute_command = NULL;
-		prepare_namespace();
+		prepare_namespace();  // 准备根文件系统命名空间
 	}
 
 	/*
-	 * Ok, we have completed the initial bootup, and
-	 * we're essentially up and running. Get rid of the
-	 * initmem segments and start the user-mode stuff..
+	 * 初始化完成，系统基本运行起来了。清理初始化内存段并启动用户模式进程。
 	 */
-
 	init_post();
+
 	return 0;
 }

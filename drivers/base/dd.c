@@ -183,33 +183,40 @@ void wait_for_device_probe(void)
 EXPORT_SYMBOL_GPL(wait_for_device_probe);
 
 /**
- * driver_probe_device - attempt to bind device & driver together
- * @drv: driver to bind a device to
- * @dev: device to try to bind to the driver
+ * driver_probe_device - 尝试将设备与驱动程序绑定
+ * @drv: 要绑定到设备的驱动程序
+ * @dev: 要尝试绑定到驱动程序的设备
  *
- * This function returns -ENODEV if the device is not registered,
- * 1 if the device is bound successfully and 0 otherwise.
+ * 如果设备未注册，则此函数返回 -ENODEV；
+ * 如果设备成功绑定，则返回 1；
+ * 否则返回 0。
  *
- * This function must be called with @dev lock held.  When called for a
- * USB interface, @dev->parent lock must be held as well.
+ * 调用此函数时必须持有 @dev 的锁。对于 USB 接口，还必须持有 @dev->parent 的锁。
  */
 int driver_probe_device(struct device_driver *drv, struct device *dev)
 {
 	int ret = 0;
 
+	// 如果设备未注册，则返回 -ENODEV
 	if (!device_is_registered(dev))
 		return -ENODEV;
 
+	// 打印调试信息，显示设备与驱动的匹配情况
 	pr_debug("bus: '%s': %s: matched device %s with driver %s\n",
 		 drv->bus->name, __func__, dev_name(dev), drv->name);
 
+	// 增加设备的运行时引用计数，不唤醒设备
 	pm_runtime_get_noresume(dev);
+	// 等待设备的运行时操作完成
 	pm_runtime_barrier(dev);
+	// 真正尝试将设备与驱动程序绑定
 	ret = really_probe(dev, drv);
+	// 同步释放设备的运行时引用计数
 	pm_runtime_put_sync(dev);
 
 	return ret;
 }
+
 
 static int __device_attach(struct device_driver *drv, void *data)
 {
@@ -367,30 +374,44 @@ void driver_detach(struct device_driver *drv)
 	struct device_private *dev_prv;
 	struct device *dev;
 
+	// 循环处理驱动程序关联的设备列表
 	for (;;) {
+		// 获取设备列表锁
 		spin_lock(&drv->p->klist_devices.k_lock);
+		// 如果设备列表为空，则释放锁并跳出循环
 		if (list_empty(&drv->p->klist_devices.k_list)) {
 			spin_unlock(&drv->p->klist_devices.k_lock);
 			break;
 		}
+		// 获取设备私有数据结构，该数据结构包含在设备驱动的设备列表中
 		dev_prv = list_entry(drv->p->klist_devices.k_list.prev,
 				     struct device_private,
 				     knode_driver.n_node);
+		// 获取设备指针
 		dev = dev_prv->device;
+		// 增加设备的引用计数，确保设备不会在操作过程中被释放
 		get_device(dev);
+		// 释放设备列表锁
 		spin_unlock(&drv->p->klist_devices.k_lock);
 
-		if (dev->parent)	/* Needed for USB */
+		// 如果设备有父设备（例如USB设备），则需要获取父设备的锁
+		if (dev->parent)
 			device_lock(dev->parent);
+		// 获取设备自身的锁
 		device_lock(dev);
+		// 如果设备当前的驱动程序是 drv，则释放设备的驱动绑定
 		if (dev->driver == drv)
 			__device_release_driver(dev);
+		// 释放设备自身的锁
 		device_unlock(dev);
+		// 如果设备有父设备，则释放父设备的锁
 		if (dev->parent)
 			device_unlock(dev->parent);
+		// 减少设备的引用计数，可能会导致设备的释放
 		put_device(dev);
 	}
 }
+
 
 /*
  * These exports can't be _GPL due to .h files using this within them, and it

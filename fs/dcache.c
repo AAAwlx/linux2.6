@@ -2065,40 +2065,51 @@ char *dynamic_dname(struct dentry *dentry, char *buffer, int buflen,
 }
 
 /*
- * Write full pathname from the root of the filesystem into the buffer.
+ * 用于获取指定目录项（dentry）从根文件系统到全路径的字符串
  */
 char *dentry_path(struct dentry *dentry, char *buf, int buflen)
 {
-	char *end = buf + buflen;
-	char *retval;
+	char *end = buf + buflen; // 指向缓冲区末尾的指针
+	char *retval; // 返回值指针
 
-	spin_lock(&dcache_lock);
+	spin_lock(&dcache_lock); // 获取目录缓存锁
+
+	// 在路径末尾添加 '\0' 字符
 	prepend(&end, &buflen, "\0", 1);
+
+	// 如果目录项已被删除，追加 "//deleted" 到路径中
 	if (d_unlinked(dentry) &&
 		(prepend(&end, &buflen, "//deleted", 9) != 0))
 			goto Elong;
+
+	// 检查路径缓冲区是否太短
 	if (buflen < 1)
 		goto Elong;
+
 	/* Get '/' right */
-	retval = end-1;
-	*retval = '/';
+	retval = end - 1; // 设置返回值为路径末尾前一个位置
+	*retval = '/'; // 在路径末尾前一个位置加上 '/'
 
+	// 从目标目录项逐级向上获取路径
 	while (!IS_ROOT(dentry)) {
-		struct dentry *parent = dentry->d_parent;
+		struct dentry *parent = dentry->d_parent; // 获取父目录项
 
-		prefetch(parent);
+		prefetch(parent); // 预取父目录项
+		// 将当前目录项的名称和 '/' 前缀添加到路径中
 		if ((prepend_name(&end, &buflen, &dentry->d_name) != 0) ||
 		    (prepend(&end, &buflen, "/", 1) != 0))
 			goto Elong;
 
-		retval = end;
-		dentry = parent;
+		retval = end; // 更新返回值为当前路径末尾
+		dentry = parent; // 将目录项更新为父目录项
 	}
-	spin_unlock(&dcache_lock);
-	return retval;
+
+	spin_unlock(&dcache_lock); // 解锁目录缓存锁
+	return retval; // 返回路径字符串的起始位置
+
 Elong:
-	spin_unlock(&dcache_lock);
-	return ERR_PTR(-ENAMETOOLONG);
+	spin_unlock(&dcache_lock); // 解锁目录缓存锁
+	return ERR_PTR(-ENAMETOOLONG); // 返回路径太长的错误指针
 }
 
 /*
@@ -2263,31 +2274,33 @@ resume:
 }
 
 /**
- * find_inode_number - check for dentry with name
- * @dir: directory to check
- * @name: Name to find.
+ * find_inode_number - 检查具有名称的 dentry
+ * @dir: 要检查的目录
+ * @name：要查找的名称。
  *
- * Check whether a dentry already exists for the given name,
- * and return the inode number if it has an inode. Otherwise
- * 0 is returned.
+ * 检查给定名称的 dentry 是否已存在，
+ * 如果有 inode，则返回 inode 号。否则
+ * 返回0。
  *
- * This routine is used to post-process directory listings for
- * filesystems using synthetic inode numbers, and is necessary
- * to keep getcwd() working.
+ * 此例程用于后处理目录列表
+ * 使用合成 inode 编号的文件系统，这是必要的
+ * 保持 getcwd() 工作。
  */
  
 ino_t find_inode_number(struct dentry *dir, struct qstr *name)
 {
-	struct dentry * dentry;
+	struct dentry *dentry;
 	ino_t ino = 0;
 
+	// 使用哈希查找特定名称的目录项
 	dentry = d_hash_and_lookup(dir, name);
 	if (dentry) {
+		// 如果找到了目录项，并且该目录项有关联的 inode
 		if (dentry->d_inode)
-			ino = dentry->d_inode->i_ino;
-		dput(dentry);
+			ino = dentry->d_inode->i_ino; // 获取 inode 号码
+		dput(dentry); // 释放目录项
 	}
-	return ino;
+	return ino; // 返回找到的 inode 号码或者 0
 }
 EXPORT_SYMBOL(find_inode_number);
 

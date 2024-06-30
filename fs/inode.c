@@ -271,29 +271,48 @@ void destroy_inode(struct inode *inode)
  * These are initializations that only need to be done
  * once, because the fields are idempotent across use
  * of the inode, so let the slab aware of that.
+ * 初始化vfs中的inode
  */
 void inode_init_once(struct inode *inode)
 {
+	// 将 inode 结构体的所有字节初始化为 0
 	memset(inode, 0, sizeof(*inode));
+
+	// 初始化哈希链表节点
 	INIT_HLIST_NODE(&inode->i_hash);
+
+	// 初始化链表头节点
 	INIT_LIST_HEAD(&inode->i_dentry);
 	INIT_LIST_HEAD(&inode->i_devices);
+
+	// 初始化基数树根节点，用于页面缓存
 	INIT_RADIX_TREE(&inode->i_data.page_tree, GFP_ATOMIC);
+
+	// 初始化自旋锁
 	spin_lock_init(&inode->i_data.tree_lock);
 	spin_lock_init(&inode->i_data.i_mmap_lock);
 	INIT_LIST_HEAD(&inode->i_data.private_list);
 	spin_lock_init(&inode->i_data.private_lock);
+
+	// 初始化优先级树根节点
 	INIT_RAW_PRIO_TREE_ROOT(&inode->i_data.i_mmap);
 	INIT_LIST_HEAD(&inode->i_data.i_mmap_nonlinear);
+
+	// 初始化文件大小有序操作
 	i_size_ordered_init(inode);
+
 #ifdef CONFIG_INOTIFY
+	// 初始化 inotify 监视列表
 	INIT_LIST_HEAD(&inode->inotify_watches);
 	mutex_init(&inode->inotify_mutex);
 #endif
+
 #ifdef CONFIG_FSNOTIFY
+	// 初始化文件系统通知标记的哈希链表头
 	INIT_HLIST_HEAD(&inode->i_fsnotify_mark_entries);
 #endif
 }
+
 EXPORT_SYMBOL(inode_init_once);
 
 static void init_once(void *foo)
