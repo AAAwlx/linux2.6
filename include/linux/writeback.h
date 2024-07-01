@@ -117,7 +117,10 @@ void wakeup_flusher_threads(long nr_pages);
 /* writeback.h requires fs.h; it, too, is not included from here. */
 static inline void wait_on_inode(struct inode *inode)
 {
+	// 在进行可能休眠的操作前调用might_sleep()，用于检查当前上下文是否可以休眠
 	might_sleep();
+	
+	// 等待inode的特定状态位(__I_NEW)被清除
 	wait_on_bit(&inode->i_state, __I_NEW, inode_wait, TASK_UNINTERRUPTIBLE);
 }
 static inline void inode_sync_wait(struct inode *inode)

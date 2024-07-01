@@ -378,23 +378,24 @@ static inline void jbd_unlock_bh_journal_head(struct buffer_head *bh)
  * struct jbd_inode is the structure linking inodes in ordered mode
  *   present in a transaction so that we can sync them during commit.
  */
+/**
+ * struct jbd_inode 是链接有序模式中的 inode 的结构体，
+ * 用于在事务提交期间同步它们的数据。
+ */
 struct jbd2_inode {
-	/* Which transaction does this inode belong to? Either the running
-	 * transaction or the committing one. [j_list_lock] */
+	/* 属于哪个事务？可以是当前正在运行的事务或即将提交的事务。[j_list_lock] */
 	transaction_t *i_transaction;
 
-	/* Pointer to the running transaction modifying inode's data in case
-	 * there is already a committing transaction touching it. [j_list_lock] */
+	/* 指向正在修改 inode 数据的当前运行事务，如果已经有即将提交的事务在操作，则指向其。[j_list_lock] */
 	transaction_t *i_next_transaction;
 
-	/* List of inodes in the i_transaction [j_list_lock] */
+	/* 在 i_transaction 中的 inode 列表 [j_list_lock] */
 	struct list_head i_list;
 
-	/* VFS inode this inode belongs to [constant during the lifetime
-	 * of the structure] */
+	/* 指向该 inode 所属的 VFS 层面的 inode 结构体 [结构体生命周期内不变] */
 	struct inode *i_vfs_inode;
 
-	/* Flags of inode [j_list_lock] */
+	/* inode 的标志位 [j_list_lock] */
 	unsigned int i_flags;
 };
 

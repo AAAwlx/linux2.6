@@ -792,53 +792,68 @@ err_ret:
  * For other inodes, search forward from the parent directory's block
  * group to find a free inode.
  */
+/*
+ * There are two policies for allocating an inode.  If the new inode is
+ * a directory, then a forward search is made for a block group with both
+ * free space and a low directory-to-inode ratio; if that fails, then of
+ * the groups with above-average free space, that group with the fewest
+ * directories already is chosen.
+ *
+ * For other inodes, search forward from the parent directory's block
+ * group to find a free inode.
+ */
 struct inode *ext4_new_inode(handle_t *handle, struct inode *dir, int mode,
 			     const struct qstr *qstr, __u32 goal)
 {
-	struct super_block *sb;
-	struct buffer_head *inode_bitmap_bh = NULL;
-	struct buffer_head *group_desc_bh;
-	ext4_group_t ngroups, group = 0;
-	unsigned long ino = 0;
-	struct inode *inode;
-	struct ext4_group_desc *gdp = NULL;
-	struct ext4_inode_info *ei;
-	struct ext4_sb_info *sbi;
-	int ret2, err = 0;
-	struct inode *ret;
-	ext4_group_t i;
-	int free = 0;
-	static int once = 1;
-	ext4_group_t flex_group;
+	struct super_block *sb;          // 超级块指针
+	struct buffer_head *inode_bitmap_bh = NULL;  // inode 位图的缓冲区头指针
+	struct buffer_head *group_desc_bh;  // 块组描述符的缓冲区头指针
+	ext4_group_t ngroups, group = 0;  // 块组数量和块组索引
+	unsigned long ino = 0;            // inode 号
+	struct inode *inode;              // inode 结构指针
+	struct ext4_group_desc *gdp = NULL;  // ext4 块组描述符指针
+	struct ext4_inode_info *ei;       // ext4 inode 信息指针
+	struct ext4_sb_info *sbi;         // ext4 超级块信息指针
+	int ret2, err = 0;                // 返回值和错误码
+	struct inode *ret;                // 返回的 inode 指针
+	ext4_group_t i;                   // 块组索引
+	int free = 0;                     // 空闲块数量
+	static int once = 1;              // 标志位，用于记录尝试次数
+	ext4_group_t flex_group;          // flex group 索引
 
 	/* Cannot create files in a deleted directory */
 	if (!dir || !dir->i_nlink)
 		return ERR_PTR(-EPERM);
 
-	sb = dir->i_sb;
-	ngroups = ext4_get_groups_count(sb);
-	trace_ext4_request_inode(dir, mode);
-	inode = new_inode(sb);
+	sb = dir->i_sb;                   // 获取目录所在的超级块
+	ngroups = ext4_get_groups_count(sb);  // 获取块组的数量
+	trace_ext4_request_inode(dir, mode);  // 跟踪请求创建 inode
+	inode = new_inode(sb);            // 创建一个新的 inode 结构
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
-	ei = EXT4_I(inode);
-	sbi = EXT4_SB(sb);
+	ei = EXT4_I(inode);               // 获取 ext4 inode 信息结构指针
+	sbi = EXT4_SB(sb);                // 获取 ext4 超级块信息结构指针
 
 	if (!goal)
-		goal = sbi->s_inode_goal;
+		goal = sbi->s_inode_goal;     // 如果目标 inode 号为 0，则使用默认值
 
 	if (goal && goal <= le32_to_cpu(sbi->s_es->s_inodes_count)) {
+		// 根据目标 inode 号计算块组和 inode 号
 		group = (goal - 1) / EXT4_INODES_PER_GROUP(sb);
 		ino = (goal - 1) % EXT4_INODES_PER_GROUP(sb);
 		ret2 = 0;
 		goto got_group;
 	}
 
+	// 以下是根据不同策略查找块组的过程
 	if (sbi->s_log_groups_per_flex && test_opt(sb, OLDALLOC)) {
+		// 如果支持灵活块组并且使用旧的分配策略，则尝试在块组中查找空闲的 inode
 		ret2 = find_group_flex(sb, dir, &group);
 		if (ret2 == -1) {
+			// 如果查找失败，则尝试使用其他策略
 			ret2 = find_group_other(sb, dir, &group, mode);
 			if (ret2 == 0 && once) {
+				// 如果尝试一次，打印警告消息
 				once = 0;
 				printk(KERN_NOTICE "ext4: find_group_flex "
 				       "failed, fallback succeeded dir %lu\n",
@@ -850,30 +865,33 @@ struct inode *ext4_new_inode(handle_t *handle, struct inode *dir, int mode,
 
 	if (S_ISDIR(mode)) {
 		if (test_opt(sb, OLDALLOC))
-			ret2 = find_group_dir(sb, dir, &group);
+			ret2 = find_group_dir(sb, dir, &group);  // 查找适合目录的块组
 		else
-			ret2 = find_group_orlov(sb, dir, &group, mode, qstr);
+			ret2 = find_group_orlov(sb, dir, &group, mode, qstr);  // 使用 Orlov 算法查找
 	} else
-		ret2 = find_group_other(sb, dir, &group, mode);
+		ret2 = find_group_other(sb, dir, &group, mode);  // 查找其他类型文件的块组
 
 got_group:
-	EXT4_I(dir)->i_last_alloc_group = group;
-	err = -ENOSPC;
-	if (ret2 == -1)
+	EXT4_I(dir)->i_last_alloc_group = group;  // 记录最后分配的块组
+	err = -ENOSPC;  // 默认错误码为没有空间
+
+	if (ret2 == -1)  // 如果查找块组失败，跳出
 		goto out;
 
+	// 在所有块组中查找空闲的 inode
 	for (i = 0; i < ngroups; i++, ino = 0) {
-		err = -EIO;
+		err = -EIO;  // 默认错误码为 IO 错误
 
-		gdp = ext4_get_group_desc(sb, group, &group_desc_bh);
+		gdp = ext4_get_group_desc(sb, group, &group_desc_bh);  // 获取块组描述符
 		if (!gdp)
 			goto fail;
 
 		brelse(inode_bitmap_bh);
-		inode_bitmap_bh = ext4_read_inode_bitmap(sb, group);
+		inode_bitmap_bh = ext4_read_inode_bitmap(sb, group);  // 读取 inode 位图
 		if (!inode_bitmap_bh)
 			goto fail;
 
+		// 在块组的 inode 位图中查找下一个空闲的 inode
 repeat_in_this_group:
 		ino = ext4_find_next_zero_bit((unsigned long *)
 					      inode_bitmap_bh->b_data,
@@ -894,7 +912,7 @@ repeat_in_this_group:
 				goto fail;
 			if (!ext4_claim_inode(sb, inode_bitmap_bh,
 						ino, group, mode)) {
-				/* we won it */
+				/* 成功获取 inode */
 				BUFFER_TRACE(inode_bitmap_bh,
 					"call ext4_handle_dirty_metadata");
 				err = ext4_handle_dirty_metadata(handle,
@@ -902,11 +920,11 @@ repeat_in_this_group:
 							inode_bitmap_bh);
 				if (err)
 					goto fail;
-				/* zero bit is inode number 1*/
+				/* 设置 inode 号 */
 				ino++;
 				goto got;
 			}
-			/* we lost it */
+			/* 未能获取 inode */
 			ext4_handle_release_buffer(handle, inode_bitmap_bh);
 			ext4_handle_release_buffer(handle, group_desc_bh);
 
@@ -915,25 +933,23 @@ repeat_in_this_group:
 		}
 
 		/*
-		 * This case is possible in concurrent environment.  It is very
-		 * rare.  We cannot repeat the find_group_xxx() call because
-		 * that will simply return the same blockgroup, because the
-		 * group descriptor metadata has not yet been updated.
-		 * So we just go onto the next blockgroup.
+		 * 在并发环境下，这种情况是可能发生的，但很少见。
+		 * 我们不能重复调用 find_group_xxx()，因为这将返回相同的块组，
+		 * 因为块组描述符元数据尚未更新。所以我们只是进入下一个块组。
 		 */
 		if (++group == ngroups)
 			group = 0;
 	}
-	err = -ENOSPC;
+	err = -ENOSPC;  // 没有空间错误
 	goto out;
 
 got:
-	/* We may have to initialize the block bitmap if it isn't already */
+	/* 如果块组未初始化，需要初始化块位图 */
 	if (EXT4_HAS_RO_COMPAT_FEATURE(sb, EXT4_FEATURE_RO_COMPAT_GDT_CSUM) &&
 	    gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
 		struct buffer_head *block_bitmap_bh;
 
-		block_bitmap_bh = ext4_read_block_bitmap(sb, group);
+		block_bitmap_bh = ext4_read_block_bitmap(sb, group);  // 读取块位图
 		BUFFER_TRACE(block_bitmap_bh, "get block bitmap access");
 		err = ext4_journal_get_write_access(handle, block_bitmap_bh);
 		if (err) {
@@ -943,7 +959,7 @@ got:
 
 		free = 0;
 		ext4_lock_group(sb, group);
-		/* recheck and clear flag under lock if we still need to */
+		/* 在锁定状态下重新检查并清除标志 */
 		if (gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
 			free = ext4_free_blocks_after_init(sb, group, gdp);
 			gdp->bg_flags &= cpu_to_le16(~EXT4_BG_BLOCK_UNINIT);
@@ -953,8 +969,8 @@ got:
 		}
 		ext4_unlock_group(sb, group);
 
-		/* Don't need to dirty bitmap block if we didn't change it */
-		if (free) {
+		/* 如果未更改块位图，则不需要脏数据 */
+if (free) {
 			BUFFER_TRACE(block_bitmap_bh, "dirty block bitmap");
 			err = ext4_handle_dirty_metadata(handle,
 							NULL, block_bitmap_bh);
@@ -965,92 +981,93 @@ got:
 			goto fail;
 	}
 	BUFFER_TRACE(group_desc_bh, "call ext4_handle_dirty_metadata");
-	err = ext4_handle_dirty_metadata(handle, NULL, group_desc_bh);
+	err = ext4_handle_dirty_metadata(handle, NULL, group_desc_bh);  // 处理块组描述符的脏数据
 	if (err)
 		goto fail;
 
-	percpu_counter_dec(&sbi->s_freeinodes_counter);
+	percpu_counter_dec(&sbi->s_freeinodes_counter);  // 更新空闲 inode 计数器
 	if (S_ISDIR(mode))
-		percpu_counter_inc(&sbi->s_dirs_counter);
-	sb->s_dirt = 1;
+		percpu_counter_inc(&sbi->s_dirs_counter);  // 如果是目录，更新目录计数器
+	sb->s_dirt = 1;  // 标记超级块已被修改
 
 	if (sbi->s_log_groups_per_flex) {
 		flex_group = ext4_flex_group(sbi, group);
 		atomic_dec(&sbi->s_flex_groups[flex_group].free_inodes);
 	}
 
-	inode->i_uid = current_fsuid();
+	inode->i_uid = current_fsuid();  // 设置 inode 的用户 ID
 	if (test_opt(sb, GRPID))
-		inode->i_gid = dir->i_gid;
+		inode->i_gid = dir->i_gid;  // 如果设置了 GRPID 选项，则继承目录的组 ID
 	else if (dir->i_mode & S_ISGID) {
-		inode->i_gid = dir->i_gid;
+		inode->i_gid = dir->i_gid;  // 否则，继承目录的组 ID
 		if (S_ISDIR(mode))
-			mode |= S_ISGID;
+			mode |= S_ISGID;  // 如果是目录，则设置 S_ISGID 标志
 	} else
-		inode->i_gid = current_fsgid();
-	inode->i_mode = mode;
+		inode->i_gid = current_fsgid();  // 否则，使用当前的组 ID
+	inode->i_mode = mode;  // 设置 inode 的权限模式
 
-	inode->i_ino = ino + group * EXT4_INODES_PER_GROUP(sb);
-	/* This is the optimal IO size (for stat), not the fs block size */
-	inode->i_blocks = 0;
+	inode->i_ino = ino + group * EXT4_INODES_PER_GROUP(sb);  // 设置 inode 号
+	/* 这是用于 stat 的最佳 IO 大小，而不是文件系统块大小 */
+	inode->i_blocks = 0;  // 初始化块数为 0
 	inode->i_mtime = inode->i_atime = inode->i_ctime = ei->i_crtime =
-						       ext4_current_time(inode);
+						       ext4_current_time(inode);  // 设置时间戳
 
-	memset(ei->i_data, 0, sizeof(ei->i_data));
-	ei->i_dir_start_lookup = 0;
-	ei->i_disksize = 0;
+	memset(ei->i_data, 0, sizeof(ei->i_data));  // 清空 inode 数据
+	ei->i_dir_start_lookup = 0;  // 设置目录的查找起始位置为 0
+	ei->i_disksize = 0;  // 磁盘上的大小为 0
 
 	/*
-	 * Don't inherit extent flag from directory, amongst others. We set
-	 * extent flag on newly created directory and file only if -o extent
-	 * mount option is specified
+	 * 不从目录继承 extent 标志等，仅在指定 -o extent 挂载选项时
+	 * 在新创建的目录和文件上设置 extent 标志
 	 */
 	ei->i_flags =
-		ext4_mask_flags(mode, EXT4_I(dir)->i_flags & EXT4_FL_INHERITED);
-	ei->i_file_acl = 0;
-	ei->i_dtime = 0;
-	ei->i_block_group = group;
-	ei->i_last_alloc_group = ~0;
+		ext4_mask_flags(mode, EXT4_I(dir)->i_flags & EXT4_FL_INHERITED);  // 设置 inode 标志
+	ei->i_file_acl = 0;  // 文件 ACL 为 0
+	ei->i_dtime = 0;  // 删除时间为 0
+	ei->i_block_group = group;  // 设置所属的块组索引
+	ei->i_last_alloc_group = ~0;  // 最后分配的块组设置为无效值
 
-	ext4_set_inode_flags(inode);
+	ext4_set_inode_flags(inode);  // 设置 inode 标志
 	if (IS_DIRSYNC(inode))
-		ext4_handle_sync(handle);
-	if (insert_inode_locked(inode) < 0) {
+		ext4_handle_sync(handle);  // 如果是同步目录，处理同步操作
+
+	if (insert_inode_locked(inode) < 0) {  // 尝试插入锁定的 inode
 		err = -EINVAL;
 		goto fail_drop;
 	}
 	spin_lock(&sbi->s_next_gen_lock);
-	inode->i_generation = sbi->s_next_generation++;
+	inode->i_generation = sbi->s_next_generation++;  // 生成 inode 的代数号
 	spin_unlock(&sbi->s_next_gen_lock);
 
 	ei->i_state_flags = 0;
-	ext4_set_inode_state(inode, EXT4_STATE_NEW);
+	ext4_set_inode_state(inode, EXT4_STATE_NEW);  // 设置 inode 的状态为 NEW
 
-	ei->i_extra_isize = EXT4_SB(sb)->s_want_extra_isize;
+	ei->i_extra_isize = EXT4_SB(sb)->s_want_extra_isize;  // 设置额外的 inode 大小
 
-	ret = inode;
-	dquot_initialize(inode);
-	err = dquot_alloc_inode(inode);
+	ret = inode;  // 返回创建的 inode 结构
+	dquot_initialize(inode);  // 初始化磁盘配额
+
+	err = dquot_alloc_inode(inode);  // 分配 inode 的磁盘配额
 	if (err)
 		goto fail_drop;
 
-	err = ext4_init_acl(handle, inode, dir);
+	err = ext4_init_acl(handle, inode, dir);  // 初始化 ACL
 	if (err)
 		goto fail_free_drop;
 
-	err = ext4_init_security(handle, inode, dir);
+	err = ext4_init_security(handle, inode, dir);  // 初始化安全属性
 	if (err)
 		goto fail_free_drop;
 
 	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_EXTENTS)) {
-		/* set extent flag only for directory, file and normal symlink*/
+		/* 仅在目录、文件和普通符号链接上设置 extent 标志 */
 		if (S_ISDIR(mode) || S_ISREG(mode) || S_ISLNK(mode)) {
 			EXT4_I(inode)->i_flags |= EXT4_EXTENTS_FL;
 			ext4_ext_tree_init(handle, inode);
 		}
 	}
 
-	err = ext4_mark_inode_dirty(handle, inode);
+	err = ext4_mark_inode_dirty(handle, inode);  // 标记 inode 为脏
 	if (err) {
 		ext4_std_error(sb, err);
 		goto fail_free_drop;
@@ -1058,16 +1075,17 @@ got:
 
 	ext4_debug("allocating inode %lu\n", inode->i_ino);
 	trace_ext4_allocate_inode(inode, dir, mode);
-	goto really_out;
-fail:
-	ext4_std_error(sb, err);
-out:
-	iput(inode);
-	ret = ERR_PTR(err);
-really_out:
-	brelse(inode_bitmap_bh);
-	return ret;
+	goto really_out;  // 跳转到最终完成操作
 
+fail:
+	ext4_std_error(sb, err);  // 输出 ext4 标准错误信息
+
+out:
+	iput(inode);  // 释放 inode
+	ret = ERR_PTR(err);  // 返回错误码
+really_out:
+	brelse(inode_bitmap_bh);  // 释放 inode 位图缓冲区
+	return ret;  // 返回结果
 fail_free_drop:
 	dquot_free_inode(inode);
 

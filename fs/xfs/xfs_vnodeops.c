@@ -1285,246 +1285,204 @@ out:
 
 int
 xfs_create(
-	xfs_inode_t		*dp,
-	struct xfs_name		*name,
-	mode_t			mode,
-	xfs_dev_t		rdev,
-	xfs_inode_t		**ipp,
-	cred_t			*credp)
+    xfs_inode_t     *dp,          // 父目录的 inode 指针
+    struct xfs_name *name,        // 新文件的名称
+    mode_t          mode,         // 新文件的模式（类型和权限）
+    xfs_dev_t       rdev,         // 设备号（用于字符设备或块设备）
+    xfs_inode_t     **ipp,        // 返回新创建的 inode 的指针
+    cred_t          *credp)       // 用户凭证
 {
-	int			is_dir = S_ISDIR(mode);
-	struct xfs_mount	*mp = dp->i_mount;
-	struct xfs_inode	*ip = NULL;
-	struct xfs_trans	*tp = NULL;
-	int			error;
-	xfs_bmap_free_t		free_list;
-	xfs_fsblock_t		first_block;
-	boolean_t		unlock_dp_on_error = B_FALSE;
-	uint			cancel_flags;
-	int			committed;
-	xfs_prid_t		prid;
-	struct xfs_dquot	*udqp = NULL;
-	struct xfs_dquot	*gdqp = NULL;
-	uint			resblks;
-	uint			log_res;
-	uint			log_count;
+    int             is_dir = S_ISDIR(mode); // 是否为目录
+    struct xfs_mount *mp = dp->i_mount;     // 文件系统挂载点
+    struct xfs_inode *ip = NULL;            // 新创建的 inode
+    struct xfs_trans *tp = NULL;            // 事务指针
+    int             error;                  // 错误码
+    xfs_bmap_free_t free_list;              // 空闲块列表
+    xfs_fsblock_t   first_block;            // 第一个文件系统块
+    boolean_t       unlock_dp_on_error = B_FALSE; // 是否在错误时解锁目录
+    uint            cancel_flags;           // 事务取消标志
+    int             committed;              // 提交标志
+    xfs_prid_t      prid;                   // 项目 ID
+    struct xfs_dquot *udqp = NULL;          // 用户配额指针
+    struct xfs_dquot *gdqp = NULL;          // 组配额指针
+    uint            resblks;                // 预留块数
+    uint            log_res;                // 日志资源
+    uint            log_count;              // 日志计数
 
-	xfs_itrace_entry(dp);
+    xfs_itrace_entry(dp); // 跟踪入口
 
-	if (XFS_FORCED_SHUTDOWN(mp))
-		return XFS_ERROR(EIO);
+    if (XFS_FORCED_SHUTDOWN(mp)) // 如果文件系统被强制关闭
+        return XFS_ERROR(EIO); // 返回输入/输出错误
 
-	if (DM_EVENT_ENABLED(dp, DM_EVENT_CREATE)) {
-		error = XFS_SEND_NAMESP(mp, DM_EVENT_CREATE,
-				dp, DM_RIGHT_NULL, NULL,
-				DM_RIGHT_NULL, name->name, NULL,
-				mode, 0, 0);
+    if (DM_EVENT_ENABLED(dp, DM_EVENT_CREATE)) { // 如果启用了创建事件
+        error = XFS_SEND_NAMESP(mp, DM_EVENT_CREATE,
+                dp, DM_RIGHT_NULL, NULL,
+                DM_RIGHT_NULL, name->name, NULL,
+                mode, 0, 0);
+        if (error)
+            return error; // 返回错误码
+    }
 
-		if (error)
-			return error;
-	}
+    if (dp->i_d.di_flags & XFS_DIFLAG_PROJINHERIT) // 如果目录继承项目 ID
+        prid = dp->i_d.di_projid;
+    else
+        prid = dfltprid; // 否则使用默认项目 ID
 
-	if (dp->i_d.di_flags & XFS_DIFLAG_PROJINHERIT)
-		prid = dp->i_d.di_projid;
-	else
-		prid = dfltprid;
+    // 确保已经在磁盘上分配了配额
+    error = xfs_qm_vop_dqalloc(dp, current_fsuid(), current_fsgid(), prid,
+            XFS_QMOPT_QUOTALL | XFS_QMOPT_INHERIT, &udqp, &gdqp);
+    if (error)
+        goto std_return; // 出错则跳转到标准返回
 
-	/*
-	 * Make sure that we have allocated dquot(s) on disk.
-	 */
-	error = xfs_qm_vop_dqalloc(dp, current_fsuid(), current_fsgid(), prid,
-			XFS_QMOPT_QUOTALL | XFS_QMOPT_INHERIT, &udqp, &gdqp);
-	if (error)
-		goto std_return;
+    if (is_dir) { // 如果是目录
+        rdev = 0; // 设备号设为 0
+        resblks = XFS_MKDIR_SPACE_RES(mp, name->len); // 预留空间
+        log_res = XFS_MKDIR_LOG_RES(mp); // 日志资源
+        log_count = XFS_MKDIR_LOG_COUNT; // 日志计数
+        tp = xfs_trans_alloc(mp, XFS_TRANS_MKDIR); // 分配事务
+    } else { // 否则
+        resblks = XFS_CREATE_SPACE_RES(mp, name->len); // 预留空间
+        log_res = XFS_CREATE_LOG_RES(mp); // 日志资源
+        log_count = XFS_CREATE_LOG_COUNT; // 日志计数
+        tp = xfs_trans_alloc(mp, XFS_TRANS_CREATE); // 分配事务
+    }
 
-	if (is_dir) {
-		rdev = 0;
-		resblks = XFS_MKDIR_SPACE_RES(mp, name->len);
-		log_res = XFS_MKDIR_LOG_RES(mp);
-		log_count = XFS_MKDIR_LOG_COUNT;
-		tp = xfs_trans_alloc(mp, XFS_TRANS_MKDIR);
-	} else {
-		resblks = XFS_CREATE_SPACE_RES(mp, name->len);
-		log_res = XFS_CREATE_LOG_RES(mp);
-		log_count = XFS_CREATE_LOG_COUNT;
-		tp = xfs_trans_alloc(mp, XFS_TRANS_CREATE);
-	}
+    cancel_flags = XFS_TRANS_RELEASE_LOG_RES; // 事务取消标志
 
-	cancel_flags = XFS_TRANS_RELEASE_LOG_RES;
+    // 预留事务资源
+    error = xfs_trans_reserve(tp, resblks, log_res, 0,
+            XFS_TRANS_PERM_LOG_RES, log_count);
+    if (error == ENOSPC) { // 如果空间不足
+        xfs_flush_inodes(dp); // 刷新未分配的块并重试
+        error = xfs_trans_reserve(tp, resblks, log_res, 0,
+                XFS_TRANS_PERM_LOG_RES, log_count);
+    }
+    if (error == ENOSPC) { // 如果仍然空间不足
+        resblks = 0; // 尝试无分配预留
+        error = xfs_trans_reserve(tp, 0, log_res, 0,
+                XFS_TRANS_PERM_LOG_RES, log_count);
+    }
+    if (error) { // 如果预留资源出错
+        cancel_flags = 0;
+        goto out_trans_cancel; // 跳转到事务取消
+    }
 
-	/*
-	 * Initially assume that the file does not exist and
-	 * reserve the resources for that case.  If that is not
-	 * the case we'll drop the one we have and get a more
-	 * appropriate transaction later.
-	 */
-	error = xfs_trans_reserve(tp, resblks, log_res, 0,
-			XFS_TRANS_PERM_LOG_RES, log_count);
-	if (error == ENOSPC) {
-		/* flush outstanding delalloc blocks and retry */
-		xfs_flush_inodes(dp);
-		error = xfs_trans_reserve(tp, resblks, log_res, 0,
-				XFS_TRANS_PERM_LOG_RES, log_count);
-	}
-	if (error == ENOSPC) {
-		/* No space at all so try a "no-allocation" reservation */
-		resblks = 0;
-		error = xfs_trans_reserve(tp, 0, log_res, 0,
-				XFS_TRANS_PERM_LOG_RES, log_count);
-	}
-	if (error) {
-		cancel_flags = 0;
-		goto out_trans_cancel;
-	}
+    xfs_ilock(dp, XFS_ILOCK_EXCL | XFS_ILOCK_PARENT); // 锁定目录
+    unlock_dp_on_error = B_TRUE; // 出错时解锁目录
 
-	xfs_ilock(dp, XFS_ILOCK_EXCL | XFS_ILOCK_PARENT);
-	unlock_dp_on_error = B_TRUE;
+    // 检查目录链接数是否溢出
+    if (is_dir && dp->i_d.di_nlink >= XFS_MAXLINK) {
+        error = XFS_ERROR(EMLINK); // 返回链接数过多错误
+        goto out_trans_cancel; // 跳转到事务取消
+    }
 
-	/*
-	 * Check for directory link count overflow.
-	 */
-	if (is_dir && dp->i_d.di_nlink >= XFS_MAXLINK) {
-		error = XFS_ERROR(EMLINK);
-		goto out_trans_cancel;
-	}
+    xfs_bmap_init(&free_list, &first_block); // 初始化空闲块列表
 
-	xfs_bmap_init(&free_list, &first_block);
+    // 预留磁盘配额和 inode
+    error = xfs_trans_reserve_quota(tp, mp, udqp, gdqp, resblks, 1, 0);
+    if (error)
+        goto out_trans_cancel; // 跳转到事务取消
 
-	/*
-	 * Reserve disk quota and the inode.
-	 */
-	error = xfs_trans_reserve_quota(tp, mp, udqp, gdqp, resblks, 1, 0);
-	if (error)
-		goto out_trans_cancel;
+    error = xfs_dir_canenter(tp, dp, name, resblks); // 检查目录是否可进入
+    if (error)
+        goto out_trans_cancel; // 跳转到事务取消
 
-	error = xfs_dir_canenter(tp, dp, name, resblks);
-	if (error)
-		goto out_trans_cancel;
+    // 为新创建的文件或特殊文件分配 inode
+    error = xfs_dir_ialloc(&tp, dp, mode, is_dir ? 2 : 1, rdev, credp,
+                           prid, resblks > 0, &ip, &committed);
+    if (error) {
+        if (error == ENOSPC)
+            goto out_trans_cancel; // 跳转到事务取消
+        goto out_trans_abort; // 跳转到事务中止
+    }
 
-	/*
-	 * A newly created regular or special file just has one directory
-	 * entry pointing to them, but a directory also the "." entry
-	 * pointing to itself.
-	 */
-	error = xfs_dir_ialloc(&tp, dp, mode, is_dir ? 2 : 1, rdev, credp,
-			       prid, resblks > 0, &ip, &committed);
-	if (error) {
-		if (error == ENOSPC)
-			goto out_trans_cancel;
-		goto out_trans_abort;
-	}
+    // 此时，我们已经获得一个新分配的 inode
+    ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL)); // 断言 inode 被排他锁定
 
-	/*
-	 * At this point, we've gotten a newly allocated inode.
-	 * It is locked (and joined to the transaction).
-	 */
-	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+    // 将目录 inode 加入事务
+    IHOLD(dp); // 增加目录 inode 的引用计数
+    xfs_trans_ijoin(tp, dp, XFS_ILOCK_EXCL); // 将目录 inode 加入事务
+    unlock_dp_on_error = B_FALSE; // 不需要在错误时解锁目录
 
-	/*
-	 * Now we join the directory inode to the transaction.  We do not do it
-	 * earlier because xfs_dir_ialloc might commit the previous transaction
-	 * (and release all the locks).  An error from here on will result in
-	 * the transaction cancel unlocking dp so don't do it explicitly in the
-	 * error path.
-	 */
-	IHOLD(dp);
-	xfs_trans_ijoin(tp, dp, XFS_ILOCK_EXCL);
-	unlock_dp_on_error = B_FALSE;
+    // 创建目录项
+    error = xfs_dir_createname(tp, dp, name, ip->i_ino,
+                               &first_block, &free_list, resblks ?
+                               resblks - XFS_IALLOC_SPACE_RES(mp) : 0);
+    if (error) {
+        ASSERT(error != ENOSPC); // 断言错误不是空间不足
+        goto out_trans_abort; // 跳转到事务中止
+    }
+    xfs_ichgtime(dp, XFS_ICHGTIME_MOD | XFS_ICHGTIME_CHG); // 修改目录时间
+    xfs_trans_log_inode(tp, dp, XFS_ILOG_CORE); // 记录目录 inode 的日志
 
-	error = xfs_dir_createname(tp, dp, name, ip->i_ino,
-					&first_block, &free_list, resblks ?
-					resblks - XFS_IALLOC_SPACE_RES(mp) : 0);
-	if (error) {
-		ASSERT(error != ENOSPC);
-		goto out_trans_abort;
-	}
-	xfs_ichgtime(dp, XFS_ICHGTIME_MOD | XFS_ICHGTIME_CHG);
-	xfs_trans_log_inode(tp, dp, XFS_ILOG_CORE);
+    if (is_dir) { // 如果是目录
+        error = xfs_dir_init(tp, ip, dp); // 初始化目录
+        if (error)
+            goto out_bmap_cancel; // 跳转到块映射取消
 
-	if (is_dir) {
-		error = xfs_dir_init(tp, ip, dp);
-		if (error)
-			goto out_bmap_cancel;
+        error = xfs_bumplink(tp, dp); // 增加目录的链接计数
+        if (error)
+            goto out_bmap_cancel; // 跳转到块映射取消
+    }
 
-		error = xfs_bumplink(tp, dp);
-		if (error)
-			goto out_bmap_cancel;
-	}
+    // 如果是同步挂载，确保创建事务在返回用户前写入磁盘
+    if (mp->m_flags & (XFS_MOUNT_WSYNC | XFS_MOUNT_DIRSYNC))
+        xfs_trans_set_sync(tp); // 设置事务同步标志
 
-	/*
-	 * If this is a synchronous mount, make sure that the
-	 * create transaction goes to disk before returning to
-	 * the user.
-	 */
-	if (mp->m_flags & (XFS_MOUNT_WSYNC|XFS_MOUNT_DIRSYNC))
-		xfs_trans_set_sync(tp);
+    // 将配额附加到 inode 并修改内存中的配额
+    xfs_qm_vop_create_dqattach(tp, ip, udqp, gdqp);
 
-	/*
-	 * Attach the dquot(s) to the inodes and modify them incore.
-	 * These ids of the inode couldn't have changed since the new
-	 * inode has been locked ever since it was created.
-	 */
-	xfs_qm_vop_create_dqattach(tp, ip, udqp, gdqp);
+    // 增加 inode 的引用计数
+    IHOLD(ip);
 
-	/*
-	 * xfs_trans_commit normally decrements the vnode ref count
-	 * when it unlocks the inode. Since we want to return the
-	 * vnode to the caller, we bump the vnode ref count now.
-	 */
-	IHOLD(ip);
+    error = xfs_bmap_finish(&tp, &free_list, &committed); // 完成块映射
+    if (error)
+        goto out_abort_rele; // 跳转到中止并释放
 
-	error = xfs_bmap_finish(&tp, &free_list, &committed);
-	if (error)
-		goto out_abort_rele;
+    error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES); // 提交事务
+    if (error) {
+        IRELE(ip); // 释放 inode 引用
+        goto out_dqrele; // 跳转到释放配额
+    }
 
-	error = xfs_trans_commit(tp, XFS_TRANS_RELEASE_LOG_RES);
-	if (error) {
-		IRELE(ip);
-		goto out_dqrele;
-	}
+    xfs_qm_dqrele(udqp); // 释放用户配额
+    xfs_qm_dqrele(gdqp); // 释放组配额
 
-	xfs_qm_dqrele(udqp);
-	xfs_qm_dqrele(gdqp);
+    *ipp = ip; // 返回新创建的 inode 指针
 
-	*ipp = ip;
-
-	/* Fallthrough to std_return with error = 0  */
+    // 跳转到标准返回
  std_return:
-	if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTCREATE)) {
-		XFS_SEND_NAMESP(mp, DM_EVENT_POSTCREATE, dp, DM_RIGHT_NULL,
-				ip, DM_RIGHT_NULL, name->name, NULL, mode,
-				error, 0);
-	}
+    if (DM_EVENT_ENABLED(dp, DM_EVENT_POSTCREATE)) {
+        XFS_SEND_NAMESP(mp, DM_EVENT_POSTCREATE, dp, DM_RIGHT_NULL,
+                        ip, DM_RIGHT_NULL, name->name, NULL, mode,
+                        error, 0);
+    }
 
-	return error;
+    return error; // 返回错误码或 0
 
  out_bmap_cancel:
-	xfs_bmap_cancel(&free_list);
+    xfs_bmap_cancel(&free_list); // 取消块映射
  out_trans_abort:
-	cancel_flags |= XFS_TRANS_ABORT;
+    cancel_flags |= XFS_TRANS_ABORT; // 设置事务中止标志
  out_trans_cancel:
-	xfs_trans_cancel(tp, cancel_flags);
+    xfs_trans_cancel(tp, cancel_flags); // 取消事务
  out_dqrele:
-	xfs_qm_dqrele(udqp);
-	xfs_qm_dqrele(gdqp);
+    xfs_qm_dqrele(udqp); // 释放用户配额
+    xfs_qm_dqrele(gdqp); // 释放组配额
 
-	if (unlock_dp_on_error)
-		xfs_iunlock(dp, XFS_ILOCK_EXCL);
+    if (unlock_dp_on_error)
+        xfs_iunlock(dp, XFS_ILOCK_EXCL); // 解锁目录
 
-	goto std_return;
+    goto std_return; // 跳转到标准返回
 
  out_abort_rele:
-	/*
-	 * Wait until after the current transaction is aborted to
-	 * release the inode.  This prevents recursive transactions
-	 * and deadlocks from xfs_inactive.
-	 */
-	xfs_bmap_cancel(&free_list);
-	cancel_flags |= XFS_TRANS_ABORT;
-	xfs_trans_cancel(tp, cancel_flags);
-	IRELE(ip);
-	unlock_dp_on_error = B_FALSE;
-	goto out_dqrele;
+    // 等到当前事务中止后再释放 inode
+    xfs_bmap_cancel(&free_list); // 取消块映射
+    cancel_flags |= XFS_TRANS_ABORT; // 设置事务中止标志
+    xfs_trans_cancel(tp, cancel_flags); // 取消事务
+    IRELE(ip); // 释放 inode 引用
+    unlock_dp_on_error = B_FALSE;
+    goto out_dqrele; // 跳转到释放配额
 }
 
 #ifdef DEBUG

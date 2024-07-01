@@ -734,39 +734,43 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 {
 	struct ext4_inode_info *ei;
 
+	// 分配 ext4_inode_info 结构体，使用 GFP_NOFS 标志，表示在文件系统事务中分配内存
 	ei = kmem_cache_alloc(ext4_inode_cachep, GFP_NOFS);
 	if (!ei)
 		return NULL;
 
-	ei->vfs_inode.i_version = 1;
-	ei->vfs_inode.i_data.writeback_index = 0;
-	memset(&ei->i_cached_extent, 0, sizeof(struct ext4_ext_cache));
-	INIT_LIST_HEAD(&ei->i_prealloc_list);
-	spin_lock_init(&ei->i_prealloc_lock);
+	// 初始化 VFS inode 结构体
+	ei->vfs_inode.i_version = 1;  // 设置 inode 版本号为 1
+	ei->vfs_inode.i_data.writeback_index = 0;  // 初始化写回索引为 0
+	memset(&ei->i_cached_extent, 0, sizeof(struct ext4_ext_cache));  // 清空缓存的范围信息
+	INIT_LIST_HEAD(&ei->i_prealloc_list);  // 初始化预分配列表头
+	spin_lock_init(&ei->i_prealloc_lock);  // 初始化预分配锁
+
 	/*
-	 * Note:  We can be called before EXT4_SB(sb)->s_journal is set,
-	 * therefore it can be null here.  Don't check it, just initialize
-	 * jinode.
+	 * 注意：我们可能在 EXT4_SB(sb)->s_journal 设置之前调用此函数，
+	 * 因此此处可能为 null。不需要检查它，只需初始化 jinode。
 	 */
-	jbd2_journal_init_jbd_inode(&ei->jinode, &ei->vfs_inode);
-	ei->i_reserved_data_blocks = 0;
-	ei->i_reserved_meta_blocks = 0;
-	ei->i_allocated_meta_blocks = 0;
-	ei->i_da_metadata_calc_len = 0;
-	ei->i_delalloc_reserved_flag = 0;
-	spin_lock_init(&(ei->i_block_reservation_lock));
+	jbd2_journal_init_jbd_inode(&ei->jinode, &ei->vfs_inode);  // 初始化事务日志相关的 jinode
+
+	ei->i_reserved_data_blocks = 0;  // 保留的数据块数初始化为 0
+	ei->i_reserved_meta_blocks = 0;  // 保留的元数据块数初始化为 0
+	ei->i_allocated_meta_blocks = 0;  // 已分配的元数据块数初始化为 0
+	ei->i_da_metadata_calc_len = 0;  // 直接写元数据计算长度初始化为 0
+	ei->i_delalloc_reserved_flag = 0;  // 延迟分配保留标志初始化为 0
+	spin_lock_init(&(ei->i_block_reservation_lock));  // 初始化块预留锁
+
 #ifdef CONFIG_QUOTA
-	ei->i_reserved_quota = 0;
+	ei->i_reserved_quota = 0;  // 如果启用了配额，保留的配额初始化为 0
 #endif
-	INIT_LIST_HEAD(&ei->i_completed_io_list);
-	spin_lock_init(&ei->i_completed_io_lock);
-	ei->cur_aio_dio = NULL;
-	ei->i_sync_tid = 0;
-	ei->i_datasync_tid = 0;
 
-	return &ei->vfs_inode;
+	INIT_LIST_HEAD(&ei->i_completed_io_list);  // 初始化完成的 IO 列表头
+	spin_lock_init(&ei->i_completed_io_lock);  // 初始化完成的 IO 锁
+	ei->cur_aio_dio = NULL;  // 当前异步直接 IO 初始化为 NULL
+	ei->i_sync_tid = 0;  // 同步事务 ID 初始化为 0
+	ei->i_datasync_tid = 0;  // 数据同步事务 ID 初始化为 0
+
+	return &ei->vfs_inode;  // 返回 VFS inode 结构体指针
 }
-
 static void ext4_destroy_inode(struct inode *inode)
 {
 	if (!list_empty(&(EXT4_I(inode)->i_orphan))) {

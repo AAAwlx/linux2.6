@@ -480,10 +480,10 @@ int wake_bit_function(wait_queue_t *wait, unsigned mode, int sync, void *key);
 
 /**
  * wait_on_bit - wait for a bit to be cleared
- * @word: the word being waited on, a kernel virtual address
- * @bit: the bit of the word being waited on
- * @action: the function used to sleep, which may take special actions
- * @mode: the task state to sleep in
+ * @word: 待操作的字（通常是一个内核虚拟地址）
+ * @bit: 在word中待等待清除的位
+ * @action: 用于休眠的函数，可能会执行特殊操作
+ * @mode: 休眠时的任务状态
  *
  * There is a standard hashed waitqueue table for generic use. This
  * is the part of the hashtable's accessor API that waits on a bit.
@@ -495,11 +495,13 @@ int wake_bit_function(wait_queue_t *wait, unsigned mode, int sync, void *key);
 static inline int wait_on_bit(void *word, int bit,
 				int (*action)(void *), unsigned mode)
 {
+	// 如果指定位(bit)已经被清除，则直接返回0
 	if (!test_bit(bit, word))
 		return 0;
+
+	// 调用实际的等待函数，等待指定位(bit)被清除
 	return out_of_line_wait_on_bit(word, bit, action, mode);
 }
-
 /**
  * wait_on_bit_lock - wait for a bit to be cleared, when wanting to set it
  * @word: the word being waited on, a kernel virtual address

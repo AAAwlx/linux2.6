@@ -345,94 +345,109 @@ static int fat_calc_dir_size(struct inode *inode)
 /* doesn't deal with root inode */
 static int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
 {
-	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
-	int error;
+    struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb); // 获取MS-DOS超级块信息
+    int error;
 
-	MSDOS_I(inode)->i_pos = 0;
-	inode->i_uid = sbi->options.fs_uid;
-	inode->i_gid = sbi->options.fs_gid;
-	inode->i_version++;
-	inode->i_generation = get_seconds();
+    MSDOS_I(inode)->i_pos = 0; // 初始化i_pos为0
+    inode->i_uid = sbi->options.fs_uid; // 设置文件的所有者UID
+    inode->i_gid = sbi->options.fs_gid; // 设置文件的所有者GID
+    inode->i_version++; // 增加inode版本号
+    inode->i_generation = get_seconds(); // 设置生成时间为当前时间
 
-	if ((de->attr & ATTR_DIR) && !IS_FREE(de->name)) {
-		inode->i_generation &= ~1;
-		inode->i_mode = fat_make_mode(sbi, de->attr, S_IRWXUGO);
-		inode->i_op = sbi->dir_ops;
-		inode->i_fop = &fat_dir_operations;
+    // 如果是目录且名字有效
+    if ((de->attr & ATTR_DIR) && !IS_FREE(de->name)) {
+        inode->i_generation &= ~1; // 清除生成号的最低位
+        inode->i_mode = fat_make_mode(sbi, de->attr, S_IRWXUGO); // 设置文件模式
+        inode->i_op = sbi->dir_ops; // 设置目录操作函数
+        inode->i_fop = &fat_dir_operations; // 设置目录文件操作函数
 
-		MSDOS_I(inode)->i_start = le16_to_cpu(de->start);
-		if (sbi->fat_bits == 32)
-			MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16);
+        MSDOS_I(inode)->i_start = le16_to_cpu(de->start); // 获取起始簇号
+        if (sbi->fat_bits == 32)
+            MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16); // 如果是FAT32，则获取高16位起始簇号
 
-		MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start;
-		error = fat_calc_dir_size(inode);
-		if (error < 0)
-			return error;
-		MSDOS_I(inode)->mmu_private = inode->i_size;
+        MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start; // 设置逻辑起始簇号
+        error = fat_calc_dir_size(inode); // 计算目录大小
+        if (error < 0)
+            return error; // 如果计算出错，返回错误码
+        MSDOS_I(inode)->mmu_private = inode->i_size; // 设置MMU私有数据为文件大小
 
-		inode->i_nlink = fat_subdirs(inode);
-	} else { /* not a directory */
-		inode->i_generation |= 1;
-		inode->i_mode = fat_make_mode(sbi, de->attr,
-			((sbi->options.showexec && !is_exec(de->name + 8))
-			 ? S_IRUGO|S_IWUGO : S_IRWXUGO));
-		MSDOS_I(inode)->i_start = le16_to_cpu(de->start);
-		if (sbi->fat_bits == 32)
-			MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16);
+        inode->i_nlink = fat_subdirs(inode); // 设置链接数为子目录数
+    } else { // 如果不是目录
+        inode->i_generation |= 1; // 设置生成号的最低位
+        inode->i_mode = fat_make_mode(sbi, de->attr,
+            ((sbi->options.showexec && !is_exec(de->name + 8))
+             ? S_IRUGO|S_IWUGO : S_IRWXUGO)); // 设置文件模式
+        MSDOS_I(inode)->i_start = le16_to_cpu(de->start); // 获取起始簇号
+        if (sbi->fat_bits == 32)
+            MSDOS_I(inode)->i_start |= (le16_to_cpu(de->starthi) << 16); // 如果是FAT32，则获取高16位起始簇号
 
-		MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start;
-		inode->i_size = le32_to_cpu(de->size);
-		inode->i_op = &fat_file_inode_operations;
-		inode->i_fop = &fat_file_operations;
-		inode->i_mapping->a_ops = &fat_aops;
-		MSDOS_I(inode)->mmu_private = inode->i_size;
-	}
-	if (de->attr & ATTR_SYS) {
-		if (sbi->options.sys_immutable)
-			inode->i_flags |= S_IMMUTABLE;
-	}
-	fat_save_attrs(inode, de->attr);
+        MSDOS_I(inode)->i_logstart = MSDOS_I(inode)->i_start; // 设置逻辑起始簇号
+        inode->i_size = le32_to_cpu(de->size); // 设置文件大小
+        inode->i_op = &fat_file_inode_operations; // 设置文件操作函数
+        inode->i_fop = &fat_file_operations; // 设置文件文件操作函数
+        inode->i_mapping->a_ops = &fat_aops; // 设置文件映射操作函数
+        MSDOS_I(inode)->mmu_private = inode->i_size; // 设置MMU私有数据为文件大小
+    }
 
-	inode->i_blocks = ((inode->i_size + (sbi->cluster_size - 1))
-			   & ~((loff_t)sbi->cluster_size - 1)) >> 9;
+    // 如果文件属性包含系统属性
+    if (de->attr & ATTR_SYS) {
+        if (sbi->options.sys_immutable)
+            inode->i_flags |= S_IMMUTABLE; // 设置不可变标志
+    }
+    fat_save_attrs(inode, de->attr); // 保存文件属性
 
-	fat_time_fat2unix(sbi, &inode->i_mtime, de->time, de->date, 0);
-	if (sbi->options.isvfat) {
-		fat_time_fat2unix(sbi, &inode->i_ctime, de->ctime,
-				  de->cdate, de->ctime_cs);
-		fat_time_fat2unix(sbi, &inode->i_atime, 0, de->adate, 0);
-	} else
-		inode->i_ctime = inode->i_atime = inode->i_mtime;
+    // 设置文件块数
+    inode->i_blocks = ((inode->i_size + (sbi->cluster_size - 1))
+                       & ~((loff_t)sbi->cluster_size - 1)) >> 9;
 
-	return 0;
+    fat_time_fat2unix(sbi, &inode->i_mtime, de->time, de->date, 0); // 转换并设置修改时间
+    if (sbi->options.isvfat) {
+        fat_time_fat2unix(sbi, &inode->i_ctime, de->ctime,
+                          de->cdate, de->ctime_cs); // 转换并设置创建时间
+        fat_time_fat2unix(sbi, &inode->i_atime, 0, de->adate, 0); // 转换并设置访问时间
+    } else
+        inode->i_ctime = inode->i_atime = inode->i_mtime; // 设置创建时间和访问时间与修改时间相同
+
+    return 0; // 返回成功
 }
-
 struct inode *fat_build_inode(struct super_block *sb,
 			struct msdos_dir_entry *de, loff_t i_pos)
 {
 	struct inode *inode;
 	int err;
 
+	// 尝试从已存在的inode中获取
 	inode = fat_iget(sb, i_pos);
 	if (inode)
-		goto out;
+		goto out;  // 如果成功获取，跳到out标签
+
+	// 创建一个新的inode
 	inode = new_inode(sb);
 	if (!inode) {
-		inode = ERR_PTR(-ENOMEM);
+		inode = ERR_PTR(-ENOMEM);  // 如果分配失败，返回ENOMEM错误指针
 		goto out;
 	}
+
+	// 分配唯一的inode号
 	inode->i_ino = iunique(sb, MSDOS_ROOT_INO);
 	inode->i_version = 1;
+
+	// 填充inode的相关信息
 	err = fat_fill_inode(inode, de);
 	if (err) {
-		iput(inode);
-		inode = ERR_PTR(err);
+		iput(inode);  // 如果填充失败，释放inode
+		inode = ERR_PTR(err);  // 返回错误指针
 		goto out;
 	}
+
+	// 将inode与目录项位置关联
 	fat_attach(inode, i_pos);
+
+	// 将inode插入哈希表
 	insert_inode_hash(inode);
+
 out:
-	return inode;
+	return inode;  // 返回inode指针（可能是错误指针）
 }
 
 EXPORT_SYMBOL_GPL(fat_build_inode);

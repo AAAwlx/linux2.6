@@ -199,66 +199,65 @@ xfs_cleanup_inode(
 
 STATIC int
 xfs_vn_mknod(
-	struct inode	*dir,
-	struct dentry	*dentry,
-	int		mode,
-	dev_t		rdev)
+    struct inode    *dir,        // 父目录的 inode 指针
+    struct dentry   *dentry,     // 目录项结构体指针，包含新节点的名称
+    int             mode,        // 新节点的模式（类型和权限）
+    dev_t           rdev)        // 设备号（用于字符设备或块设备）
 {
-	struct inode	*inode;
-	struct xfs_inode *ip = NULL;
-	struct posix_acl *default_acl = NULL;
-	struct xfs_name	name;
-	int		error;
+    struct inode    *inode;      // 指向新创建的 inode 的指针
+    struct xfs_inode *ip = NULL; // 指向 XFS 文件系统特定的 inode 的指针，初始化为 NULL
+    struct posix_acl *default_acl = NULL; // 用于存储默认 ACL 的指针
+    struct xfs_name  name;       // 存储新节点的名称
+    int              error;      // 错误码
 
-	/*
-	 * Irix uses Missed'em'V split, but doesn't want to see
-	 * the upper 5 bits of (14bit) major.
-	 */
-	if (S_ISCHR(mode) || S_ISBLK(mode)) {
-		if (unlikely(!sysv_valid_dev(rdev) || MAJOR(rdev) & ~0x1ff))
-			return -EINVAL;
-		rdev = sysv_encode_dev(rdev);
-	} else {
-		rdev = 0;
-	}
+    /*
+     * Irix 使用 Missed'em'V split，但不希望看到 (14bit) major 的高 5 位。
+     */
+    if (S_ISCHR(mode) || S_ISBLK(mode)) { // 如果新节点是字符设备或块设备
+        if (unlikely(!sysv_valid_dev(rdev) || MAJOR(rdev) & ~0x1ff)) // 检查设备号是否合法
+            return -EINVAL; // 如果非法，返回无效参数错误码
+        rdev = sysv_encode_dev(rdev); // 编码设备号
+    } else {
+        rdev = 0; // 如果不是设备文件，将设备号设为 0
+    }
 
-	if (IS_POSIXACL(dir)) {
-		default_acl = xfs_get_acl(dir, ACL_TYPE_DEFAULT);
-		if (IS_ERR(default_acl))
-			return -PTR_ERR(default_acl);
+    if (IS_POSIXACL(dir)) { // 如果父目录支持 POSIX ACL
+        default_acl = xfs_get_acl(dir, ACL_TYPE_DEFAULT); // 获取默认 ACL
+        if (IS_ERR(default_acl)) // 如果获取 ACL 出错
+            return -PTR_ERR(default_acl); // 返回错误码
 
-		if (!default_acl)
-			mode &= ~current_umask();
-	}
+        if (!default_acl) // 如果没有默认 ACL
+            mode &= ~current_umask(); // 使用当前进程的 umask 修改权限
+    }
 
-	xfs_dentry_to_name(&name, dentry);
-	error = xfs_create(XFS_I(dir), &name, mode, rdev, &ip, NULL);
-	if (unlikely(error))
-		goto out_free_acl;
+    xfs_dentry_to_name(&name, dentry); // 将 dentry 转换为 XFS 名称
+    error = xfs_create(XFS_I(dir), &name, mode, rdev, &ip, NULL); // 创建新节点
+    if (unlikely(error)) // 如果创建出错
+        goto out_free_acl; // 跳转到错误处理
 
-	inode = VFS_I(ip);
+    inode = VFS_I(ip); // 获取通用的 inode 指针
 
-	error = xfs_init_security(inode, dir);
-	if (unlikely(error))
-		goto out_cleanup_inode;
+    error = xfs_init_security(inode, dir); // 初始化安全属性
+    if (unlikely(error)) // 如果初始化安全属性出错
+        goto out_cleanup_inode; // 跳转到错误处理
 
-	if (default_acl) {
-		error = -xfs_inherit_acl(inode, default_acl);
-		if (unlikely(error))
-			goto out_cleanup_inode;
-		posix_acl_release(default_acl);
-	}
+    if (default_acl) { // 如果存在默认 ACL
+        error = -xfs_inherit_acl(inode, default_acl); // 继承默认 ACL
+        if (unlikely(error)) // 如果继承 ACL 出错
+            goto out_cleanup_inode; // 跳转到错误处理
+        posix_acl_release(default_acl); // 释放 ACL 资源
+    }
 
+    d_instantiate(dentry, inode); // 将 dentry 实例化为 inode
+    return -error; // 返回错误码（如果没有错误则返回 0）
 
-	d_instantiate(dentry, inode);
-	return -error;
-
- out_cleanup_inode:
-	xfs_cleanup_inode(dir, inode, dentry);
- out_free_acl:
-	posix_acl_release(default_acl);
-	return -error;
+out_cleanup_inode:
+    xfs_cleanup_inode(dir, inode, dentry); // 清理 inode
+out_free_acl:
+    posix_acl_release(default_acl); // 释放 ACL 资源
+    return -error; // 返回错误码
 }
+
 
 STATIC int
 xfs_vn_create(

@@ -22,31 +22,34 @@
 #define FAT_ERRORS_RO		3      /* remount r/o on error */
 
 struct fat_mount_options {
-	uid_t fs_uid;
-	gid_t fs_gid;
-	unsigned short fs_fmask;
-	unsigned short fs_dmask;
-	unsigned short codepage;  /* Codepage for shortname conversions */
-	char *iocharset;          /* Charset used for filename input/display */
-	unsigned short shortname; /* flags for shortname display/create rule */
-	unsigned char name_check; /* r = relaxed, n = normal, s = strict */
-	unsigned char errors;	  /* On error: continue, panic, remount-ro */
-	unsigned short allow_utime;/* permission for setting the [am]time */
-	unsigned quiet:1,         /* set = fake successful chmods and chowns */
-		 showexec:1,      /* set = only set x bit for com/exe/bat */
-		 sys_immutable:1, /* set = system files are immutable */
-		 dotsOK:1,        /* set = hidden and system files are named '.filename' */
-		 isvfat:1,        /* 0=no vfat long filename support, 1=vfat support */
-		 utf8:1,	  /* Use of UTF-8 character set (Default) */
-		 unicode_xlate:1, /* create escape sequences for unhandled Unicode */
-		 numtail:1,       /* Does first alias have a numeric '~1' type tail? */
-		 flush:1,	  /* write things quickly */
-		 nocase:1,	  /* Does this need case conversion? 0=need case conversion*/
-		 usefree:1,	  /* Use free_clusters for FAT32 */
-		 tz_utc:1,	  /* Filesystem timestamps are in UTC */
-		 rodir:1,	  /* allow ATTR_RO for directory */
-		 discard:1;	  /* Issue discard requests on deletions */
+	uid_t fs_uid; // 文件系统的用户ID
+	gid_t fs_gid; // 文件系统的组ID
+	unsigned short fs_fmask; // 文件的权限掩码
+	unsigned short fs_dmask; // 目录的权限掩码
+	unsigned short codepage;  /* 短文件名转换时使用的代码页 */
+	char *iocharset;          /* 文件名输入/显示时使用的字符集 */
+	unsigned short shortname; /* 短文件名显示/创建规则的标志 */
+	unsigned char name_check; /* 文件名检查方式: r = relaxed, n = normal, s = strict */
+	unsigned char errors;     /* 发生错误时的处理方式: continue, panic, remount-ro */
+	unsigned short allow_utime;/* 设置访问时间和修改时间的权限 */
+
+	// 以下是位字段标志（布尔值），用来控制各种挂载选项
+	unsigned quiet:1,         /* 是否静默处理chmod和chown操作 */
+			 showexec:1,      /* 是否只为com/exe/bat文件设置执行位 */
+			 sys_immutable:1, /* 系统文件是否不可变 */
+			 dotsOK:1,        /* 隐藏和系统文件是否以'.filename'命名 */
+			 isvfat:1,        /* 是否支持VFAT长文件名 */
+			 utf8:1,          /* 是否使用UTF-8字符集（默认） */
+			 unicode_xlate:1, /* 为未处理的Unicode创建转义序列 */
+			 numtail:1,       /* 第一个别名是否有数字'~1'类型的尾部 */
+			 flush:1,         /* 是否快速写入 */
+			 nocase:1,        /* 是否需要大小写转换？0=需要大小写转换 */
+			 usefree:1,       /* FAT32是否使用free_clusters */
+			 tz_utc:1,        /* 文件系统时间戳是否为UTC */
+			 rodir:1,         /* 是否允许目录设置只读属性 */
+			 discard:1;       /* 删除时是否发送discard请求 */
 };
+
 
 #define FAT_HASH_BITS	8
 #define FAT_HASH_SIZE	(1UL << FAT_HASH_BITS)//512bety

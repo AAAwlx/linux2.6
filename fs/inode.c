@@ -616,19 +616,28 @@ static struct inode *find_inode_fast(struct super_block *sb,
 	struct inode *inode = NULL;
 
 repeat:
+	// 遍历哈希链表中的每个节点
 	hlist_for_each_entry(inode, node, head, i_hash) {
+		// 检查inode的inode号是否匹配
 		if (inode->i_ino != ino)
 			continue;
+		// 检查inode的超级块是否匹配
 		if (inode->i_sb != sb)
 			continue;
+		// 检查inode的状态是否为释放中或即将释放
 		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)) {
+			// 如果inode正在释放中，等待释放完成
 			__wait_on_freeing_inode(inode);
+			// 回到循环的起始处重新检查
 			goto repeat;
 		}
+		// 如果找到匹配的inode，跳出循环
 		break;
 	}
+	// 返回找到的inode指针，如果未找到则返回NULL
 	return node ? inode : NULL;
 }
+
 
 static unsigned long hash(struct super_block *sb, unsigned long hashval)
 {
@@ -817,37 +826,39 @@ static struct inode *get_new_inode_fast(struct super_block *sb,
 {
 	struct inode *inode;
 
+	// 分配新的inode结构
 	inode = alloc_inode(sb);
 	if (inode) {
 		struct inode *old;
 
 		spin_lock(&inode_lock);
-		/* We released the lock, so.. */
+		// 我们释放了锁，所以重新查找
 		old = find_inode_fast(sb, head, ino);
 		if (!old) {
+			// 如果没有找到旧的inode，将新分配的inode初始化
 			inode->i_ino = ino;
 			__inode_add_to_lists(sb, head, inode);
 			inode->i_state = I_NEW;
 			spin_unlock(&inode_lock);
 
-			/* Return the locked inode with I_NEW set, the
-			 * caller is responsible for filling in the contents
+			/*
+			 * 返回带有I_NEW状态的锁定inode，
+			 * 调用者负责填充其内容
 			 */
 			return inode;
 		}
 
 		/*
-		 * Uhhuh, somebody else created the same inode under
-		 * us. Use the old inode instead of the one we just
-		 * allocated.
+		 * 啊哈，有人在我们下面创建了相同的inode。
+		 * 使用我们刚刚分配的旧inode而不是新的inode。
 		 */
 		__iget(old);
 		spin_unlock(&inode_lock);
-		destroy_inode(inode);
+		destroy_inode(inode);  // 销毁新分配的inode
 		inode = old;
-		wait_on_inode(inode);
+		wait_on_inode(inode);  // 等待旧inode
 	}
-	return inode;
+	return inode;  // 返回找到的inode（可能是旧的）
 }
 
 /**
@@ -867,27 +878,38 @@ static struct inode *get_new_inode_fast(struct super_block *sb,
 ino_t iunique(struct super_block *sb, ino_t max_reserved)
 {
 	/*
-	 * On a 32bit, non LFS stat() call, glibc will generate an EOVERFLOW
-	 * error if st_ino won't fit in target struct field. Use 32bit counter
-	 * here to attempt to avoid that.
+	 * 对于32位非大文件系统（LFS）的stat()调用，如果st_ino不能适应目标结构字段，
+	 * glibc将生成一个EOVERFLOW错误。这里使用32位计数器试图避免这种情况。
 	 */
 	static unsigned int counter;
 	struct inode *inode;
 	struct hlist_head *head;
 	ino_t res;
 
+	// 获取inode_lock锁，保证唯一inode号生成的原子性
 	spin_lock(&inode_lock);
 	do {
+		// 如果计数器小于等于最大保留值，则将计数器设为最大保留值加1
 		if (counter <= max_reserved)
 			counter = max_reserved + 1;
+
+		// 生成一个新的inode号，并递增计数器
 		res = counter++;
+		
+		// 计算哈希值，找到对应哈希桶
 		head = inode_hashtable + hash(sb, res);
+		
+		// 快速查找该inode号是否已存在
 		inode = find_inode_fast(sb, head, res);
-	} while (inode != NULL);
+	} while (inode != NULL); // 如果已存在，则重新生成新的inode号
+
+	// 释放inode_lock锁
 	spin_unlock(&inode_lock);
 
+	// 返回生成的唯一inode号
 	return res;
 }
+
 EXPORT_SYMBOL(iunique);
 
 struct inode *igrab(struct inode *inode)
@@ -965,14 +987,24 @@ static struct inode *ifind_fast(struct super_block *sb,
 {
 	struct inode *inode;
 
+	// 获取全局inode锁
 	spin_lock(&inode_lock);
+
+	// 调用快速查找inode的函数
 	inode = find_inode_fast(sb, head, ino);
 	if (inode) {
+		// 如果找到了inode，则增加其引用计数
 		__iget(inode);
+
+		// 释放全局inode锁，并等待inode状态准备就绪
 		spin_unlock(&inode_lock);
 		wait_on_inode(inode);
+
+		// 返回找到的inode指针
 		return inode;
 	}
+
+	// 如果未找到inode，则释放全局inode锁并返回NULL
 	spin_unlock(&inode_lock);
 	return NULL;
 }
@@ -1112,15 +1144,18 @@ EXPORT_SYMBOL(iget5_locked);
  */
 struct inode *iget_locked(struct super_block *sb, unsigned long ino)
 {
+	// 计算哈希桶的地址
 	struct hlist_head *head = inode_hashtable + hash(sb, ino);
 	struct inode *inode;
 
+	// 尝试在哈希桶中快速查找给定的inode号是否已经存在
 	inode = ifind_fast(sb, head, ino);
 	if (inode)
-		return inode;
+		return inode;  // 如果找到，直接返回找到的inode
+
 	/*
-	 * get_new_inode_fast() will do the right thing, re-trying the search
-	 * in case it had to block at any point.
+	 * get_new_inode_fast() 将做正确的事情，
+	 * 在任何可能阻塞的情况下重新尝试搜索。
 	 */
 	return get_new_inode_fast(sb, head, ino);
 }
