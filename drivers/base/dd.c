@@ -101,58 +101,73 @@ EXPORT_SYMBOL_GPL(device_bind_driver);
 static atomic_t probe_count = ATOMIC_INIT(0);
 static DECLARE_WAIT_QUEUE_HEAD(probe_waitqueue);
 
+/**
+ * really_probe - 真正的驱动程序探测函数
+ * @dev: 要探测的设备
+ * @drv: 要探测的驱动程序
+ *
+ * 此函数尝试将指定的驱动程序与设备进行匹配和绑定。
+ * 如果匹配成功并且探测成功，则将驱动程序绑定到设备。
+ * 如果探测失败或者驱动程序与设备不匹配，则会进行清理工作并返回适当的错误码。
+ *
+ * 返回值:
+ *  - 1: 成功将驱动程序绑定到设备
+ *  - 0: 驱动程序与设备不匹配或者探测失败
+ */
 static int really_probe(struct device *dev, struct device_driver *drv)
 {
-	int ret = 0;
+    int ret = 0;
 
-	atomic_inc(&probe_count);
-	pr_debug("bus: '%s': %s: probing driver %s with device %s\n",
-		 drv->bus->name, __func__, drv->name, dev_name(dev));
-	WARN_ON(!list_empty(&dev->devres_head));
+    atomic_inc(&probe_count);  // 原子操作，增加探测计数器
 
-	dev->driver = drv;
-	if (driver_sysfs_add(dev)) {
-		printk(KERN_ERR "%s: driver_sysfs_add(%s) failed\n",
-			__func__, dev_name(dev));
-		goto probe_failed;
-	}
+    pr_debug("bus: '%s': %s: probing driver %s with device %s\n",
+             drv->bus->name, __func__, drv->name, dev_name(dev));  // 打印调试信息，记录探测驱动程序和设备的过程
+    WARN_ON(!list_empty(&dev->devres_head));  // 如果设备资源列表不为空，则发出警告
 
-	if (dev->bus->probe) {
-		ret = dev->bus->probe(dev);
-		if (ret)
-			goto probe_failed;
-	} else if (drv->probe) {
-		ret = drv->probe(dev);
-		if (ret)
-			goto probe_failed;
-	}
+    dev->driver = drv;  // 将设备的驱动程序指针指向传入的驱动程序结构体
+    if (driver_sysfs_add(dev)) {  // 将驱动程序添加到设备的sysfs节点
+        printk(KERN_ERR "%s: driver_sysfs_add(%s) failed\n",
+               __func__, dev_name(dev));
+        goto probe_failed;  // 如果添加失败，则跳转到探测失败处理步骤
+    }
 
-	driver_bound(dev);
-	ret = 1;
-	pr_debug("bus: '%s': %s: bound device %s to driver %s\n",
-		 drv->bus->name, __func__, dev_name(dev), drv->name);
-	goto done;
+    if (dev->bus->probe) {  // 如果设备总线定义了probe函数
+        ret = dev->bus->probe(dev);  // 调用总线的probe函数，尝试探测设备
+        if (ret)
+            goto probe_failed;  // 如果探测失败，则跳转到探测失败处理步骤
+    } else if (drv->probe) {  // 如果设备总线没有定义probe函数，但驱动程序定义了probe函数
+        ret = drv->probe(dev);  // 调用驱动程序的probe函数，尝试探测设备
+        if (ret)
+            goto probe_failed;  // 如果探测失败，则跳转到探测失败处理步骤
+    }
+
+    driver_bound(dev);  // 将驱动程序绑定到设备
+    ret = 1;  // 设置返回值为1，表示成功将驱动程序绑定到设备
+    pr_debug("bus: '%s': %s: bound device %s to driver %s\n",
+             drv->bus->name, __func__, dev_name(dev), drv->name);  // 打印调试信息，记录驱动程序绑定到设备的过程
+    goto done;  // 跳转到完成处理步骤
 
 probe_failed:
-	devres_release_all(dev);
-	driver_sysfs_remove(dev);
-	dev->driver = NULL;
+    devres_release_all(dev);  // 释放设备的所有资源
+    driver_sysfs_remove(dev);  // 从设备的sysfs节点移除驱动程序
+    dev->driver = NULL;  // 将设备的驱动程序指针置为NULL
 
-	if (ret != -ENODEV && ret != -ENXIO) {
-		/* driver matched but the probe failed */
-		printk(KERN_WARNING
-		       "%s: probe of %s failed with error %d\n",
-		       drv->name, dev_name(dev), ret);
-	}
-	/*
-	 * Ignore errors returned by ->probe so that the next driver can try
-	 * its luck.
-	 */
-	ret = 0;
+    if (ret != -ENODEV && ret != -ENXIO) {
+        /* 驱动程序匹配但探测失败 */
+        printk(KERN_WARNING
+               "%s: probe of %s failed with error %d\n",
+               drv->name, dev_name(dev), ret);
+    }
+    /*
+     * 忽略由于 ->probe 返回的错误，以便下一个驱动程序可以尝试运行。
+     */
+    ret = 0;  // 设置返回值为0，表示驱动程序与设备不匹配或者探测失败
+
 done:
-	atomic_dec(&probe_count);
-	wake_up(&probe_waitqueue);
-	return ret;
+    atomic_dec(&probe_count);  // 原子操作，减少探测计数器
+    wake_up(&probe_waitqueue);  // 唤醒等待队列中等待探测完成的进程
+
+    return ret;  // 返回探测结果，1表示成功绑定驱动程序，0表示失败或者驱动程序与设备不匹配
 }
 
 /**
@@ -171,16 +186,23 @@ int driver_probe_done(void)
 }
 
 /**
- * wait_for_device_probe
- * Wait for device probing to be completed.
+ * wait_for_device_probe - 等待设备探测完成
+ *
+ * 此函数等待所有已知设备完成其探测过程。
+ * 它使用等待队列来暂停执行，直到条件 (probe_count == 0) 满足，
+ * 确保没有更多设备正在探测。一旦条件满足，
+ * 它会同步任何异步操作以确保完全初始化。
  */
 void wait_for_device_probe(void)
 {
-	/* wait for the known devices to complete their probing */
+	/* 等待已知设备完成其探测 */
 	wait_event(probe_waitqueue, atomic_read(&probe_count) == 0);
+
+	/* 同步任何异步操作以确保完全初始化 */
 	async_synchronize_full();
 }
 EXPORT_SYMBOL_GPL(wait_for_device_probe);
+
 
 /**
  * driver_probe_device - 尝试将设备与驱动程序绑定
@@ -229,40 +251,39 @@ static int __device_attach(struct device_driver *drv, void *data)
 }
 
 /**
- * device_attach - try to attach device to a driver.
- * @dev: device.
+ * device_attach - 尝试将设备绑定到其驱动程序
+ * @dev: 要绑定的设备结构体指针
  *
- * Walk the list of drivers that the bus has and call
- * driver_probe_device() for each pair. If a compatible
- * pair is found, break out and return.
- *
- * Returns 1 if the device was bound to a driver;
- * 0 if no matching driver was found;
- * -ENODEV if the device is not registered.
- *
- * When called for a USB interface, @dev->parent lock must be held.
+ * 此函数尝试将指定的设备绑定到其驱动程序。如果设备已经有驱动程序，则直接尝试绑定。
+ * 如果绑定失败，则将设备的驱动程序指针置为NULL，然后返回0。
+ * 如果设备没有驱动程序，则遍历设备所在总线上的所有驱动程序，尝试将每个驱动程序绑定到设备。
+ * 返回成功绑定的驱动程序数量，如果没有成功绑定任何驱动程序，则返回0。
  */
 int device_attach(struct device *dev)
 {
-	int ret = 0;
+    int ret = 0;  // 返回值，默认为0
 
-	device_lock(dev);
-	if (dev->driver) {
-		ret = device_bind_driver(dev);
-		if (ret == 0)
-			ret = 1;
-		else {
-			dev->driver = NULL;
-			ret = 0;
-		}
-	} else {
-		pm_runtime_get_noresume(dev);
-		ret = bus_for_each_drv(dev->bus, NULL, dev, __device_attach);
-		pm_runtime_put_sync(dev);
-	}
-	device_unlock(dev);
-	return ret;
+    device_lock(dev);  // 锁定设备，确保同一时刻只有一个线程访问设备
+
+    if (dev->driver) {  // 如果设备已经有驱动程序
+        ret = device_bind_driver(dev);  // 尝试将设备绑定到其驱动程序
+        if (ret == 0)
+            ret = 1;  // 绑定成功，返回1
+        else {
+            dev->driver = NULL;  // 绑定失败，将设备的驱动程序指针置为NULL
+            ret = 0;  // 返回0表示绑定失败
+        }
+    } else {  // 如果设备没有驱动程序
+        pm_runtime_get_noresume(dev);  // 增加设备的运行时引用计数，但不唤醒设备
+        ret = bus_for_each_drv(dev->bus, NULL, dev, __device_attach);  // 遍历设备所在总线上的所有驱动程序，尝试将每个驱动程序绑定到设备
+        pm_runtime_put_sync(dev);  // 同步设备的运行时状态，并且等待操作完成
+    }
+
+    device_unlock(dev);  // 解锁设备，允许其他线程访问设备
+
+    return ret;  // 返回成功绑定的驱动程序数量，如果没有成功绑定任何驱动程序，则返回0
 }
+
 EXPORT_SYMBOL_GPL(device_attach);
 
 static int __driver_attach(struct device *dev, void *data)

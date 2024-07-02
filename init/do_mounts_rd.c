@@ -49,6 +49,21 @@ static int __init crd_load(int in_fd, int out_fd, decompress_fn deco);
  *	squashfs
  *	gzip
  */
+/**
+ * identify_ramdisk_image - 识别 RAM 磁盘镜像的文件系统类型和相关信息
+ * @fd: 文件描述符，指向 RAM 磁盘镜像的文件
+ * @start_block: RAM 磁盘镜像在文件中的起始块号
+ * @decompressor: 输出参数，指向解压缩函数的指针，根据需要更新为发现的解压缩函数
+ *
+ * 从指定文件的给定块开始读取数据，尝试识别 RAM 磁盘镜像的文件系统类型。
+ * 支持的文件系统类型包括 gzip、romfs、cramfs、squashfs、minix 和 ext2。
+ * 如果识别成功，打印相应的信息并返回 RAM 磁盘的块数。
+ * 如果未找到有效的 RAM 磁盘镜像，打印相应的错误信息并返回 -1。
+ *
+ * 返回值:
+ *  - 如果识别成功，返回 RAM 磁盘的块数；
+ *  - 如果未找到有效的 RAM 磁盘镜像，返回 -1。
+ */
 static int __init
 identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 {
@@ -66,19 +81,23 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 	if (!buf)
 		return -1;
 
+	// 将不同类型的文件系统结构体指针指向同一个缓冲区
 	minixsb = (struct minix_super_block *) buf;
 	ext2sb = (struct ext2_super_block *) buf;
 	romfsb = (struct romfs_super_block *) buf;
 	cramfsb = (struct cramfs_super *) buf;
 	squashfsb = (struct squashfs_super_block *) buf;
+
+	// 初始化缓冲区，填充为特定的值
 	memset(buf, 0xe5, size);
 
 	/*
-	 * Read block 0 to test for compressed kernel
+	 * 读取块 0，用于测试是否为压缩内核
 	 */
 	sys_lseek(fd, start_block * BLOCK_SIZE, 0);
 	sys_read(fd, buf, size);
 
+	// 尝试根据读取的数据判断是否为压缩格式，并获取解压缩函数指针
 	*decompressor = decompress_method(buf, size, &compress_name);
 	if (compress_name) {
 		printk(KERN_NOTICE "RAMDISK: %s image found at block %d\n",
@@ -91,7 +110,7 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 		goto done;
 	}
 
-	/* romfs is at block zero too */
+	// 判断是否为 romfs 文件系统
 	if (romfsb->word0 == ROMSB_WORD0 &&
 	    romfsb->word1 == ROMSB_WORD1) {
 		printk(KERN_NOTICE
@@ -101,6 +120,7 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 		goto done;
 	}
 
+	// 判断是否为 cramfs 文件系统
 	if (cramfsb->magic == CRAMFS_MAGIC) {
 		printk(KERN_NOTICE
 		       "RAMDISK: cramfs filesystem found at block %d\n",
@@ -109,7 +129,7 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 		goto done;
 	}
 
-	/* squashfs is at block zero too */
+	// 判断是否为 squashfs 文件系统
 	if (le32_to_cpu(squashfsb->s_magic) == SQUASHFS_MAGIC) {
 		printk(KERN_NOTICE
 		       "RAMDISK: squashfs filesystem found at block %d\n",
@@ -120,12 +140,12 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 	}
 
 	/*
-	 * Read block 1 to test for minix and ext2 superblock
+	 * 读取块 1，尝试判断是否为 minix 或 ext2 超级块
 	 */
 	sys_lseek(fd, (start_block+1) * BLOCK_SIZE, 0);
 	sys_read(fd, buf, size);
 
-	/* Try minix */
+	// 尝试判断是否为 minix 文件系统
 	if (minixsb->s_magic == MINIX_SUPER_MAGIC ||
 	    minixsb->s_magic == MINIX_SUPER_MAGIC2) {
 		printk(KERN_NOTICE
@@ -135,7 +155,7 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 		goto done;
 	}
 
-	/* Try ext2 */
+	// 尝试判断是否为 ext2 文件系统
 	if (ext2sb->s_magic == cpu_to_le16(EXT2_SUPER_MAGIC)) {
 		printk(KERN_NOTICE
 		       "RAMDISK: ext2 filesystem found at block %d\n",
@@ -145,131 +165,142 @@ identify_ramdisk_image(int fd, int start_block, decompress_fn *decompressor)
 		goto done;
 	}
 
+	// 如果未找到有效的 RAM 磁盘镜像，打印相应的错误信息
 	printk(KERN_NOTICE
 	       "RAMDISK: Couldn't find valid RAM disk image starting at %d.\n",
 	       start_block);
 
 done:
+	// 重新设置文件指针，释放缓冲区内存，返回识别结果
 	sys_lseek(fd, start_block * BLOCK_SIZE, 0);
 	kfree(buf);
 	return nblocks;
 }
 
+/**
+ * rd_load_image - 加载初始化RAM磁盘（initrd）映像到RAM磁盘设备
+ * @from: 要加载的initrd映像文件路径
+ *
+ * 尝试从指定路径加载initrd映像到/dev/ram设备。
+ * 如果成功加载，将数据复制到RAM磁盘设备中，并根据需要更改软盘（如果是多个磁盘加载）。
+ *
+ * 返回值:
+ *  - 1: 成功加载并复制了initrd映像
+ *  - 0: 加载或复制失败
+ */
 int __init rd_load_image(char *from)
 {
-	int res = 0;
-	int in_fd, out_fd;
-	unsigned long rd_blocks, devblocks;
-	int nblocks, i, disk;
-	char *buf = NULL;
-	unsigned short rotate = 0;
-	decompress_fn decompressor = NULL;
+    int res = 0;
+    int in_fd, out_fd;
+    unsigned long rd_blocks, devblocks;
+    int nblocks, i, disk;
+    char *buf = NULL;
+    unsigned short rotate = 0;
+    decompress_fn decompressor = NULL;
 #if !defined(CONFIG_S390) && !defined(CONFIG_PPC_ISERIES)
-	char rotator[4] = { '|' , '/' , '-' , '\\' };
+    char rotator[4] = { '|' , '/' , '-' , '\\' };
 #endif
 
-	out_fd = sys_open("/dev/ram", O_RDWR, 0);
-	if (out_fd < 0)
-		goto out;
+    out_fd = sys_open("/dev/ram", O_RDWR, 0);  // 打开/dev/ram设备，准备写入操作
+    if (out_fd < 0)
+        goto out;  // 打开失败，跳转到out标签处理
 
-	in_fd = sys_open(from, O_RDONLY, 0);
-	if (in_fd < 0)
-		goto noclose_input;
+    in_fd = sys_open(from, O_RDONLY, 0);  // 打开initrd映像文件，准备读取操作
+    if (in_fd < 0)
+        goto noclose_input;  // 打开失败，跳转到noclose_input标签处理未关闭输入文件描述符
 
-	nblocks = identify_ramdisk_image(in_fd, rd_image_start, &decompressor);
-	if (nblocks < 0)
-		goto done;
+    nblocks = identify_ramdisk_image(in_fd, rd_image_start, &decompressor);  // 识别RAM磁盘映像的块数或大小
+    if (nblocks < 0)
+        goto done;  // 识别失败，跳转到done标签处理
 
-	if (nblocks == 0) {
-		if (crd_load(in_fd, out_fd, decompressor) == 0)
-			goto successful_load;
-		goto done;
-	}
+    if (nblocks == 0) {
+        if (crd_load(in_fd, out_fd, decompressor) == 0)  // 如果nblocks为0，则尝试使用crd_load加载数据
+            goto successful_load;
+        goto done;  // 加载失败，跳转到done标签处理
+    }
 
-	/*
-	 * NOTE NOTE: nblocks is not actually blocks but
-	 * the number of kibibytes of data to load into a ramdisk.
-	 * So any ramdisk block size that is a multiple of 1KiB should
-	 * work when the appropriate ramdisk_blocksize is specified
-	 * on the command line.
-	 *
-	 * The default ramdisk_blocksize is 1KiB and it is generally
-	 * silly to use anything else, so make sure to use 1KiB
-	 * blocksize while generating ext2fs ramdisk-images.
-	 */
-	if (sys_ioctl(out_fd, BLKGETSIZE, (unsigned long)&rd_blocks) < 0)
-		rd_blocks = 0;
-	else
-		rd_blocks >>= 1;
+    /*
+     * 注意: nblocks 实际上不是块数，而是要加载到ramdisk的数据量（以KiB为单位）。
+     * 因此，任何块大小是1KiB的RAM磁盘块大小应该可以正常工作，
+     * 当命令行上指定适当的ramdisk_blocksize时。
+     *
+     * 默认的ramdisk_blocksize是1KiB，通常使用其他块大小是愚蠢的，
+     * 因此请确保在生成ext2fs ramdisk-images时使用1KiB块大小。
+     */
+    if (sys_ioctl(out_fd, BLKGETSIZE, (unsigned long)&rd_blocks) < 0)
+        rd_blocks = 0;
+    else
+        rd_blocks >>= 1;
 
-	if (nblocks > rd_blocks) {
-		printk("RAMDISK: image too big! (%dKiB/%ldKiB)\n",
-		       nblocks, rd_blocks);
-		goto done;
-	}
+    if (nblocks > rd_blocks) {
+        printk("RAMDISK: image too big! (%dKiB/%ldKiB)\n",
+               nblocks, rd_blocks);
+        goto done;  // 映像过大，跳转到done标签处理
+    }
 
-	/*
-	 * OK, time to copy in the data
-	 */
-	if (sys_ioctl(in_fd, BLKGETSIZE, (unsigned long)&devblocks) < 0)
-		devblocks = 0;
-	else
-		devblocks >>= 1;
+    /*
+     * 开始复制数据
+     */
+    if (sys_ioctl(in_fd, BLKGETSIZE, (unsigned long)&devblocks) < 0)
+        devblocks = 0;
+    else
+        devblocks >>= 1;
 
-	if (strcmp(from, "/initrd.image") == 0)
-		devblocks = nblocks;
+    if (strcmp(from, "/initrd.image") == 0)
+        devblocks = nblocks;
 
-	if (devblocks == 0) {
-		printk(KERN_ERR "RAMDISK: could not determine device size\n");
-		goto done;
-	}
+    if (devblocks == 0) {
+        printk(KERN_ERR "RAMDISK: could not determine device size\n");
+        goto done;  // 无法确定设备大小，跳转到done标签处理
+    }
 
-	buf = kmalloc(BLOCK_SIZE, GFP_KERNEL);
-	if (!buf) {
-		printk(KERN_ERR "RAMDISK: could not allocate buffer\n");
-		goto done;
-	}
+    buf = kmalloc(BLOCK_SIZE, GFP_KERNEL);  // 分配内存缓冲区
+    if (!buf) {
+        printk(KERN_ERR "RAMDISK: could not allocate buffer\n");
+        goto done;  // 分配内存失败，跳转到done标签处理
+    }
 
-	printk(KERN_NOTICE "RAMDISK: Loading %dKiB [%ld disk%s] into ram disk... ",
-		nblocks, ((nblocks-1)/devblocks)+1, nblocks>devblocks ? "s" : "");
-	for (i = 0, disk = 1; i < nblocks; i++) {
-		if (i && (i % devblocks == 0)) {
-			printk("done disk #%d.\n", disk++);
-			rotate = 0;
-			if (sys_close(in_fd)) {
-				printk("Error closing the disk.\n");
-				goto noclose_input;
-			}
-			change_floppy("disk #%d", disk);
-			in_fd = sys_open(from, O_RDONLY, 0);
-			if (in_fd < 0)  {
-				printk("Error opening disk.\n");
-				goto noclose_input;
-			}
-			printk("Loading disk #%d... ", disk);
-		}
-		sys_read(in_fd, buf, BLOCK_SIZE);
-		sys_write(out_fd, buf, BLOCK_SIZE);
+    printk(KERN_NOTICE "RAMDISK: Loading %dKiB [%ld disk%s] into ram disk... ",
+           nblocks, ((nblocks-1)/devblocks)+1, nblocks>devblocks ? "s" : "");
+    for (i = 0, disk = 1; i < nblocks; i++) {
+        if (i && (i % devblocks == 0)) {
+            printk("done disk #%d.\n", disk++);
+            rotate = 0;
+            if (sys_close(in_fd)) {
+                printk("Error closing the disk.\n");
+                goto noclose_input;
+            }
+            change_floppy("disk #%d", disk);  // 更改软盘设备
+            in_fd = sys_open(from, O_RDONLY, 0);  // 重新打开软盘设备
+            if (in_fd < 0)  {
+                printk("Error opening disk.\n");
+                goto noclose_input;
+            }
+            printk("Loading disk #%d... ", disk);
+        }
+        sys_read(in_fd, buf, BLOCK_SIZE);  // 从输入文件读取数据
+        sys_write(out_fd, buf, BLOCK_SIZE);  // 将数据写入输出设备
 #if !defined(CONFIG_S390) && !defined(CONFIG_PPC_ISERIES)
-		if (!(i % 16)) {
-			printk("%c\b", rotator[rotate & 0x3]);
-			rotate++;
-		}
+        if (!(i % 16)) {
+            printk("%c\b", rotator[rotate & 0x3]);  // 打印加载进度
+            rotate++;
+        }
 #endif
-	}
-	printk("done.\n");
+    }
+    printk("done.\n");
 
 successful_load:
-	res = 1;
+    res = 1;  // 设置成功加载标志
 done:
-	sys_close(in_fd);
+    sys_close(in_fd);  // 关闭输入文件描述符
 noclose_input:
-	sys_close(out_fd);
+    sys_close(out_fd);  // 关闭输出文件描述符
 out:
-	kfree(buf);
-	sys_unlink("/dev/ram");
-	return res;
+    kfree(buf);  // 释放内存缓冲区
+    sys_unlink("/dev/ram");  // 删除/dev/ram设备节点
+    return res;  // 返回加载结果标志
 }
+
 
 int __init rd_load_disk(int n)
 {

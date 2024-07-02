@@ -334,31 +334,35 @@ void __init change_floppy(char *fmt, ...)
 void __init mount_root(void)
 {
 #ifdef CONFIG_ROOT_NFS
-	if (MAJOR(ROOT_DEV) == UNNAMED_MAJOR) {
-		if (mount_nfs_root())
-			return;
+    if (MAJOR(ROOT_DEV) == UNNAMED_MAJOR) {
+        if (mount_nfs_root())  // 尝试通过NFS挂载根文件系统
+            return;
 
-		printk(KERN_ERR "VFS: Unable to mount root fs via NFS, trying floppy.\n");
-		ROOT_DEV = Root_FD0;
-	}
+        printk(KERN_ERR "VFS: Unable to mount root fs via NFS, trying floppy.\n");
+        ROOT_DEV = Root_FD0;  // 如果NFS挂载失败，则尝试使用软盘作为根文件系统
+    }
 #endif
+
 #ifdef CONFIG_BLK_DEV_FD
-	if (MAJOR(ROOT_DEV) == FLOPPY_MAJOR) {
-		/* rd_doload is 2 for a dual initrd/ramload setup */
-		if (rd_doload==2) {
-			if (rd_load_disk(1)) {
-				ROOT_DEV = Root_RAM1;
-				root_device_name = NULL;
-			}
-		} else
-			change_floppy("root floppy");
-	}
+    if (MAJOR(ROOT_DEV) == FLOPPY_MAJOR) {
+        /* rd_doload is 2 for a dual initrd/ramload setup */
+        if (rd_doload == 2) {
+            if (rd_load_disk(1)) {  // 如果rd_doload为2，则尝试加载软盘上的初始化RAM磁盘
+                ROOT_DEV = Root_RAM1;  // 如果加载成功，则将ROOT_DEV设置为RAM1
+                root_device_name = NULL;  // 清空根设备名称
+            }
+        } else {
+            change_floppy("root floppy");  // 如果rd_doload不为2，则更改软盘设备
+        }
+    }
 #endif
+
 #ifdef CONFIG_BLOCK
-	create_dev("/dev/root", ROOT_DEV);
-	mount_block_root("/dev/root", root_mountflags);
+    create_dev("/dev/root", ROOT_DEV);  // 在/dev下创建根设备节点"/dev/root"
+    mount_block_root("/dev/root", root_mountflags);  // 挂载块设备根文件系统到指定挂载点，使用root_mountflags指定的挂载标志
 #endif
 }
+
 
 /*
  * Prepare the namespace - decide what/where to mount, load ramdisks, etc.

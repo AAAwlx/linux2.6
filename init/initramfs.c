@@ -374,6 +374,7 @@ static __initdata int (*actions[])(void) = {
 	[Reset]		= do_reset,
 };
 
+/*执行解压cpio文件的状态机*/
 static int __init write_buffer(char *buf, unsigned len)
 {
 	count = len;
@@ -411,65 +412,93 @@ static unsigned my_inptr;   /* index of next byte to be processed in inbuf */
 
 #include <linux/decompress/generic.h>
 
+/**
+ * unpack_to_rootfs - 解压缩并将数据解压到根文件系统
+ * @buf: 指向包含压缩数据的缓冲区
+ * @len: 缓冲区中数据的长度
+ *
+ * 该函数逐步解析和处理压缩数据，根据需要调用解压缩函数进行解压缩，
+ * 并将解压后的数据写入根文件系统中。在解压和处理过程中会进行错误处理和状态管理。
+ *
+ * 返回值:
+ *  - 如果解压过程中出现错误，则返回错误消息字符串；
+ *  - 如果成功解压并写入根文件系统，则返回NULL。
+ */
 static char * __init unpack_to_rootfs(char *buf, unsigned len)
 {
-	int written, res;
-	decompress_fn decompress;
-	const char *compress_name;
-	static __initdata char msg_buf[64];
+    int written, res;
+    decompress_fn decompress;
+    const char *compress_name;
+    static __initdata char msg_buf[64];
 
-	header_buf = kmalloc(110, GFP_KERNEL);
-	symlink_buf = kmalloc(PATH_MAX + N_ALIGN(PATH_MAX) + 1, GFP_KERNEL);
-	name_buf = kmalloc(N_ALIGN(PATH_MAX), GFP_KERNEL);
+    // 分配用于解析压缩数据的临时缓冲区
+    header_buf = kmalloc(110, GFP_KERNEL);
+    symlink_buf = kmalloc(PATH_MAX + N_ALIGN(PATH_MAX) + 1, GFP_KERNEL);
+    name_buf = kmalloc(N_ALIGN(PATH_MAX), GFP_KERNEL);
 
-	if (!header_buf || !symlink_buf || !name_buf)
-		panic("can't allocate buffers");
+    // 检查缓冲区分配是否成功，若失败则触发内核紧急情况
+    if (!header_buf || !symlink_buf || !name_buf)
+        panic("can't allocate buffers");
 
-	state = Start;
-	this_header = 0;
-	message = NULL;
-	while (!message && len) {
-		loff_t saved_offset = this_header;
-		if (*buf == '0' && !(this_header & 3)) {
-			state = Start;
-			written = write_buffer(buf, len);
-			buf += written;
-			len -= written;
-			continue;
-		}
-		if (!*buf) {
-			buf++;
-			len--;
-			this_header++;
-			continue;
-		}
-		this_header = 0;
-		decompress = decompress_method(buf, len, &compress_name);
-		if (decompress) {
-			res = decompress(buf, len, NULL, flush_buffer, NULL,
-				   &my_inptr, error);
-			if (res)
-				error("decompressor failed");
-		} else if (compress_name) {
-			if (!message) {
-				snprintf(msg_buf, sizeof msg_buf,
-					 "compression method %s not configured",
-					 compress_name);
-				message = msg_buf;
-			}
-		} else
-			error("junk in compressed archive");
-		if (state != Reset)
-			error("junk in compressed archive");
-		this_header = saved_offset + my_inptr;
-		buf += my_inptr;
-		len -= my_inptr;
-	}
-	dir_utime();
-	kfree(name_buf);
-	kfree(symlink_buf);
-	kfree(header_buf);
-	return message;
+    // 初始化状态和变量
+    state = Start;
+    this_header = 0;
+    message = NULL;
+
+    // 处理压缩数据
+    while (!message && len) {
+        loff_t saved_offset = this_header;
+
+        // 如果数据以'0'开头且this_header为4的倍数，重置状态为Start
+        if (*buf == '0' && !(this_header & 3)) {
+            state = Start;
+            written = write_buffer(buf, len);  // 写入缓冲区中的数据
+            buf += written;
+            len -= written;
+            continue;
+        }
+
+        // 如果数据为0，跳过并更新缓冲区和长度
+        if (!*buf) {
+            buf++;
+            len--;
+            this_header++;
+            continue;
+        }
+
+        // 重置this_header，根据数据调用相应的解压缩方法
+        this_header = 0;
+        decompress = decompress_method(buf, len, &compress_name);//寻找格式对应的解压函数
+        if (decompress) {
+            res = decompress(buf, len, NULL, flush_buffer, NULL,
+                            &my_inptr, error);  // 调用解压缩函数解压数据
+            if (res)
+                error("decompressor failed");  // 解压失败，触发错误处理
+        } else if (compress_name) {
+            if (!message) {
+                snprintf(msg_buf, sizeof msg_buf,
+                         "compression method %s not configured",
+                         compress_name);
+                message = msg_buf;  // 记录未配置的压缩方法错误消息
+            }
+        } else
+            error("junk in compressed archive");  // 压缩归档中有无效数据，触发错误处理
+
+        if (state != Reset)
+            error("junk in compressed archive");  // 压缩归档中有无效数据，触发错误处理
+
+        this_header = saved_offset + my_inptr;  // 更新this_header偏移量
+        buf += my_inptr;  // 更新缓冲区指针
+        len -= my_inptr;  // 更新剩余长度
+    }
+
+    dir_utime();  // 更新目录的访问和修改时间戳
+
+    kfree(name_buf);  // 释放临时缓冲区内存
+    kfree(symlink_buf);
+    kfree(header_buf);
+
+    return message;  // 返回解压缩过程中的消息（如果有错误）
 }
 
 static int __initdata do_retain_initrd;
@@ -493,20 +522,23 @@ static void __init free_initrd(void)
 	unsigned long crashk_start = (unsigned long)__va(crashk_res.start);
 	unsigned long crashk_end   = (unsigned long)__va(crashk_res.end);
 #endif
+
+	// 如果需要保留 initrd，则跳过释放操作
 	if (do_retain_initrd)
 		goto skip;
 
 #ifdef CONFIG_KEXEC
 	/*
-	 * If the initrd region is overlapped with crashkernel reserved region,
-	 * free only memory that is not part of crashkernel region.
+	 * 如果 initrd 区域与 crashkernel 保留区域重叠，
+	 * 则只释放不与 crashkernel 重叠的内存部分。
 	 */
 	if (initrd_start < crashk_end && initrd_end > crashk_start) {
 		/*
-		 * Initialize initrd memory region since the kexec boot does
-		 * not do.
+		 * 初始化 initrd 内存区域，因为 kexec 启动时不会这样做。
 		 */
 		memset((void *)initrd_start, 0, initrd_end - initrd_start);
+
+		// 释放与 crashkernel 区域不重叠的部分内存
 		if (initrd_start < crashk_start)
 			free_initrd_mem(initrd_start, crashk_start);
 		if (initrd_end > crashk_end)
@@ -514,10 +546,13 @@ static void __init free_initrd(void)
 	} else
 #endif
 		free_initrd_mem(initrd_start, initrd_end);
+
+	// 完成后将 initrd_start 和 initrd_end 置为 0，表示 initrd 已释放
 skip:
 	initrd_start = 0;
 	initrd_end = 0;
 }
+
 
 #ifdef CONFIG_BLK_DEV_RAM
 #define BUF_SIZE 1024

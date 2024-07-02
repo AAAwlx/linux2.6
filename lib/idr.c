@@ -758,90 +758,91 @@ int ida_pre_get(struct ida *ida, gfp_t gfp_mask)
 EXPORT_SYMBOL(ida_pre_get);
 
 /**
- * ida_get_new_above - allocate new ID above or equal to a start id
- * @ida:	ida handle
- * @staring_id:	id to start search at
- * @p_id:	pointer to the allocated handle
+ * ida_get_new_above - 分配一个大于或等于起始 ID 的新 ID
+ * @ida:        ida 句柄
+ * @starting_id: 起始 ID
+ * @p_id:       指向分配的 ID 的指针
  *
- * Allocate new ID above or equal to @ida.  It should be called with
- * any required locks.
+ * 分配一个大于或等于 @starting_id 的新 ID。应该在调用此函数前获取所需的锁。
  *
- * If memory is required, it will return -EAGAIN, you should unlock
- * and go back to the ida_pre_get() call.  If the ida is full, it will
- * return -ENOSPC.
+ * 如果需要内存分配，会返回 -EAGAIN，此时应该解锁并重新调用 ida_pre_get()。
+ * 如果 ida 已满，会返回 -ENOSPC。
  *
- * @p_id returns a value in the range @starting_id ... 0x7fffffff.
+ * @p_id 返回的值在 @starting_id ... 0x7fffffff 范围内。
  */
 int ida_get_new_above(struct ida *ida, int starting_id, int *p_id)
 {
-	struct idr_layer *pa[MAX_LEVEL];
-	struct ida_bitmap *bitmap;
-	unsigned long flags;
-	int idr_id = starting_id / IDA_BITMAP_BITS;
-	int offset = starting_id % IDA_BITMAP_BITS;
-	int t, id;
+    struct idr_layer *pa[MAX_LEVEL]; // 存储父指针的数组
+    struct ida_bitmap *bitmap;       // 指向位图的指针
+    unsigned long flags;             // 用于保存自旋锁期间的中断状态
+    int idr_id = starting_id / IDA_BITMAP_BITS; // 根据起始 ID 计算初始 idr_id
+    int offset = starting_id % IDA_BITMAP_BITS; // 计算位图中的初始偏移
+    int t, id;
 
- restart:
-	/* get vacant slot */
-	t = idr_get_empty_slot(&ida->idr, idr_id, pa);
-	if (t < 0)
-		return _idr_rc_to_errno(t);
+restart:
+    /* 获取空闲槽 */
+    t = idr_get_empty_slot(&ida->idr, idr_id, pa);
+    if (t < 0)
+        return _idr_rc_to_errno(t);
 
-	if (t * IDA_BITMAP_BITS >= MAX_ID_BIT)
-		return -ENOSPC;
+    /* 如果槽编号超出最大值，返回 -ENOSPC */
+    if (t * IDA_BITMAP_BITS >= MAX_ID_BIT)
+        return -ENOSPC;
 
-	if (t != idr_id)
-		offset = 0;
-	idr_id = t;
+    /* 如果槽编号不等于初始 idr_id，将偏移设为 0 */
+    if (t != idr_id)
+        offset = 0;
+    idr_id = t;
 
-	/* if bitmap isn't there, create a new one */
-	bitmap = (void *)pa[0]->ary[idr_id & IDR_MASK];
-	if (!bitmap) {
-		spin_lock_irqsave(&ida->idr.lock, flags);
-		bitmap = ida->free_bitmap;
-		ida->free_bitmap = NULL;
-		spin_unlock_irqrestore(&ida->idr.lock, flags);
+    /* 如果位图不存在，创建一个新位图 */
+    bitmap = (void *)pa[0]->ary[idr_id & IDR_MASK];
+    if (!bitmap) {
+        spin_lock_irqsave(&ida->idr.lock, flags);
+        bitmap = ida->free_bitmap;
+        ida->free_bitmap = NULL;
+        spin_unlock_irqrestore(&ida->idr.lock, flags);
 
-		if (!bitmap)
-			return -EAGAIN;
+        /* 如果没有可用位图，返回 -EAGAIN */
+        if (!bitmap)
+            return -EAGAIN;
 
-		memset(bitmap, 0, sizeof(struct ida_bitmap));
-		rcu_assign_pointer(pa[0]->ary[idr_id & IDR_MASK],
-				(void *)bitmap);
-		pa[0]->count++;
-	}
+        /* 初始化位图 */
+        memset(bitmap, 0, sizeof(struct ida_bitmap));
+        rcu_assign_pointer(pa[0]->ary[idr_id & IDR_MASK], (void *)bitmap);
+        pa[0]->count++;
+    }
 
-	/* lookup for empty slot */
-	t = find_next_zero_bit(bitmap->bitmap, IDA_BITMAP_BITS, offset);
-	if (t == IDA_BITMAP_BITS) {
-		/* no empty slot after offset, continue to the next chunk */
-		idr_id++;
-		offset = 0;
-		goto restart;
-	}
+    /* 查找空闲槽 */
+    t = find_next_zero_bit(bitmap->bitmap, IDA_BITMAP_BITS, offset);
+    if (t == IDA_BITMAP_BITS) {
+        /* 如果在偏移之后没有空闲槽，继续下一个块 */
+        idr_id++;
+        offset = 0;
+        goto restart;
+    }
 
-	id = idr_id * IDA_BITMAP_BITS + t;
-	if (id >= MAX_ID_BIT)
-		return -ENOSPC;
+    /* 计算 ID */
+    id = idr_id * IDA_BITMAP_BITS + t;
+    if (id >= MAX_ID_BIT)
+        return -ENOSPC;
 
-	__set_bit(t, bitmap->bitmap);
-	if (++bitmap->nr_busy == IDA_BITMAP_BITS)
-		idr_mark_full(pa, idr_id);
+    /* 设置位图中的对应位 */
+    __set_bit(t, bitmap->bitmap);
+    if (++bitmap->nr_busy == IDA_BITMAP_BITS)
+        idr_mark_full(pa, idr_id);
 
-	*p_id = id;
+    *p_id = id;
 
-	/* Each leaf node can handle nearly a thousand slots and the
-	 * whole idea of ida is to have small memory foot print.
-	 * Throw away extra resources one by one after each successful
-	 * allocation.
-	 */
-	if (ida->idr.id_free_cnt || ida->free_bitmap) {
-		struct idr_layer *p = get_from_free_list(&ida->idr);
-		if (p)
-			kmem_cache_free(idr_layer_cache, p);
-	}
+    /* 每个叶节点可以处理接近一千个槽，ida 的设计目的是占用较小的内存。
+     * 每次成功分配后逐一释放多余的资源。
+     */
+    if (ida->idr.id_free_cnt || ida->free_bitmap) {
+        struct idr_layer *p = get_from_free_list(&ida->idr);
+        if (p)
+            kmem_cache_free(idr_layer_cache, p);
+    }
 
-	return 0;
+    return 0;
 }
 EXPORT_SYMBOL(ida_get_new_above);
 

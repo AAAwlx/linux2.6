@@ -8,27 +8,27 @@ typedef int (*decompress_fn) (unsigned char *inbuf, int len,
 			      int *posp,
 			      void(*error)(char *x));
 
-/* inbuf   - input buffer
- *len     - len of pre-read data in inbuf
- *fill    - function to fill inbuf when empty
- *flush   - function to write out outbuf
- *outbuf  - output buffer
- *posp    - if non-null, input position (number of bytes read) will be
- *	  returned here
+/* inbuf - 输入缓冲区
+ *len - inbuf 中预读数据的 len
+ *fill - 空时填充 inbuf 的函数
+ *flush - 写出 outbuf 的函数
+ *outbuf - 输出缓冲区
+ *posp - 如果非空，输入位置（读取的字节数）将为
+ * 返回这里
  *
- *If len != 0, inbuf should contain all the necessary input data, and fill
- *should be NULL
- *If len = 0, inbuf can be NULL, in which case the decompressor will allocate
- *the input buffer.  If inbuf != NULL it must be at least XXX_IOBUF_SIZE bytes.
- *fill will be called (repeatedly...) to read data, at most XXX_IOBUF_SIZE
- *bytes should be read per call.  Replace XXX with the appropriate decompressor
- *name, i.e. LZMA_IOBUF_SIZE.
+ *如果len != 0，inbuf应该包含所有必要的输入数据，并填充
+ *应该为NULL
+ *如果len = 0，inbuf可以为NULL，在这种情况下解压缩器将分配
+ *输入缓冲区。  如果 inbuf != NULL 它必须至少为 XXX_IOBUF_SIZE 字节。
+ *fill 将被调用（重复...）来读取数据，最多 XXX_IOBUF_SIZE
+ *每次调用应读取字节数。  用适当的解压器替换 XXX
+ *名称，即 LZMA_IOBUF_SIZE。
  *
- *If flush = NULL, outbuf must be large enough to buffer all the expected
- *output.  If flush != NULL, the output buffer will be allocated by the
- *decompressor (outbuf = NULL), and the flush function will be called to
- *flush the output buffer at the appropriate time (decompressor and stream
- *dependent).
+ *如果flush = NULL，outbuf必须足够大以缓冲所有预期的
+ *输出。  如果flush！= NULL，输出缓冲区将由
+ *decompressor (outbuf = NULL)，并且会调用flush函数
+ *在适当的时间刷新输出缓冲区（解压缩器和流
+ *取决于）
  */
 
 

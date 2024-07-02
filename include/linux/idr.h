@@ -49,11 +49,11 @@
 #define IDR_FREE_MAX MAX_LEVEL + MAX_LEVEL
 
 struct idr_layer {
-	unsigned long		 bitmap; /* A zero bit means "space here" */
-	struct idr_layer	*ary[1<<IDR_BITS];
-	int			 count;	 /* When zero, we can release it */
-	int			 layer;	 /* distance from leaf */
-	struct rcu_head		 rcu_head;
+    unsigned long bitmap;             /* 位图，0 位表示该位置有空闲空间 */
+    struct idr_layer *ary[1<<IDR_BITS]; /* 指向下层 idr_layer 的指针数组，大小为 2^IDR_BITS */
+    int count;                        /* 计数，当为 0 时，可以释放该层 */
+    int layer;                        /* 离叶子节点的距离（层数） */
+    struct rcu_head rcu_head;         /* 用于 RCU（Read-Copy Update）的头部结构 */
 };
 
 // 用于映射用户空间的uid

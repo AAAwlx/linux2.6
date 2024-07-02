@@ -178,7 +178,7 @@ static void sysfs_deactivate(struct sysfs_dirent *sd)
 	lock_acquired(&sd->dep_map, _RET_IP_);
 	rwsem_release(&sd->dep_map, 1, _RET_IP_);
 }
-
+/*分配inode号*/
 static int sysfs_alloc_ino(ino_t *pino)
 {
 	int ino, rc;

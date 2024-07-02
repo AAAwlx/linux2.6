@@ -104,22 +104,33 @@ static void __init handle_initrd(void)
 	}
 }
 
+/**
+ * initrd_load - 初始化RAM磁盘加载函数
+ *
+ * 如果启用了初始化RAM磁盘（initrd），则加载其数据并创建相应的设备节点。
+ * 如果加载成功且ROOT_DEV不是Root_RAM0（即根设备不是RAM0），则执行其作为initrd的功能。
+ * 如果/initrd.image存在且加载成功，则将其解析并处理。
+ *
+ * 返回值:
+ *  - 1: 成功加载并处理了initrd
+ *  - 0: 未加载initrd或加载失败
+ */
 int __init initrd_load(void)
 {
-	if (mount_initrd) {
-		create_dev("/dev/ram", Root_RAM0);
-		/*
-		 * Load the initrd data into /dev/ram0. Execute it as initrd
-		 * unless /dev/ram0 is supposed to be our actual root device,
-		 * in that case the ram disk is just set up here, and gets
-		 * mounted in the normal path.
-		 */
-		if (rd_load_image("/initrd.image") && ROOT_DEV != Root_RAM0) {
-			sys_unlink("/initrd.image");
-			handle_initrd();
-			return 1;
-		}
-	}
-	sys_unlink("/initrd.image");
-	return 0;
+    if (mount_initrd) {
+        create_dev("/dev/ram", Root_RAM0);  // 在/dev目录下创建名为"/dev/ram"的设备节点，与Root_RAM0关联
+
+        /*
+         * 将initrd数据加载到/dev/ram0中。除非/dev/ram0是我们实际的根设备，
+         * 否则将其作为initrd执行，否则在正常路径中挂载ram磁盘。
+         */
+        if (rd_load_image("/initrd.image") && ROOT_DEV != Root_RAM0) {
+            sys_unlink("/initrd.image");  // 如果/initrd.image存在且加载成功，则删除它
+            handle_initrd();  // 处理initrd数据，可能涉及解压缩或加载文件系统
+            return 1;  // 返回1，表示成功加载并处理了initrd
+        }
+    }
+
+    sys_unlink("/initrd.image");  // 删除/initrd.image文件
+    return 0;  // 返回0，表示未加载initrd或加载失败
 }

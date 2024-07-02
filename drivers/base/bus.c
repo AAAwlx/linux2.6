@@ -187,38 +187,39 @@ static ssize_t driver_unbind(struct device_driver *drv,
 static DRIVER_ATTR(unbind, S_IWUSR, NULL, driver_unbind);
 
 /*
- * Manually attach a device to a driver.
- * Note: the driver must want to bind to the device,
- * it is not possible to override the driver's id table.
+ * 手动将设备绑定到驱动程序。
+ * 注意：驱动程序必须希望绑定到设备，无法覆盖驱动程序的id表。
  */
 static ssize_t driver_bind(struct device_driver *drv,
-			   const char *buf, size_t count)
+                           const char *buf, size_t count)
 {
-	struct bus_type *bus = bus_get(drv->bus);
-	struct device *dev;
-	int err = -ENODEV;
+    struct bus_type *bus = bus_get(drv->bus);  // 获取驱动程序所属总线的引用
+    struct device *dev;
+    int err = -ENODEV;  // 默认错误码设为-ENODEV（设备不存在）
 
-	dev = bus_find_device_by_name(bus, NULL, buf);
-	if (dev && dev->driver == NULL && driver_match_device(drv, dev)) {
-		if (dev->parent)	/* Needed for USB */
-			device_lock(dev->parent);
-		device_lock(dev);
-		err = driver_probe_device(drv, dev);
-		device_unlock(dev);
-		if (dev->parent)
-			device_unlock(dev->parent);
+    dev = bus_find_device_by_name(bus, NULL, buf);  // 根据设备名称在总线上查找设备
+    if (dev && dev->driver == NULL && driver_match_device(drv, dev)) {
+        if (dev->parent)    /* Needed for USB */  // 如果设备有父设备（例如USB设备），需要锁定父设备
+            device_lock(dev->parent);
+        device_lock(dev);  // 锁定设备，以便进行安全的操作
 
-		if (err > 0) {
-			/* success */
-			err = count;
-		} else if (err == 0) {
-			/* driver didn't accept device */
-			err = -ENODEV;
-		}
-	}
-	put_device(dev);
-	bus_put(bus);
-	return err;
+        err = driver_probe_device(drv, dev);  // 尝试将驱动程序绑定到设备
+
+        device_unlock(dev);  // 解锁设备
+        if (dev->parent)
+            device_unlock(dev->parent);  // 如果有父设备，则解锁父设备
+
+        if (err > 0) {
+            /* 绑定成功 */
+            err = count;  // 返回操作成功处理的字节数
+        } else if (err == 0) {
+            /* 驱动程序不接受设备 */
+            err = -ENODEV;  // 返回设备不存在的错误码
+        }
+    }
+    put_device(dev);  // 减少设备的引用计数
+    bus_put(bus);  // 减少总线的引用计数
+    return err;  // 返回操作结果的错误码或成功处理的字节数
 }
 static DRIVER_ATTR(bind, S_IWUSR, NULL, driver_bind);
 
