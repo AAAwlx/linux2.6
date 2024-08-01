@@ -1679,24 +1679,30 @@ out:
  * namespace's tree
  */
 static int do_new_mount(struct path *path, char *type, int flags,
-			int mnt_flags, char *name, void *data)
+                        int mnt_flags, char *name, void *data)
 {
-	struct vfsmount *mnt;
+    struct vfsmount *mnt;
 
-	if (!type)
-		return -EINVAL;
+    // 如果文件系统类型为空，则返回参数错误
+    if (!type)
+        return -EINVAL;
 
-	/* we need capabilities... */
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
+    // 需要系统管理员权限才能执行挂载操作
+    if (!capable(CAP_SYS_ADMIN))
+        return -EPERM;
 
-	lock_kernel();
-	mnt = do_kern_mount(type, flags, name, data);
-	unlock_kernel();
-	if (IS_ERR(mnt))
-		return PTR_ERR(mnt);
+    lock_kernel(); // 锁定内核
 
-	return do_add_mount(mnt, path, mnt_flags, NULL);
+    // 调用内核挂载函数进行挂载
+    mnt = do_kern_mount(type, flags, name, data);
+
+    unlock_kernel(); // 解锁内核
+
+    if (IS_ERR(mnt))
+        return PTR_ERR(mnt); // 如果挂载失败，返回错误码
+
+    // 将挂载点添加到路径中
+    return do_add_mount(mnt, path, mnt_flags, NULL);
 }
 
 /*
@@ -1948,74 +1954,79 @@ int copy_mount_string(const void __user *data, char **where)
  * and must be discarded.
  */
 long do_mount(char *dev_name, char *dir_name, char *type_page,
-		  unsigned long flags, void *data_page)
+              unsigned long flags, void *data_page)
 {
-	struct path path;
-	int retval = 0;
-	int mnt_flags = 0;
+    struct path path;
+    int retval = 0;
+    int mnt_flags = 0;
 
-	/* Discard magic */
-	if ((flags & MS_MGC_MSK) == MS_MGC_VAL)
-		flags &= ~MS_MGC_MSK;
+    /* 丢弃魔数 */
+    if ((flags & MS_MGC_MSK) == MS_MGC_VAL)
+        flags &= ~MS_MGC_MSK;
 
-	/* Basic sanity checks */
+    /* 基本合法性检查 */
+    if (!dir_name || !*dir_name || !memchr(dir_name, 0, PAGE_SIZE))
+        return -EINVAL;
 
-	if (!dir_name || !*dir_name || !memchr(dir_name, 0, PAGE_SIZE))
-		return -EINVAL;
+    if (data_page)
+        ((char *)data_page)[PAGE_SIZE - 1] = 0; // 确保 data_page 以 null 终止
 
-	if (data_page)
-		((char *)data_page)[PAGE_SIZE - 1] = 0;
+    /* 获取挂载点路径 */
+    retval = kern_path(dir_name, LOOKUP_FOLLOW, &path);
+    if (retval)
+        return retval;
 
-	/* ... and get the mountpoint */
-	retval = kern_path(dir_name, LOOKUP_FOLLOW, &path);
-	if (retval)
-		return retval;
+    /* 安全性检查 */
+    retval = security_sb_mount(dev_name, &path, type_page, flags, data_page);
+    if (retval)
+        goto dput_out;
 
-	retval = security_sb_mount(dev_name, &path,
-				   type_page, flags, data_page);
-	if (retval)
-		goto dput_out;
+    /* 默认使用 relatime，除非被覆盖 */
+    if (!(flags & MS_NOATIME))
+        mnt_flags |= MNT_RELATIME;
 
-	/* Default to relatime unless overriden */
-	if (!(flags & MS_NOATIME))
-		mnt_flags |= MNT_RELATIME;
+    /* 分离每个挂载点的标志 */
+    if (flags & MS_NOSUID)
+        mnt_flags |= MNT_NOSUID;
+    if (flags & MS_NODEV)
+        mnt_flags |= MNT_NODEV;
+    if (flags & MS_NOEXEC)
+        mnt_flags |= MNT_NOEXEC;
+    if (flags & MS_NOATIME)
+        mnt_flags |= MNT_NOATIME;
+    if (flags & MS_NODIRATIME)
+        mnt_flags |= MNT_NODIRATIME;
+    if (flags & MS_STRICTATIME)
+        mnt_flags &= ~(MNT_RELATIME | MNT_NOATIME);
+    if (flags & MS_RDONLY)
+        mnt_flags |= MNT_READONLY;
 
-	/* Separate the per-mountpoint flags */
-	if (flags & MS_NOSUID)
-		mnt_flags |= MNT_NOSUID;
-	if (flags & MS_NODEV)
-		mnt_flags |= MNT_NODEV;
-	if (flags & MS_NOEXEC)
-		mnt_flags |= MNT_NOEXEC;
-	if (flags & MS_NOATIME)
-		mnt_flags |= MNT_NOATIME;
-	if (flags & MS_NODIRATIME)
-		mnt_flags |= MNT_NODIRATIME;
-	if (flags & MS_STRICTATIME)
-		mnt_flags &= ~(MNT_RELATIME | MNT_NOATIME);
-	if (flags & MS_RDONLY)
-		mnt_flags |= MNT_READONLY;
+    /* 清除 flags 中不需要的标志 */
+    flags &= ~(MS_NOSUID | MS_NOEXEC | MS_NODEV | MS_ACTIVE |
+               MS_NOATIME | MS_NODIRATIME | MS_RELATIME | MS_KERNMOUNT |
+               MS_STRICTATIME);
 
-	flags &= ~(MS_NOSUID | MS_NOEXEC | MS_NODEV | MS_ACTIVE |
-		   MS_NOATIME | MS_NODIRATIME | MS_RELATIME| MS_KERNMOUNT |
-		   MS_STRICTATIME);
+    if (flags & MS_REMOUNT)
+        // 重新挂载文件系统
+        retval = do_remount(&path, flags & ~MS_REMOUNT, mnt_flags, data_page);
+    else if (flags & MS_BIND)
+        // 绑定挂载点
+        retval = do_loopback(&path, dev_name, flags & MS_REC);
+    else if (flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE))
+        // 更改挂载点类型
+        retval = do_change_type(&path, flags);
+    else if (flags & MS_MOVE)
+        // 移动挂载点
+        retval = do_move_mount(&path, dev_name);
+    else
+        // 新建挂载点
+        retval = do_new_mount(&path, type_page, flags, mnt_flags, dev_name, data_page);
 
-	if (flags & MS_REMOUNT)
-		retval = do_remount(&path, flags & ~MS_REMOUNT, mnt_flags,
-				    data_page);
-	else if (flags & MS_BIND)
-		retval = do_loopback(&path, dev_name, flags & MS_REC);
-	else if (flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE))
-		retval = do_change_type(&path, flags);
-	else if (flags & MS_MOVE)
-		retval = do_move_mount(&path, dev_name);
-	else
-		retval = do_new_mount(&path, type_page, flags, mnt_flags,
-				      dev_name, data_page);
 dput_out:
-	path_put(&path);
-	return retval;
+    path_put(&path); // 释放路径
+    return retval; // 返回结果
 }
+
 
 static struct mnt_namespace *alloc_mnt_ns(void)
 {
@@ -2128,45 +2139,51 @@ struct mnt_namespace *create_mnt_ns(struct vfsmount *mnt)
 EXPORT_SYMBOL(create_mnt_ns);
 
 SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
-		char __user *, type, unsigned long, flags, void __user *, data)
+                char __user *, type, unsigned long, flags, void __user *, data)
 {
-	int ret;
-	char *kernel_type;
-	char *kernel_dir;
-	char *kernel_dev;
-	unsigned long data_page;
+    int ret;
+    char *kernel_type;
+    char *kernel_dir;
+    char *kernel_dev;
+    unsigned long data_page;
 
-	ret = copy_mount_string(type, &kernel_type);
-	if (ret < 0)
-		goto out_type;
+    // 将用户传入的文件系统类型字符串复制到内核空间
+    ret = copy_mount_string(type, &kernel_type);
+    if (ret < 0)
+        goto out_type;
 
-	kernel_dir = getname(dir_name);
-	if (IS_ERR(kernel_dir)) {
-		ret = PTR_ERR(kernel_dir);
-		goto out_dir;
-	}
+    // 将用户传入的挂载点路径名获取到内核空间
+    kernel_dir = getname(dir_name);
+    if (IS_ERR(kernel_dir)) {
+        ret = PTR_ERR(kernel_dir);
+        goto out_dir;
+    }
 
-	ret = copy_mount_string(dev_name, &kernel_dev);
-	if (ret < 0)
-		goto out_dev;
+    // 将用户传入的设备名字符串复制到内核空间
+    ret = copy_mount_string(dev_name, &kernel_dev);
+    if (ret < 0)
+        goto out_dev;
 
-	ret = copy_mount_options(data, &data_page);
-	if (ret < 0)
-		goto out_data;
+    // 将用户传入的挂载选项复制到内核空间
+    ret = copy_mount_options(data, &data_page);
+    if (ret < 0)
+        goto out_data;
 
-	ret = do_mount(kernel_dev, kernel_dir, kernel_type, flags,
-		(void *) data_page);
+    // 调用内核的挂载函数
+    ret = do_mount(kernel_dev, kernel_dir, kernel_type, flags, (void *) data_page);
 
-	free_page(data_page);
+    // 释放分配的页面
+    free_page(data_page);
 out_data:
-	kfree(kernel_dev);
+    kfree(kernel_dev); // 释放设备名字符串的内存
 out_dev:
-	putname(kernel_dir);
+    putname(kernel_dir); // 释放挂载点路径名的内存
 out_dir:
-	kfree(kernel_type);
+    kfree(kernel_type); // 释放文件系统类型字符串的内存
 out_type:
-	return ret;
+    return ret; // 返回结果
 }
+
 
 /*
  * pivot_root Semantics:

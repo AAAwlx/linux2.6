@@ -373,46 +373,46 @@ static void __init relocate_initrd(void)
 		ramdisk_image, ramdisk_image + ramdisk_size - 1,
 		ramdisk_here, ramdisk_here + ramdisk_size - 1);
 }
-
 static void __init reserve_initrd(void)
 {
-	/* Assume only end is not page aligned */
-	u64 ramdisk_image = boot_params.hdr.ramdisk_image;
-	u64 ramdisk_size  = boot_params.hdr.ramdisk_size;
-	u64 ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
-	u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT;
+    // 假设只有结束地址不是页面对齐的
+    u64 ramdisk_image = boot_params.hdr.ramdisk_image; // 初始RAM盘的起始地址
+    u64 ramdisk_size  = boot_params.hdr.ramdisk_size;  // 初始RAM盘的大小
+    u64 ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size); // 初始RAM盘的结束地址，页面对齐
+    u64 end_of_lowmem = max_low_pfn_mapped << PAGE_SHIFT; // 低端内存的结束地址
 
-	if (!boot_params.hdr.type_of_loader ||
-	    !ramdisk_image || !ramdisk_size)
-		return;		/* No initrd provided by bootloader */
+    // 如果没有提供初始RAM盘，则返回
+    if (!boot_params.hdr.type_of_loader ||
+        !ramdisk_image || !ramdisk_size)
+        return; // 引导加载程序没有提供initrd
 
-	initrd_start = 0;
+    initrd_start = 0; // 初始化初始RAM盘起始地址为0
 
-	if (ramdisk_size >= (end_of_lowmem>>1)) {
-		free_early(ramdisk_image, ramdisk_end);
-		printk(KERN_ERR "initrd too large to handle, "
-		       "disabling initrd\n");
-		return;
-	}
+    // 如果初始RAM盘的大小超过低端内存的一半，则禁用初始RAM盘
+    if (ramdisk_size >= (end_of_lowmem>>1)) {
+        free_early(ramdisk_image, ramdisk_end); // 释放早期预留的内存
+        printk(KERN_ERR "initrd too large to handle, "
+               "disabling initrd\n");
+        return;
+    }
 
-	printk(KERN_INFO "RAMDISK: %08llx - %08llx\n", ramdisk_image,
-			ramdisk_end);
+    // 打印初始RAM盘的起始和结束地址
+    printk(KERN_INFO "RAMDISK: %08llx - %08llx\n", ramdisk_image,
+           ramdisk_end);
 
+    // 如果初始RAM盘完全位于低端内存中，处理简单情况
+    if (ramdisk_end <= end_of_lowmem) {
+        // 不需要再次预留内存，已经在i386_start_kernel中预留过了
+        initrd_start = ramdisk_image + PAGE_OFFSET; // 计算虚拟地址
+        initrd_end = initrd_start + ramdisk_size;   // 计算结束地址
+        return;
+    }
 
-	if (ramdisk_end <= end_of_lowmem) {
-		/* All in lowmem, easy case */
-		/*
-		 * don't need to reserve again, already reserved early
-		 * in i386_start_kernel
-		 */
-		initrd_start = ramdisk_image + PAGE_OFFSET;
-		initrd_end = initrd_start + ramdisk_size;
-		return;
-	}
+    // 如果初始RAM盘不完全位于低端内存中，则需要重新定位
+    relocate_initrd();
 
-	relocate_initrd();
-
-	free_early(ramdisk_image, ramdisk_end);
+    // 释放早期预留的内存
+    free_early(ramdisk_image, ramdisk_end);
 }
 #else
 static void __init reserve_initrd(void)

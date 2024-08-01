@@ -77,73 +77,86 @@ __setup("rw", readwrite);
 
 dev_t name_to_dev_t(char *name)
 {
-	char s[32];
-	char *p;
-	dev_t res = 0;
-	int part;
+    char s[32];       // 用于存储设备名称的缓冲区
+    char *p;          // 用于解析字符串的指针
+    dev_t res = 0;    // 最终的设备号
+    int part;         // 分区号
 
-	if (strncmp(name, "/dev/", 5) != 0) {
-		unsigned maj, min;
+    // 检查名称是否以 "/dev/" 开头
+    if (strncmp(name, "/dev/", 5) != 0) {
+        unsigned maj, min;
 
-		if (sscanf(name, "%u:%u", &maj, &min) == 2) {
-			res = MKDEV(maj, min);
-			if (maj != MAJOR(res) || min != MINOR(res))
-				goto fail;
-		} else {
-			res = new_decode_dev(simple_strtoul(name, &p, 16));
-			if (*p)
-				goto fail;
-		}
-		goto done;
-	}
+        // 尝试将名称解析为主设备号和次设备号
+        if (sscanf(name, "%u:%u", &maj, &min) == 2) {
+            res = MKDEV(maj, min);
+            // 验证解析后的设备号是否有效
+            if (maj != MAJOR(res) || min != MINOR(res))
+                goto fail;
+        } else {
+            // 将名称解析为一个设备号
+            res = new_decode_dev(simple_strtoul(name, &p, 16));
+            // 检查解析后是否有剩余的字符
+            if (*p)
+                goto fail;
+        }
+        goto done;
+    }
 
-	name += 5;
-	res = Root_NFS;
-	if (strcmp(name, "nfs") == 0)
-		goto done;
-	res = Root_RAM0;
-	if (strcmp(name, "ram") == 0)
-		goto done;
+    // 跳过 "/dev/" 部分
+    name += 5;
+    res = Root_NFS;
+    // 检查是否是 NFS 根文件系统
+    if (strcmp(name, "nfs") == 0)
+        goto done;
+    res = Root_RAM0;
+    // 检查是否是 RAM 根文件系统
+    if (strcmp(name, "ram") == 0)
+        goto done;
 
-	if (strlen(name) > 31)
-		goto fail;
-	strcpy(s, name);
-	for (p = s; *p; p++)
-		if (*p == '/')
-			*p = '!';
-	res = blk_lookup_devt(s, 0);
-	if (res)
-		goto done;
+    // 检查名称长度是否超过 31 个字符
+    if (strlen(name) > 31)
+        goto fail;
+    // 复制名称到缓冲区
+    strcpy(s, name);
+    // 将 '/' 替换为 '!'
+    for (p = s; *p; p++)
+        if (*p == '/')
+            *p = '!';
+    // 查找设备号
+    res = blk_lookup_devt(s, 0);
+    if (res)
+        goto done;
 
-	/*
-	 * try non-existant, but valid partition, which may only exist
-	 * after revalidating the disk, like partitioned md devices
-	 */
-	while (p > s && isdigit(p[-1]))
-		p--;
-	if (p == s || !*p || *p == '0')
-		goto fail;
+    /*
+     * 尝试查找不存在但有效的分区，
+     * 这些分区可能在重新验证磁盘后才存在，比如分区的 md 设备
+     */
+    while (p > s && isdigit(p[-1]))
+        p--;
+    if (p == s || !*p || *p == '0')
+        goto fail;
 
-	/* try disk name without <part number> */
-	part = simple_strtoul(p, NULL, 10);
-	*p = '\0';
-	res = blk_lookup_devt(s, part);
-	if (res)
-		goto done;
+    // 尝试没有分区号的磁盘名称
+    part = simple_strtoul(p, NULL, 10);
+    *p = '\0';
+    res = blk_lookup_devt(s, part);
+    if (res)
+        goto done;
 
-	/* try disk name without p<part number> */
-	if (p < s + 2 || !isdigit(p[-2]) || p[-1] != 'p')
-		goto fail;
-	p[-1] = '\0';
-	res = blk_lookup_devt(s, part);
-	if (res)
-		goto done;
+    // 尝试没有 p<分区号> 的磁盘名称
+    if (p < s + 2 || !isdigit(p[-2]) || p[-1] != 'p')
+        goto fail;
+    p[-1] = '\0';
+    res = blk_lookup_devt(s, part);
+    if (res)
+        goto done;
 
 fail:
-	return 0;
+    return 0;
 done:
-	return res;
+    return res;
 }
+
 
 static int __init root_dev_setup(char *line)
 {
@@ -232,60 +245,58 @@ static int __init do_mount_root(char *name, char *fs, int flags, void *data)
 
 void __init mount_block_root(char *name, int flags)
 {
-	char *fs_names = __getname_gfp(GFP_KERNEL
-		| __GFP_NOTRACK_FALSE_POSITIVE);
-	char *p;
+    char *fs_names = __getname_gfp(GFP_KERNEL | __GFP_NOTRACK_FALSE_POSITIVE); // 获取文件系统名称列表的缓冲区
+    char *p;
 #ifdef CONFIG_BLOCK
-	char b[BDEVNAME_SIZE];
+    char b[BDEVNAME_SIZE]; // 块设备名称缓冲区
 #else
-	const char *b = name;
+    const char *b = name;
 #endif
 
-	get_fs_names(fs_names);
+    get_fs_names(fs_names); // 获取所有文件系统名称
 retry:
-	for (p = fs_names; *p; p += strlen(p)+1) {
-		int err = do_mount_root(name, p, flags, root_mount_data);
-		switch (err) {
-			case 0:
-				goto out;
-			case -EACCES:
-				flags |= MS_RDONLY;
-				goto retry;
-			case -EINVAL:
-				continue;
-		}
-	        /*
-		 * Allow the user to distinguish between failed sys_open
-		 * and bad superblock on root device.
-		 * and give them a list of the available devices
-		 */
+    for (p = fs_names; *p; p += strlen(p)+1) {
+        int err = do_mount_root(name, p, flags, root_mount_data); // 尝试挂载根文件系统
+        switch (err) {
+            case 0:
+                goto out; // 挂载成功，退出
+            case -EACCES:
+                flags |= MS_RDONLY; // 如果权限不足，则以只读模式重新尝试
+                goto retry;
+            case -EINVAL:
+                continue; // 无效参数，尝试下一个文件系统
+        }
+        /*
+         * 允许用户区分根设备上的 sys_open 失败和超级块错误
+         * 并向他们提供可用设备的列表
+         */
 #ifdef CONFIG_BLOCK
-		__bdevname(ROOT_DEV, b);
+        __bdevname(ROOT_DEV, b); // 获取块设备名称
 #endif
-		printk("VFS: Cannot open root device \"%s\" or %s\n",
-				root_device_name, b);
-		printk("Please append a correct \"root=\" boot option; here are the available partitions:\n");
+        printk("VFS: Cannot open root device \"%s\" or %s\n",
+               root_device_name, b);
+        printk("Please append a correct \"root=\" boot option; here are the available partitions:\n");
 
-		printk_all_partitions();
+        printk_all_partitions(); // 打印所有分区信息
 #ifdef CONFIG_DEBUG_BLOCK_EXT_DEVT
-		printk("DEBUG_BLOCK_EXT_DEVT is enabled, you need to specify "
-		       "explicit textual name for \"root=\" boot option.\n");
+        printk("DEBUG_BLOCK_EXT_DEVT is enabled, you need to specify "
+               "explicit textual name for \"root=\" boot option.\n");
 #endif
-		panic("VFS: Unable to mount root fs on %s", b);
-	}
+        panic("VFS: Unable to mount root fs on %s", b); // 挂载失败，触发内核恐慌
+    }
 
-	printk("List of all partitions:\n");
-	printk_all_partitions();
-	printk("No filesystem could mount root, tried: ");
-	for (p = fs_names; *p; p += strlen(p)+1)
-		printk(" %s", p);
-	printk("\n");
+    printk("List of all partitions:\n");
+    printk_all_partitions(); // 打印所有分区信息
+    printk("No filesystem could mount root, tried: ");
+    for (p = fs_names; *p; p += strlen(p)+1)
+        printk(" %s", p);
+    printk("\n");
 #ifdef CONFIG_BLOCK
-	__bdevname(ROOT_DEV, b);
+    __bdevname(ROOT_DEV, b); // 获取块设备名称
 #endif
-	panic("VFS: Unable to mount root fs on %s", b);
+    panic("VFS: Unable to mount root fs on %s", b); // 挂载失败，触发内核恐慌
 out:
-	putname(fs_names);
+    putname(fs_names); // 释放文件系统名称列表缓冲区
 }
  
 #ifdef CONFIG_ROOT_NFS

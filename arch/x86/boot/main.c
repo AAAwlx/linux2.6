@@ -127,51 +127,59 @@ static void init_heap(void)
 
 void main(void)
 {
-	/* First, copy the boot header into the "zeropage" */
+	/* First, copy the boot header into the "zeropage" 复制引导头到“zeropage”，以准备启动参数和内存布局信息*/
 	copy_boot_params();
 
-	/* End of heap check */
+	/* End of heap check 初始化堆内存，确保有足够的堆空间用于运行时数据分配。*/
 	init_heap();
 
-	/* Make sure we have all the proper CPU support */
+	/* 验证 CPU 是否符合当前内核要求。如果不符合，显示错误信息并终止启动过程 */
 	if (validate_cpu()) {
 		puts("Unable to boot - please use a kernel appropriate "
 		     "for your CPU.\n");
 		die();
 	}
 
-	/* Tell the BIOS what CPU mode we intend to run in. */
+	/* Tell the BIOS what CPU mode we intend to run in. 设置 BIOS，以告知系统将要使用的 CPU 模式（如保护模式)*/
 	set_bios_mode();
 
-	/* Detect memory layout */
+	/* Detect memory layout 检测系统的内存布局，获取内存的详细信息，如总内存大小、内存块等*/
 	detect_memory();
 
-	/* Set keyboard repeat rate (why?) */
+	/* Set keyboard repeat rate (why?)设置键盘重复速率，可能是为了在后续的操作中确保键盘输入的正确性。 */
 	keyboard_set_repeat();
 
 	/* Query MCA information */
 	query_mca();
+	// 查询 MCA（Machine Check Architecture）信息，用于检测和报告硬件错误。
 
 	/* Query Intel SpeedStep (IST) information */
 	query_ist();
+	// 查询 Intel SpeedStep 信息，用于处理 CPU 频率和电源管理。
 
 	/* Query APM information */
 #if defined(CONFIG_APM) || defined(CONFIG_APM_MODULE)
 	query_apm_bios();
 #endif
+	// 如果配置了 APM（Advanced Power Management），查询 APM BIOS 信息。
 
 	/* Query EDD information */
 #if defined(CONFIG_EDD) || defined(CONFIG_EDD_MODULE)
 	query_edd();
 #endif
+	// 如果配置了 EDD（Enhanced Disk Drive），查询 EDD 信息。
 
 	/* Set the video mode */
 	set_video();
+	// 设置视频模式，以确保显示器正确显示信息。
 
 	/* Parse command line for 'quiet' and pass it to decompressor. */
 	if (cmdline_find_option_bool("quiet"))
 		boot_params.hdr.loadflags |= QUIET_FLAG;
+	// 解析命令行参数，检查是否有“quiet”选项。如果有，将“quiet”标志设置到启动参数中，禁用启动时的详细信息显示。
 
 	/* Do the last things and invoke protected mode */
 	go_to_protected_mode();
+	// 完成最后的初始化操作，并切换到保护模式，开始执行操作系统的核心代码。
 }
+

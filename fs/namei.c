@@ -484,15 +484,24 @@ ok:
 
 static __always_inline void set_root(struct nameidata *nd)
 {
-	if (!nd->root.mnt) {
-		struct fs_struct *fs = current->fs;
-		read_lock(&fs->lock);
-		nd->root = fs->root;
-		path_get(&nd->root);
-		read_unlock(&fs->lock);
-	}
+    // 如果 nameidata 结构中的根挂载点还未设置
+    if (!nd->root.mnt) {
+        // 获取当前进程的文件系统结构
+        struct fs_struct *fs = current->fs;
+        
+        // 获取读锁，保护文件系统结构的并发访问
+        read_lock(&fs->lock);
+        
+        // 将 nameidata 结构中的根路径设置为当前进程的根路径
+        nd->root = fs->root;
+        
+        // 增加根路径的引用计数，防止其被释放
+        path_get(&nd->root);
+        
+        // 释放读锁
+        read_unlock(&fs->lock);
+    }
 }
-
 static int link_path_walk(const char *, struct nameidata *);
 
 static __always_inline int __vfs_follow_link(struct nameidata *nd, const char *link)
@@ -598,23 +607,46 @@ loop:
 
 int follow_up(struct path *path)
 {
-	struct vfsmount *parent;
-	struct dentry *mountpoint;
-	spin_lock(&vfsmount_lock);
-	parent = path->mnt->mnt_parent;
-	if (parent == path->mnt) {
-		spin_unlock(&vfsmount_lock);
-		return 0;
-	}
-	mntget(parent);
-	mountpoint = dget(path->mnt->mnt_mountpoint);
-	spin_unlock(&vfsmount_lock);
-	dput(path->dentry);
-	path->dentry = mountpoint;
-	mntput(path->mnt);
-	path->mnt = parent;
-	return 1;
+    struct vfsmount *parent;
+    struct dentry *mountpoint;
+
+    // 锁定全局挂载点锁
+    spin_lock(&vfsmount_lock);
+    
+    // 获取父挂载点
+    parent = path->mnt->mnt_parent;
+    
+    // 如果当前挂载点就是根挂载点，则解锁并返回0
+    if (parent == path->mnt) {
+        spin_unlock(&vfsmount_lock);
+        return 0;
+    }
+    
+    // 增加父挂载点的引用计数
+    mntget(parent);
+    
+    // 获取当前挂载点的挂载点目录项，并增加其引用计数
+    mountpoint = dget(path->mnt->mnt_mountpoint);
+    
+    // 解锁全局挂载点锁
+    spin_unlock(&vfsmount_lock);
+    
+    // 释放当前路径目录项的引用计数
+    dput(path->dentry);
+    
+    // 更新路径的目录项为挂载点目录项
+    path->dentry = mountpoint;
+    
+    // 释放当前挂载点的引用计数
+    mntput(path->mnt);
+    
+    // 更新路径的挂载点为父挂载点
+    path->mnt = parent;
+    
+    // 返回1表示成功
+    return 1;
 }
+
 
 /* no need for dcache_lock, as serialization is taken care in
  * namespace.c
@@ -622,15 +654,15 @@ int follow_up(struct path *path)
 static int __follow_mount(struct path *path)
 {
 	int res = 0;
-	while (d_mountpoint(path->dentry)) {
-		struct vfsmount *mounted = lookup_mnt(path);
-		if (!mounted)
+	while (d_mountpoint(path->dentry)) {//如果当前路径下有挂载点被挂载
+		struct vfsmount *mounted = lookup_mnt(path);//查找当前路径下被挂载的挂载点
+		if (!mounted)//如果没找到则直接退出循环
 			break;
 		dput(path->dentry);
 		if (res)
 			mntput(path->mnt);
 		path->mnt = mounted;
-		path->dentry = dget(mounted->mnt_root);
+		path->dentry = dget(mounted->mnt_root);//更新路径对应的目录项为被挂载的挂载点的根目录
 		res = 1;
 	}
 	return res;
@@ -638,15 +670,25 @@ static int __follow_mount(struct path *path)
 
 static void follow_mount(struct path *path)
 {
-	while (d_mountpoint(path->dentry)) {
-		struct vfsmount *mounted = lookup_mnt(path);
-		if (!mounted)
-			break;
-		dput(path->dentry);
-		mntput(path->mnt);
-		path->mnt = mounted;
-		path->dentry = dget(mounted->mnt_root);
-	}
+    // 循环检查路径上的目录项是否为挂载点
+    while (d_mountpoint(path->dentry)) {
+        // 查找挂载点对应的vfsmount结构
+        struct vfsmount *mounted = lookup_mnt(path);
+        if (!mounted)
+            break; // 如果没有找到对应的挂载点，退出循环
+
+        // 释放当前路径目录项的引用计数
+        dput(path->dentry);
+
+        // 释放当前挂载点的引用计数
+        mntput(path->mnt);
+
+        // 更新路径的挂载点为找到的挂载点
+        path->mnt = mounted;
+
+        // 更新路径的目录项为新挂载点的根目录项，并增加其引用计数
+        path->dentry = dget(mounted->mnt_root);
+    }
 }
 
 /* no need for dcache_lock, as serialization is taken care in
@@ -667,27 +709,31 @@ int follow_down(struct path *path)
 	return 0;
 }
 
+// 处理路径组件 ".." 的函数
 static __always_inline void follow_dotdot(struct nameidata *nd)
 {
-	set_root(nd);
+    set_root(nd); // 设置根目录
 
-	while(1) {
-		struct dentry *old = nd->path.dentry;
+    while (1) {
+        struct dentry *old = nd->path.dentry; // 保存当前路径的目录项
 
-		if (nd->path.dentry == nd->root.dentry &&
-		    nd->path.mnt == nd->root.mnt) {
-			break;
-		}
-		if (nd->path.dentry != nd->path.mnt->mnt_root) {
-			/* rare case of legitimate dget_parent()... */
-			nd->path.dentry = dget_parent(nd->path.dentry);
-			dput(old);
-			break;
-		}
-		if (!follow_up(&nd->path))
-			break;
-	}
-	follow_mount(&nd->path);
+        // 如果当前目录项和根目录相同，则退出循环
+        if (nd->path.dentry == nd->root.dentry &&
+            nd->path.mnt == nd->root.mnt) {
+            break;
+        }
+        // 如果当前目录项不是挂载点的根目录，则获取其父目录项
+        if (nd->path.dentry != nd->path.mnt->mnt_root) {
+            // 获取父目录项，罕见情况下使用 dget_parent()...
+            nd->path.dentry = dget_parent(nd->path.dentry);
+            dput(old); // 释放旧的目录项
+            break;
+        }
+        // 如果当前目录项是挂载点的根目录，则向上追踪到挂载点的父挂载点
+        if (!follow_up(&nd->path))
+            break;
+    }
+    follow_mount(&nd->path); // 处理挂载点
 }
 
 /*
@@ -710,9 +756,9 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 		if (err < 0)
 			return err;
 	}
-
+	// 在当前目录项的缓存中查找目标目录项
 	dentry = __d_lookup(nd->path.dentry, name);
-	if (!dentry)
+	if (!dentry)//如果没找到，则跳转到need_lookup执行
 		goto need_lookup;
 	if (dentry->d_op && dentry->d_op->d_revalidate)
 		goto need_revalidate;
@@ -728,18 +774,14 @@ need_lookup:
 
 	mutex_lock(&dir->i_mutex);
 	/*
-	 * First re-do the cached lookup just in case it was created
-	 * while we waited for the directory semaphore..
-	 *
-	 * FIXME! This could use version numbering or similar to
-	 * avoid unnecessary cache lookups.
-	 *
-	 * The "dcache_lock" is purely to protect the RCU list walker
-	 * from concurrent renames at this point (we mustn't get false
-	 * negatives from the RCU list walk here, unlike the optimistic
-	 * fast walk).
-	 *
-	 * so doing d_lookup() (with seqlock), instead of lockfree __d_lookup
+	  * 首先重新进行缓存查找，以防在等待目录信号量时创建了目录项
+     *
+     * FIXME! 这可以使用版本编号或类似方式来避免不必要的缓存查找。
+     *
+     * "dcache_lock" 纯粹是为了保护此时的 RCU 列表遍历器不受并发重命名的影响
+     * (我们在这里不能从 RCU 列表遍历中得到假阴性，和乐观的快速遍历不同)。
+     *
+     * 因此在这里使用 d_lookup() (带有 seqlock)，而不是无锁的 __d_lookup
 	 */
 	dentry = d_lookup(parent, name);
 	if (!dentry) {
@@ -813,166 +855,162 @@ static inline int follow_on_final(struct inode *inode, unsigned lookup_flags)
  */
 static int link_path_walk(const char *name, struct nameidata *nd)
 {
-	struct path next;
-	struct inode *inode;
-	int err;
-	unsigned int lookup_flags = nd->flags;
-	
-	while (*name=='/')
-		name++;
-	if (!*name)
-		goto return_reval;
+    struct path next; // 用于存储下一个路径组件的信息
+    struct inode *inode; // 当前路径组件对应的inode
+    int err; // 错误码
+    unsigned int lookup_flags = nd->flags; // 查找标志
 
-	inode = nd->path.dentry->d_inode;
-	if (nd->depth)
-		lookup_flags = LOOKUP_FOLLOW | (nd->flags & LOOKUP_CONTINUE);
+    // 跳过所有前导的 '/'
+    while (*name == '/')
+        name++;
+    // 如果路径名为空，则返回重新验证标记
+    if (!*name)
+        goto return_reval;
 
-	/* At this point we know we have a real path component. */
-	for(;;) {
-		unsigned long hash;
-		struct qstr this;
-		unsigned int c;
+    inode = nd->path.dentry->d_inode; // 获取当前路径组件的inode
+    if (nd->depth)
+        lookup_flags = LOOKUP_FOLLOW | (nd->flags & LOOKUP_CONTINUE);
 
-		nd->flags |= LOOKUP_CONTINUE;
-		err = exec_permission(inode);
- 		if (err)
-			break;
+    // 处理路径组件
+    for(;;) {
+        unsigned long hash; // 用于存储路径组件的哈希值
+        struct qstr this; // 用于存储当前路径组件的信息
+        unsigned int c; // 当前字符
 
-		this.name = name;
-		c = *(const unsigned char *)name;
+        nd->flags |= LOOKUP_CONTINUE;
+        err = exec_permission(inode); // 检查执行权限
+        if (err)
+            break;
 
-		hash = init_name_hash();
-		do {
-			name++;
-			hash = partial_name_hash(c, hash);
-			c = *(const unsigned char *)name;
-		} while (c && (c != '/'));
-		this.len = name - (const char *) this.name;
-		this.hash = end_name_hash(hash);
+        this.name = name; // 初始化当前路径组件的名称
+        c = *(const unsigned char *)name;
 
-		/* remove trailing slashes? */
-		if (!c)
-			goto last_component;
-		while (*++name == '/');
-		if (!*name)
-			goto last_with_slashes;
+        hash = init_name_hash(); // 初始化哈希值
+        do {
+            name++;
+            hash = partial_name_hash(c, hash);
+            c = *(const unsigned char *)name;
+        } while (c && (c != '/')); // 计算路径组件的哈希值
+        this.len = name - (const char *) this.name; // 计算路径组件的长度
+        this.hash = end_name_hash(hash); // 结束哈希值计算
 
-		/*
-		 * "." and ".." are special - ".." especially so because it has
-		 * to be able to know about the current root directory and
-		 * parent relationships.
-		 */
-		if (this.name[0] == '.') switch (this.len) {
-			default:
-				break;
-			case 2:	
-				if (this.name[1] != '.')
-					break;
-				follow_dotdot(nd);
-				inode = nd->path.dentry->d_inode;
-				/* fallthrough */
-			case 1:
-				continue;
-		}
-		/* This does the actual lookups.. */
-		err = do_lookup(nd, &this, &next);
-		if (err)
-			break;
+        // 如果没有尾随的斜杠，则处理最后一个组件
+        if (!c)
+            goto last_component;
+        while (*++name == '/');
+        if (!*name)
+            goto last_with_slashes;
 
-		err = -ENOENT;
-		inode = next.dentry->d_inode;
-		if (!inode)
-			goto out_dput;
+        // 特殊处理 "." 和 ".."
+        if (this.name[0] == '.') switch (this.len) {
+            default:
+                break;
+            case 2:    
+                if (this.name[1] != '.')
+                    break;
+                follow_dotdot(nd); // 处理 ".."
+                inode = nd->path.dentry->d_inode;
+                // 继续处理
+            case 1:
+                continue; // 处理 "."
+        }
 
-		if (inode->i_op->follow_link) {
-			err = do_follow_link(&next, nd);
-			if (err)
-				goto return_err;
-			err = -ENOENT;
-			inode = nd->path.dentry->d_inode;
-			if (!inode)
-				break;
-		} else
-			path_to_nameidata(&next, nd);
-		err = -ENOTDIR; 
-		if (!inode->i_op->lookup)
-			break;
-		continue;
-		/* here ends the main loop */
+        // 实际查找路径组件
+        err = do_lookup(nd, &this, &next);
+        if (err)
+            break;
+
+        err = -ENOENT;
+        inode = next.dentry->d_inode;
+        if (!inode)
+            goto out_dput;
+
+        if (inode->i_op->follow_link) { // 处理符号链接
+            err = do_follow_link(&next, nd);
+            if (err)
+                goto return_err;
+            err = -ENOENT;
+            inode = nd->path.dentry->d_inode;
+            if (!inode)
+                break;
+        } else
+            path_to_nameidata(&next, nd);
+        err = -ENOTDIR; 
+        if (!inode->i_op->lookup)
+            break;
+        continue;
 
 last_with_slashes:
-		lookup_flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
+        lookup_flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
 last_component:
-		/* Clear LOOKUP_CONTINUE iff it was previously unset */
-		nd->flags &= lookup_flags | ~LOOKUP_CONTINUE;
-		if (lookup_flags & LOOKUP_PARENT)
-			goto lookup_parent;
-		if (this.name[0] == '.') switch (this.len) {
-			default:
-				break;
-			case 2:	
-				if (this.name[1] != '.')
-					break;
-				follow_dotdot(nd);
-				inode = nd->path.dentry->d_inode;
-				/* fallthrough */
-			case 1:
-				goto return_reval;
-		}
-		err = do_lookup(nd, &this, &next);
-		if (err)
-			break;
-		inode = next.dentry->d_inode;
-		if (follow_on_final(inode, lookup_flags)) {
-			err = do_follow_link(&next, nd);
-			if (err)
-				goto return_err;
-			inode = nd->path.dentry->d_inode;
-		} else
-			path_to_nameidata(&next, nd);
-		err = -ENOENT;
-		if (!inode)
-			break;
-		if (lookup_flags & LOOKUP_DIRECTORY) {
-			err = -ENOTDIR; 
-			if (!inode->i_op->lookup)
-				break;
-		}
-		goto return_base;
+        // 如果之前未设置LOOKUP_CONTINUE标志，则清除它
+        nd->flags &= lookup_flags | ~LOOKUP_CONTINUE;
+        if (lookup_flags & LOOKUP_PARENT)
+            goto lookup_parent;
+        if (this.name[0] == '.') switch (this.len) {
+            default:
+                break;
+            case 2:    
+                if (this.name[1] != '.')
+                    break;
+                follow_dotdot(nd); // 处理 ".."
+                inode = nd->path.dentry->d_inode;
+                // 继续处理
+            case 1:
+                goto return_reval;
+        }
+        err = do_lookup(nd, &this, &next); // 查找路径组件
+        if (err)
+            break;
+        inode = next.dentry->d_inode;
+        if (follow_on_final(inode, lookup_flags)) { // 处理符号链接
+            err = do_follow_link(&next, nd);
+            if (err)
+                goto return_err;
+            inode = nd->path.dentry->d_inode;
+        } else
+            path_to_nameidata(&next, nd);
+        err = -ENOENT;
+        if (!inode)
+            break;
+        if (lookup_flags & LOOKUP_DIRECTORY) {
+            err = -ENOTDIR; 
+            if (!inode->i_op->lookup)
+                break;
+        }
+        goto return_base;
 lookup_parent:
-		nd->last = this;
-		nd->last_type = LAST_NORM;
-		if (this.name[0] != '.')
-			goto return_base;
-		if (this.len == 1)
-			nd->last_type = LAST_DOT;
-		else if (this.len == 2 && this.name[1] == '.')
-			nd->last_type = LAST_DOTDOT;
-		else
-			goto return_base;
+        nd->last = this; // 存储最后一个路径组件
+        nd->last_type = LAST_NORM;
+        if (this.name[0] != '.')
+            goto return_base;
+        if (this.len == 1)
+            nd->last_type = LAST_DOT;
+        else if (this.len == 2 && this.name[1] == '.')
+            nd->last_type = LAST_DOTDOT;
+        else
+            goto return_base;
 return_reval:
-		/*
-		 * We bypassed the ordinary revalidation routines.
-		 * We may need to check the cached dentry for staleness.
-		 */
-		if (nd->path.dentry && nd->path.dentry->d_sb &&
-		    (nd->path.dentry->d_sb->s_type->fs_flags & FS_REVAL_DOT)) {
-			err = -ESTALE;
-			/* Note: we do not d_invalidate() */
-			if (!nd->path.dentry->d_op->d_revalidate(
-					nd->path.dentry, nd))
-				break;
-		}
+        // 重新验证缓存的目录项是否过期
+        if (nd->path.dentry && nd->path.dentry->d_sb &&
+            (nd->path.dentry->d_sb->s_type->fs_flags & FS_REVAL_DOT)) {
+            err = -ESTALE;
+            // 注意：我们不调用d_invalidate()
+            if (!nd->path.dentry->d_op->d_revalidate(
+                    nd->path.dentry, nd))
+                break;
+        }
 return_base:
-		return 0;
+        return 0;
 out_dput:
-		path_put_conditional(&next, nd);
-		break;
-	}
-	path_put(&nd->path);
+        path_put_conditional(&next, nd); // 释放路径
+        break;
+    }
+    path_put(&nd->path); // 释放路径
 return_err:
-	return err;
+    return err;
 }
+
 
 static int path_walk(const char *name, struct nameidata *nd)
 {
@@ -982,9 +1020,9 @@ static int path_walk(const char *name, struct nameidata *nd)
 	current->total_link_count = 0;
 
 	/* make sure the stuff we saved doesn't go away */
-	path_get(&save);
+	path_get(&save);//将查找的当前路径放入，获取其对应的dirent项与vfsmnt
 
-	result = link_path_walk(name, nd);
+	result = link_path_walk(name, nd);//真正的路径查找函数
 	if (result == -ESTALE) {
 		/* nd->path had been dropped */
 		current->total_link_count = 0;
@@ -1001,70 +1039,81 @@ static int path_walk(const char *name, struct nameidata *nd)
 
 static int path_init(int dfd, const char *name, unsigned int flags, struct nameidata *nd)
 {
-	int retval = 0;
-	int fput_needed;
-	struct file *file;
+    int retval = 0; // 函数返回值，初始化为0（成功）
+    int fput_needed; // 指示是否需要释放文件指针的变量
+    struct file *file; // 文件结构的指针
 
-	nd->last_type = LAST_ROOT; /* if there are only slashes... */
-	nd->flags = flags;
-	nd->depth = 0;
-	nd->root.mnt = NULL;
+    nd->last_type = LAST_ROOT; // 如果只有斜杠，初始化 last_type 为 LAST_ROOT
+    nd->flags = flags; // 设置 nameidata 结构的标志
+    nd->depth = 0; // 初始化深度为0
+    nd->root.mnt = NULL; // 初始化根挂载点为 NULL
 
-	if (*name=='/') {
-		set_root(nd);
-		nd->path = nd->root;
-		path_get(&nd->root);
-	} else if (dfd == AT_FDCWD) {
-		struct fs_struct *fs = current->fs;
-		read_lock(&fs->lock);
-		nd->path = fs->pwd;
-		path_get(&fs->pwd);
-		read_unlock(&fs->lock);
-	} else {
-		struct dentry *dentry;
+    // 如果名称以 '/' 开头，使用根目录
+    if (*name == '/') {
+        set_root(nd); // 在 nameidata 结构中设置根目录
+        nd->path = nd->root; // 将当前路径设置为根路径
+        path_get(&nd->root); // 增加根路径的引用计数
+    } else if (dfd == AT_FDCWD) { // 如果 dfd 是 AT_FDCWD（当前工作目录）
+        struct fs_struct *fs = current->fs; // 获取当前进程的文件系统结构
+        read_lock(&fs->lock); // 获取读锁
+        nd->path = fs->pwd; // 将当前路径设置为当前工作目录
+        path_get(&fs->pwd); // 增加当前工作目录的引用计数
+        read_unlock(&fs->lock); // 释放读锁
+    } else { // 否则，使用 dfd 指定的目录文件描述符
+        struct dentry *dentry;
 
-		file = fget_light(dfd, &fput_needed);
-		retval = -EBADF;
-		if (!file)
-			goto out_fail;
+        file = fget_light(dfd, &fput_needed); // 获取文件结构
+        retval = -EBADF; // 设置默认错误返回值为 -EBADF（错误的文件描述符）
+        if (!file) // 如果获取文件失败
+            goto out_fail;
 
-		dentry = file->f_path.dentry;
+        dentry = file->f_path.dentry; // 获取文件路径的目录项
 
-		retval = -ENOTDIR;
-		if (!S_ISDIR(dentry->d_inode->i_mode))
-			goto fput_fail;
+        retval = -ENOTDIR; // 设置默认错误返回值为 -ENOTDIR（不是目录）
+        if (!S_ISDIR(dentry->d_inode->i_mode)) // 如果不是目录
+            goto fput_fail;
 
-		retval = file_permission(file, MAY_EXEC);
-		if (retval)
-			goto fput_fail;
+        retval = file_permission(file, MAY_EXEC); // 检查文件的执行权限
+        if (retval) // 如果没有执行权限
+            goto fput_fail;
 
-		nd->path = file->f_path;
-		path_get(&file->f_path);
+        nd->path = file->f_path; // 设置当前路径为文件路径
+        path_get(&file->f_path); // 增加文件路径的引用计数
 
-		fput_light(file, fput_needed);
-	}
-	return 0;
+        fput_light(file, fput_needed); // 释放文件指针
+    }
+    return 0; // 成功返回0
 
 fput_fail:
-	fput_light(file, fput_needed);
+    fput_light(file, fput_needed); // 释放文件指针
 out_fail:
-	return retval;
+    return retval; // 返回错误码
 }
+
 
 /* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
 static int do_path_lookup(int dfd, const char *name,
 				unsigned int flags, struct nameidata *nd)
 {
+	// 初始化路径查找
 	int retval = path_init(dfd, name, flags, nd);
+
+	// 如果初始化成功，执行实际的路径遍历
 	if (!retval)
 		retval = path_walk(name, nd);
+
+	// 如果查找成功并且启用了审计功能，审计结果的inode
 	if (unlikely(!retval && !audit_dummy_context() && nd->path.dentry &&
 				nd->path.dentry->d_inode))
 		audit_inode(name, nd->path.dentry);
+
+	// 如果nd中有根路径，释放相关资源
 	if (nd->root.mnt) {
 		path_put(&nd->root);
 		nd->root.mnt = NULL;
 	}
+
+	// 返回查找结果
 	return retval;
 }
 

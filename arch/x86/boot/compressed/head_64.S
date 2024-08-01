@@ -39,11 +39,11 @@
 ENTRY(startup_32)
 	cld
 	/*
-	 * Test KEEP_SEGMENTS flag to see if the bootloader is asking
+	 * 比较 KEEP_SEGMENTS flag to see if the bootloader is asking
 	 * us to not reload segments
 	 */
-	testb $(1<<6), BP_loadflags(%esi)
-	jnz 1f
+	testb $(1<<6), BP_loadflags(%esi)	# 检查 BP_loadflags 结构体中的第 6 位是否被设置
+	jnz 1f								# 如果第 6 位被设置（即标志位不为零），跳转到标签 1
 
 	cli
 	movl	$(__KERNEL_DS), %eax
@@ -106,12 +106,12 @@ ENTRY(startup_32)
 	movl	%eax, gdt+2(%ebp)
 	lgdt	gdt(%ebp)
 
-	/* Enable PAE mode */
+	/* PAE 位使能，启用物理地址扩展模式*/
 	movl	$(X86_CR4_PAE), %eax
 	movl	%eax, %cr4
 
  /*
-  * Build early 4G boot pagetable
+  * Build early 4G boot pagetable构建4GB的的页表
   */
 	/* Initialize Page tables to 0 */
 	leal	pgtable(%ebx), %edi
@@ -155,28 +155,26 @@ ENTRY(startup_32)
 	wrmsr
 
 	/*
-	 * Setup for the jump to 64bit mode
-	 *
+	 * 跳转到 64 位模式前的设置
 	 * When the jump is performend we will be in long mode but
-	 * in 32bit compatibility mode with EFER.LME = 1, CS.L = 0, CS.D = 1
-	 * (and in turn EFER.LMA = 1).	To jump into 64bit mode we use
-	 * the new gdt/idt that has __KERNEL_CS with CS.L = 1.
-	 * We place all of the values on our mini stack so lret can
-	 * used to perform that far jump.
+	 * 在 32 位兼容模式下 EFER.LME = 1, CS.L = 0, CS.D = 1
+	 * (and in turn EFER.LMA = 1).	要跳转到 64 位模式，我们使用
+	 * 新的idt/gdt that has __KERNEL_CS with CS.L = 1.
+	 * 我们将所有值放在迷你堆栈上，以便 lret 可以用于执行那个远跳
 	 */
-	pushl	$__KERNEL_CS
-	leal	startup_64(%ebp), %eax
-	pushl	%eax
+	pushl	$__KERNEL_CS 				#将内核代码段选择子(__KERNEL_CS)压入栈中
+	leal	startup_64(%ebp), %eax 		#将标号 startup_64 的地址加载到 %eax 寄存器
+	pushl	%eax 						#将 %eax 寄存器的值（即 startup_64 的地址）压入栈中
 
-	/* Enter paged protected Mode, activating Long Mode */
-	movl	$(X86_CR0_PG | X86_CR0_PE), %eax /* Enable Paging and Protected mode */
+	/* 进入分页保护模式，激活长模式 */
+	movl	$(X86_CR0_PG | X86_CR0_PE), %eax /* # 将 CR0 寄存器的值设置为启用分页 (PG) 和保护模式 (PE) */
 	movl	%eax, %cr0
 
-	/* Jump from 32bit compatibility mode into 64bit mode. */
+	/* 从 32 位兼容模式跳转到 64 位模式 */
 	lret
 ENDPROC(startup_32)
 
-no_longmode:
+no_longmode:#错误处理函数
 	/* This isn't an x86-64 CPU so hang */
 1:
 	hlt
@@ -281,6 +279,7 @@ relocated:
 
 /*
  * Do the decompression, and jump to the new kernel..
+ * 解压内核映像,并跳转到内核执行
  */
 	pushq	%rsi			/* Save the real mode argument */
 	movq	%rsi, %rdi		/* real mode address */

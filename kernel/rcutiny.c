@@ -278,5 +278,5 @@ EXPORT_SYMBOL_GPL(rcu_barrier_sched);
 
 void __init rcu_init(void)
 {
-	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);
+	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);//开启软中断
 }

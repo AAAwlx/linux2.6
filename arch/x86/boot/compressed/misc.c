@@ -303,27 +303,35 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 				  unsigned long input_len,
 				  unsigned char *output)
 {
+	// 将 real_mode 指针赋值给全局变量 real_mode
 	real_mode = rmode;
 
+	// 检查 real_mode 的标志位，如果设置了 QUIET_FLAG，则将 quiet 变量设置为 1
 	if (real_mode->hdr.loadflags & QUIET_FLAG)
 		quiet = 1;
 
+	// 根据原始视频模式设置视频内存的起始地址和端口
 	if (real_mode->screen_info.orig_video_mode == 7) {
-		vidmem = (char *) 0xb0000;
-		vidport = 0x3b4;
+		vidmem = (char *) 0xb0000;   // 颜色文本模式
+		vidport = 0x3b4;            // 颜色文本模式的控制端口
 	} else {
-		vidmem = (char *) 0xb8000;
-		vidport = 0x3d4;
+		vidmem = (char *) 0xb8000;   // 彩色文本模式
+		vidport = 0x3d4;            // 彩色文本模式的控制端口
 	}
 
+	// 从 real_mode 中获取屏幕的行数和列数
 	lines = real_mode->screen_info.orig_video_lines;
 	cols = real_mode->screen_info.orig_video_cols;
 
-	free_mem_ptr     = heap;	/* Heap */
-	free_mem_end_ptr = heap + BOOT_HEAP_SIZE;
+	// 设置堆的起始位置和结束位置
+	free_mem_ptr     = heap;         // 堆的起始位置
+	free_mem_end_ptr = heap + BOOT_HEAP_SIZE; // 堆的结束位置
 
+	// 检查输出地址是否按要求对齐
 	if ((unsigned long)output & (MIN_KERNEL_ALIGN - 1))
 		error("Destination address inappropriately aligned");
+
+	// 检查堆是否超出了地址范围
 #ifdef CONFIG_X86_64
 	if (heap > 0x3fffffffffffUL)
 		error("Destination address too large");
@@ -331,16 +339,26 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 	if (heap > ((-__PAGE_OFFSET-(512<<20)-1) & 0x7fffffff))
 		error("Destination address too large");
 #endif
+
+	// 检查输出地址是否正确
 #ifndef CONFIG_RELOCATABLE
 	if ((unsigned long)output != LOAD_PHYSICAL_ADDR)
 		error("Wrong destination address");
 #endif
 
+	// 如果 quiet 标志未设置，则打印解压缩进度
 	if (!quiet)
 		putstr("\nDecompressing Linux... ");
+
+	// 调用 decompress 函数解压缩内核映像
 	decompress(input_data, input_len, NULL, NULL, output, NULL, error);
+
+	// 解析解压缩后的 ELF 格式内核映像
 	parse_elf(output);
+
+	// 如果 quiet 标志未设置，则打印完成消息
 	if (!quiet)
 		putstr("done.\nBooting the kernel.\n");
+
 	return;
 }

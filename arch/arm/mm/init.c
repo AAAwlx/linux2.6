@@ -283,26 +283,36 @@ static void __init bootmem_init_node(int node, struct meminfo *mi,
 			     boot_pages << PAGE_SHIFT, BOOTMEM_DEFAULT);
 }
 
+// 在内核初始化期间预留初始RAM盘（initrd）的内存。
 static void __init bootmem_reserve_initrd(int node)
 {
 #ifdef CONFIG_BLK_DEV_INITRD
-	pg_data_t *pgdat = NODE_DATA(node);
-	int res;
+    // 如果启用了CONFIG_BLK_DEV_INITRD配置选项
 
-	res = reserve_bootmem_node(pgdat, phys_initrd_start,
-			     phys_initrd_size, BOOTMEM_EXCLUSIVE);
+    pg_data_t *pgdat = NODE_DATA(node);
+    // 获取节点的数据结构（pgdat），它包含了该节点的内存管理信息
 
-	if (res == 0) {
-		initrd_start = __phys_to_virt(phys_initrd_start);
-		initrd_end = initrd_start + phys_initrd_size;
-	} else {
-		printk(KERN_ERR
-			"INITRD: 0x%08lx+0x%08lx overlaps in-use "
-			"memory region - disabling initrd\n",
-			phys_initrd_start, phys_initrd_size);
-	}
+    int res;
+
+    // 预留初始RAM盘的内存区域，BOOTMEM_EXCLUSIVE标志表示该区域是独占的
+    res = reserve_bootmem_node(pgdat, phys_initrd_start,
+                               phys_initrd_size, BOOTMEM_EXCLUSIVE);
+
+    if (res == 0) {
+        // 如果预留成功，将物理地址转换为虚拟地址
+        initrd_start = __phys_to_virt(phys_initrd_start);
+        // 计算初始RAM盘的结束地址
+        initrd_end = initrd_start + phys_initrd_size;
+    } else {
+        // 如果预留失败，打印错误消息并禁用初始RAM盘
+        printk(KERN_ERR
+               "INITRD: 0x%08lx+0x%08lx overlaps in-use "
+               "memory region - disabling initrd\n",
+               phys_initrd_start, phys_initrd_size);
+    }
 #endif
 }
+
 
 static void __init bootmem_free_node(int node, struct meminfo *mi)
 {

@@ -1147,85 +1147,98 @@ error:
 
 EXPORT_SYMBOL_GPL(fat_alloc_new_dir);
 
+/*
+ * 向目录添加新的目录项。
+ * 
+ * 参数：
+ * dir - 目录的 inode
+ * slots - 目录项的数据缓冲区
+ * nr_slots - 需要的目录项数量
+ * nr_cluster - 分配的簇数量
+ * de - 返回的目录项指针
+ * bh - 返回的缓冲头指针
+ * i_pos - 返回的目录项位置
+ *
+ * 返回值：
+ * 成功时返回第一个簇号，失败时返回错误代码。
+ */
 static int fat_add_new_entries(struct inode *dir, void *slots, int nr_slots,
-			       int *nr_cluster, struct msdos_dir_entry **de,
-			       struct buffer_head **bh, loff_t *i_pos)
+                               int *nr_cluster, struct msdos_dir_entry **de,
+                               struct buffer_head **bh, loff_t *i_pos)
 {
-	struct super_block *sb = dir->i_sb;
-	struct msdos_sb_info *sbi = MSDOS_SB(sb);
-	struct buffer_head *bhs[MAX_BUF_PER_PAGE];
-	sector_t blknr, start_blknr, last_blknr;
-	unsigned long size, copy;
-	int err, i, n, offset, cluster[2];
+    struct super_block *sb = dir->i_sb;
+    struct msdos_sb_info *sbi = MSDOS_SB(sb);
+    struct buffer_head *bhs[MAX_BUF_PER_PAGE];
+    sector_t blknr, start_blknr, last_blknr;
+    unsigned long size, copy;
+    int err, i, n, offset, cluster[2];
 
-	/*
-	 * The minimum cluster size is 512bytes, and maximum entry
-	 * size is 32*slots (672bytes).  So, iff the cluster size is
-	 * 512bytes, we may need two clusters.
-	 */
-	size = nr_slots * sizeof(struct msdos_dir_entry);
-	*nr_cluster = (size + (sbi->cluster_size - 1)) >> sbi->cluster_bits;
-	BUG_ON(*nr_cluster > 2);
+    /*
+     * 最小簇大小为 512 字节，最大目录项大小为 32 * slots（672 字节）。
+     * 因此，如果簇大小为 512 字节，我们可能需要两个簇。
+     */
+    size = nr_slots * sizeof(struct msdos_dir_entry);
+    *nr_cluster = (size + (sbi->cluster_size - 1)) >> sbi->cluster_bits;
+    BUG_ON(*nr_cluster > 2);
 
-	err = fat_alloc_clusters(dir, cluster, *nr_cluster);
-	if (err)
-		goto error;
+    err = fat_alloc_clusters(dir, cluster, *nr_cluster);
+    if (err)
+        goto error;
 
-	/*
-	 * First stage: Fill the directory entry.  NOTE: This cluster
-	 * is not referenced from any inode yet, so updates order is
-	 * not important.
-	 */
-	i = n = copy = 0;
-	do {
-		start_blknr = blknr = fat_clus_to_blknr(sbi, cluster[i]);
-		last_blknr = start_blknr + sbi->sec_per_clus;
-		while (blknr < last_blknr) {
-			bhs[n] = sb_getblk(sb, blknr);
-			if (!bhs[n]) {
-				err = -ENOMEM;
-				goto error_nomem;
-			}
+    /*
+     * 第一步：填充目录项。注意：这个簇还没有被任何 inode 引用，因此更新顺序不重要。
+     */
+    i = n = copy = 0;
+    do {
+        start_blknr = blknr = fat_clus_to_blknr(sbi, cluster[i]);
+        last_blknr = start_blknr + sbi->sec_per_clus;
+        while (blknr < last_blknr) {
+            bhs[n] = sb_getblk(sb, blknr);
+            if (!bhs[n]) {
+                err = -ENOMEM;
+                goto error_nomem;
+            }
 
-			/* fill the directory entry */
-			copy = min(size, sb->s_blocksize);
-			memcpy(bhs[n]->b_data, slots, copy);
-			slots += copy;
-			size -= copy;
-			set_buffer_uptodate(bhs[n]);
-			mark_buffer_dirty_inode(bhs[n], dir);
-			if (!size)
-				break;
-			n++;
-			blknr++;
-		}
-	} while (++i < *nr_cluster);
+            /* 填充目录项 */
+            copy = min(size, sb->s_blocksize);
+            memcpy(bhs[n]->b_data, slots, copy);
+            slots += copy;
+            size -= copy;
+            set_buffer_uptodate(bhs[n]);
+            mark_buffer_dirty_inode(bhs[n], dir);
+            if (!size)
+                break;
+            n++;
+            blknr++;
+        }
+    } while (++i < *nr_cluster);
 
-	memset(bhs[n]->b_data + copy, 0, sb->s_blocksize - copy);
-	offset = copy - sizeof(struct msdos_dir_entry);
-	get_bh(bhs[n]);
-	*bh = bhs[n];
-	*de = (struct msdos_dir_entry *)((*bh)->b_data + offset);
-	*i_pos = fat_make_i_pos(sb, *bh, *de);
+    memset(bhs[n]->b_data + copy, 0, sb->s_blocksize - copy);
+    offset = copy - sizeof(struct msdos_dir_entry);
+    get_bh(bhs[n]);
+    *bh = bhs[n];
+    *de = (struct msdos_dir_entry *)((*bh)->b_data + offset);
+    *i_pos = fat_make_i_pos(sb, *bh, *de);
 
-	/* Second stage: clear the rest of cluster, and write outs */
-	err = fat_zeroed_cluster(dir, start_blknr, ++n, bhs, MAX_BUF_PER_PAGE);
-	if (err)
-		goto error_free;
+    /* 第二步：清除簇的剩余部分，并写入数据 */
+    err = fat_zeroed_cluster(dir, start_blknr, ++n, bhs, MAX_BUF_PER_PAGE);
+    if (err)
+        goto error_free;
 
-	return cluster[0];
+    return cluster[0];
 
 error_free:
-	brelse(*bh);
-	*bh = NULL;
-	n = 0;
+    brelse(*bh);
+    *bh = NULL;
+    n = 0;
 error_nomem:
-	for (i = 0; i < n; i++)
-		bforget(bhs[i]);
-	fat_free_clusters(dir, cluster[0]);
+    for (i = 0; i < n; i++)
+        bforget(bhs[i]);
+    fat_free_clusters(dir, cluster[0]);
 error:
-	return err;
+    return err;
 }
+
 
 int fat_add_entries(struct inode *dir, void *slots, int nr_slots,
 		    struct fat_slot_info *sinfo)
@@ -1318,9 +1331,9 @@ found:
 		int cluster, nr_cluster;
 
 		/*
-		 * Third stage: allocate the cluster for new entries.
-		 * And initialize the cluster with new entries, then
-		 * add the cluster to dir.
+ 		 * 第三阶段：为新条目分配簇。
+		 * 并用新条目初始化集群，然后
+		 * 将集群添加到目录。
 		 */
 		cluster = fat_add_new_entries(dir, slots, nr_slots, &nr_cluster,
 					      &de, &bh, &i_pos);

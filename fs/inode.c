@@ -583,28 +583,38 @@ static void __wait_on_freeing_inode(struct inode *inode);
  * add any additional branch in the common code.
  */
 static struct inode *find_inode(struct super_block *sb,
-				struct hlist_head *head,
-				int (*test)(struct inode *, void *),
-				void *data)
+                                struct hlist_head *head,
+                                int (*test)(struct inode *, void *),
+                                void *data)
 {
-	struct hlist_node *node;
-	struct inode *inode = NULL;
+    struct hlist_node *node;
+    struct inode *inode = NULL;
 
 repeat:
-	hlist_for_each_entry(inode, node, head, i_hash) {
-		if (inode->i_sb != sb)
-			continue;
-		if (!test(inode, data))
-			continue;
-		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)) {
-			__wait_on_freeing_inode(inode);
-			goto repeat;
-		}
-		break;
-	}
-	return node ? inode : NULL;
-}
+    // 遍历哈希链表中的所有 inode 节点
+    hlist_for_each_entry(inode, node, head, i_hash) {
+        // 检查 inode 是否属于指定的超级块
+        if (inode->i_sb != sb)
+            continue;  // 如果不属于指定超级块，则继续遍历下一个 inode
 
+        // 使用提供的测试函数 test 来检查 inode 是否符合条件
+        if (!test(inode, data))
+            continue;  // 如果测试函数返回 false，则继续遍历下一个 inode
+
+        // 检查 inode 的状态是否包含 I_FREEING、I_CLEAR 或 I_WILL_FREE
+        // 这些状态表示 inode 正在被清理或即将被释放
+        if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)) {
+            // 等待 inode 被释放
+            __wait_on_freeing_inode(inode);
+            // 释放后重新遍历链表
+            goto repeat;
+        }
+        // 找到符合条件的 inode，退出遍历
+        break;
+    }
+    // 返回找到的 inode，如果没有找到则返回 NULL
+    return node ? inode : NULL;
+}
 /*
  * find_inode_fast is the fast path version of find_inode, see the comment at
  * iget_locked for details.

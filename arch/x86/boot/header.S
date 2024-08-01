@@ -106,6 +106,7 @@ boot_flag:	.word 0xAA55
 
 	.globl	_start
 _start:
+#以下为一些数据的定义
 		# Explicitly enter this as bytes, or the assembler
 		# tries to generate a 3-byte jump here, which causes
 		# everything else to push off to the wrong offset.
@@ -115,7 +116,7 @@ _start:
 
 	# Part 2 of the header, from the old setup.S
 
-		.ascii	"HdrS"		# header signature
+		.ascii	"HdrS"		# header signature,魔数0x53726448
 		.word	0x020a		# header version number (>= 0x0105)
 					# or else old loadlin-1.5 will fail)
 		.globl realmode_swtch
@@ -285,11 +286,11 @@ start_of_setup:
 	lretw
 6:
 
-# Check signature at end of setup
+# Check signature at end of setup 检查结尾是否是55aa,不是则跳转至错误处理函数setup_bad
 	cmpl	$0x5a5aaa55, setup_sig
 	jne	setup_bad
 
-# Zero the bss
+# Zero the bss 清空bss段
 	movw	$__bss_start, %di
 	movw	$_end+3, %cx
 	xorl	%eax, %eax
@@ -297,7 +298,7 @@ start_of_setup:
 	shrw	$2, %cx
 	rep; stosl
 
-# Jump to C code (should not return)
+# Jump to C code (should not return)跳转至x86/boot/main.c中的main中执行
 	calll	main
 
 # Setup corrupt somehow...

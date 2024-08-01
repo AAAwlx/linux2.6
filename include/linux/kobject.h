@@ -88,13 +88,6 @@ enum kobject_action {
 // 虚拟文件系统中的层级结构，一个kobject对象就对应了sysfs中的一个目录，
 // 而sysfs中的目录结构也体现在各个kobjects之间的父子关系。
 struct kobject {
-<<<<<<< HEAD
-	const char		*name; /* 对应sysfs的目录名 */
-	struct list_head	entry; /*用于连接到所属kset的链表中，用于将kobj挂在kset->list中*/
-	struct kobject		*parent;/*指向 父对象，形成层次结构，在sysfs中表现为父子目录的关系*/
-	struct kset		*kset;/*属于哪个kset表征该kobj所属的kset。kset可以作为parent的“候补”：当注册时，传入的parent为空时，可以让kset来担当。*/
-	struct kobj_type	*ktype;
-=======
 	const char		*name;		/* kobject对象的名字，对应sysfs中的目录名 */
 	struct list_head	entry;		/* 在kset中的链表节点 */
 	/*
@@ -110,7 +103,6 @@ struct kobject {
 	// sd指针指向sysfs_dirent结构体，该结构体在sysfs中表示的就是这个kobject。
 	// 从sysfs文件系统内部看，该结构体是表示kobject结构体的一个inode结构体。
 	// 指向 sysfs 目录项的指针
->>>>>>> ccc/main
 	struct sysfs_dirent	*sd;
 	struct kref		kref;					/* kobject的引用计数，初始值为1 */
 	/* kobject是否初始化，由kobject_init()设置 */

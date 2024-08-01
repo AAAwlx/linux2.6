@@ -1054,6 +1054,7 @@ EXPORT_SYMBOL_GPL(bus_sort_breadthfirst);
 
 int __init buses_init(void)
 {
+	//创建总线类型的 kset
 	bus_kset = kset_create_and_add("bus", &bus_uevent_ops, NULL);
 	if (!bus_kset)
 		return -ENOMEM;

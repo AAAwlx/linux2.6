@@ -740,29 +740,36 @@ core_initcall(e820_mark_nvs_memory);
 /*
  * Find a free area with specified alignment in a specific range.
  */
+// 在系统启动时查找指定大小和对齐方式的可用内存区域
 u64 __init find_e820_area(u64 start, u64 end, u64 size, u64 align)
 {
-	int i;
+    int i;
 
-	for (i = 0; i < e820.nr_map; i++) {
-		struct e820entry *ei = &e820.map[i];
-		u64 addr;
-		u64 ei_start, ei_last;
+    // 遍历内存映射表中的所有条目
+    for (i = 0; i < e820.nr_map; i++) {
+        struct e820entry *ei = &e820.map[i]; // 获取当前内存映射条目
+        u64 addr;
+        u64 ei_start, ei_last;
 
-		if (ei->type != E820_RAM)
-			continue;
+        // 如果当前内存条目不是可用的RAM区域，则跳过
+        if (ei->type != E820_RAM)
+            continue;
 
-		ei_last = ei->addr + ei->size;
-		ei_start = ei->addr;
-		addr = find_early_area(ei_start, ei_last, start, end,
-					 size, align);
+        // 计算当前内存条目的起始地址和结束地址
+        ei_last = ei->addr + ei->size;
+        ei_start = ei->addr;
 
-		if (addr != -1ULL)
-			return addr;
-	}
-	return -1ULL;
+        // 在当前内存条目范围内查找符合要求的内存区域
+        addr = find_early_area(ei_start, ei_last, start, end,
+                               size, align);
+
+        // 如果找到符合要求的内存区域，则返回其起始地址
+        if (addr != -1ULL)
+            return addr;
+    }
+    // 如果未找到符合要求的内存区域，则返回-1ULL表示失败
+    return -1ULL;
 }
-
 u64 __init find_fw_memmap_area(u64 start, u64 end, u64 size, u64 align)
 {
 	return find_e820_area(start, end, size, align);

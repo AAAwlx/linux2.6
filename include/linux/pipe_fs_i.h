@@ -43,19 +43,20 @@ struct pipe_buffer {
  *	@bufs: the circular array of pipe buffers
  **/
 struct pipe_inode_info {
-	wait_queue_head_t wait;
-	unsigned int nrbufs, curbuf;
-	struct page *tmp_page;
-	unsigned int readers;
-	unsigned int writers;
-	unsigned int waiting_writers;
-	unsigned int r_counter;
-	unsigned int w_counter;
-	struct fasync_struct *fasync_readers;
-	struct fasync_struct *fasync_writers;
-	struct inode *inode;
-	struct pipe_buffer bufs[PIPE_BUFFERS];
+	wait_queue_head_t wait;               /* 等待队列头，用于管道的读写进程的同步 */
+	unsigned int nrbufs, curbuf;          /* 管道缓冲区的数量以及当前缓冲区的索引 */
+	struct page *tmp_page;                /* 临时页面，用于存储管道的数据 */
+	unsigned int readers;                 /* 当前管道的读取进程数量 */
+	unsigned int writers;                 /* 当前管道的写入进程数量 */
+	unsigned int waiting_writers;         /* 当前正在等待写入的进程数量 */
+	unsigned int r_counter;               /* 读取操作的计数器 */
+	unsigned int w_counter;               /* 写入操作的计数器 */
+	struct fasync_struct *fasync_readers; /* 异步读操作的通知结构体 */
+	struct fasync_struct *fasync_writers;/* 异步写操作的通知结构体 */
+	struct inode *inode;                 /* 关联的 inode 结构体，表示文件系统中的管道文件 */
+	struct pipe_buffer bufs[PIPE_BUFFERS]; /* 管道的缓冲区数组，用于存储数据 */
 };
+
 
 /*
  * Note on the nesting of these functions:

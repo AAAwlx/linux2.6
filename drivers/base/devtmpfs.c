@@ -364,28 +364,37 @@ int devtmpfs_mount(const char *mntdir)
  * Create devtmpfs instance, driver-core devices will add their device
  * nodes here.
  */
+/*
+ * Create devtmpfs instance, driver-core devices will add their device
+ * nodes here.
+ */
 int __init devtmpfs_init(void)
 {
-	int err;
-	struct vfsmount *mnt;
-	char options[] = "mode=0755";
+    int err;
+    struct vfsmount *mnt;
+    char options[] = "mode=0755";
 
-	err = register_filesystem(&dev_fs_type);
-	if (err) {
-		printk(KERN_ERR "devtmpfs: unable to register devtmpfs "
-		       "type %i\n", err);
-		return err;
-	}
+    // 注册 devtmpfs 文件系统类型
+    err = register_filesystem(&dev_fs_type);
+    if (err) {
+        // 如果注册失败，打印错误信息并返回错误码
+        printk(KERN_ERR "devtmpfs: unable to register devtmpfs "
+               "type %i\n", err);
+        return err;
+    }
 
-	mnt = kern_mount_data(&dev_fs_type, options);
-	if (IS_ERR(mnt)) {
-		err = PTR_ERR(mnt);
-		printk(KERN_ERR "devtmpfs: unable to create devtmpfs %i\n", err);
-		unregister_filesystem(&dev_fs_type);
-		return err;
-	}
-	dev_mnt = mnt;
+    // 创建 devtmpfs 文件系统挂载点，并应用指定的选项
+    mnt = kern_mount_data(&dev_fs_type, options);
+    if (IS_ERR(mnt)) {
+        // 如果创建挂载点失败，获取错误码并打印错误信息
+        err = PTR_ERR(mnt);
+        printk(KERN_ERR "devtmpfs: unable to create devtmpfs %i\n", err);
+        unregister_filesystem(&dev_fs_type); // 注销文件系统类型
+        return err;
+    }
+    dev_mnt = mnt; // 保存挂载点的指针
 
-	printk(KERN_INFO "devtmpfs: initialized\n");
-	return 0;
+    // 打印初始化成功的消息
+    printk(KERN_INFO "devtmpfs: initialized\n");
+    return 0; // 返回成功状态
 }

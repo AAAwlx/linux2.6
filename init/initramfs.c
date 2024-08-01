@@ -446,9 +446,10 @@ static char * __init unpack_to_rootfs(char *buf, unsigned len)
     message = NULL;
 
     // 处理压缩数据
-    while (!message && len) {
+    while (!message && len) {//如果在范围内且没有报错
         loff_t saved_offset = this_header;
 
+		/*解压cpio格式*/
         // 如果数据以'0'开头且this_header为4的倍数，重置状态为Start
         if (*buf == '0' && !(this_header & 3)) {
             state = Start;
@@ -466,6 +467,7 @@ static char * __init unpack_to_rootfs(char *buf, unsigned len)
             continue;
         }
 
+		/*其他格式*/
         // 重置this_header，根据数据调用相应的解压缩方法
         this_header = 0;
         decompress = decompress_method(buf, len, &compress_name);//寻找格式对应的解压函数

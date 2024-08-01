@@ -228,7 +228,7 @@ SECTIONS
 	/*
 	 * percpu offsets are zero-based on SMP.  PERCPU_VADDR() changes the
 	 * output PHDR, so the next output section - .init.text - should
-	 * start another segment - init.
+	 * start another segment - init. 
 	 */
 	PERCPU_VADDR(0, :percpu)
 #endif

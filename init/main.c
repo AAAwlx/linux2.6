@@ -650,14 +650,20 @@ asmlinkage void __init start_kernel(void)
 	locking_selftest();
 
 #ifdef CONFIG_BLK_DEV_INITRD
-	if (initrd_start && !initrd_below_start_ok &&
-	    page_to_pfn(virt_to_page((void *)initrd_start)) < min_low_pfn) {
-		printk(KERN_CRIT "initrd overwritten (0x%08lx < 0x%08lx) - "
-		    "disabling it.\n",
-		    page_to_pfn(virt_to_page((void *)initrd_start)),
-		    min_low_pfn);
-		initrd_start = 0;
-	}
+// 如果初始RAM盘（initrd_start）存在并且初始RAM盘不能低于某个起始地址（initrd_below_start_ok为假），
+// 并且初始RAM盘的物理页框号小于最小的低地址页框号（min_low_pfn），则执行以下操作。
+if (initrd_start && !initrd_below_start_ok &&
+    page_to_pfn(virt_to_page((void *)initrd_start)) < min_low_pfn) {
+    
+    // 打印一个严重的内核消息，表示初始RAM盘被覆盖，并禁用它。
+    printk(KERN_CRIT "initrd overwritten (0x%08lx < 0x%08lx) - "
+        "disabling it.\n",
+        page_to_pfn(virt_to_page((void *)initrd_start)),
+        min_low_pfn);
+    
+    // 将initrd_start设置为0，表示禁用初始RAM盘。
+    initrd_start = 0;
+}
 #endif
 	page_cgroup_init();
 	enable_debug_pagealloc();
@@ -725,51 +731,62 @@ static char msgbuf[64];
 static struct boot_trace_call call;
 static struct boot_trace_ret ret;
 
+/**
+ * @brief 执行一个初始化调用
+ * @param fn 初始化调用函数指针
+ * @return 初始化调用函数的返回结果
+ */
 int do_one_initcall(initcall_t fn)
 {
-	int count = preempt_count();
-	ktime_t calltime, delta, rettime;
+    // 保存当前抢占计数
+    int count = preempt_count();
+    ktime_t calltime, delta, rettime;
 
-	if (initcall_debug) {
-		call.caller = task_pid_nr(current);
-		printk("calling  %pF @ %i\n", fn, call.caller);
-		calltime = ktime_get();
-		trace_boot_call(&call, fn);
-		enable_boot_trace();
-	}
+    // 如果启用了初始化调用调试
+    if (initcall_debug) {
+        call.caller = task_pid_nr(current);
+        printk("调用 %pF @ %i\n", fn, call.caller);
+        calltime = ktime_get();  // 获取当前时间
+        trace_boot_call(&call, fn);
+        enable_boot_trace();
+    }
 
-	ret.result = fn();
+    // 调用初始化函数并保存结果
+    ret.result = fn();
 
-	if (initcall_debug) {
-		disable_boot_trace();
-		rettime = ktime_get();
-		delta = ktime_sub(rettime, calltime);
-		ret.duration = (unsigned long long) ktime_to_ns(delta) >> 10;
-		trace_boot_ret(&ret, fn);
-		printk("initcall %pF returned %d after %Ld usecs\n", fn,
-			ret.result, ret.duration);
-	}
+    // 如果启用了初始化调用调试
+    if (initcall_debug) {
+        disable_boot_trace();
+        rettime = ktime_get();  // 获取返回时间
+        delta = ktime_sub(rettime, calltime);  // 计算调用持续时间
+        ret.duration = (unsigned long long) ktime_to_ns(delta) >> 10;  // 转换为微秒
+        trace_boot_ret(&ret, fn);
+        printk("初始化调用 %pF 返回 %d，耗时 %Ld 微秒\n", fn, ret.result, ret.duration);
+    }
 
-	msgbuf[0] = 0;
+    msgbuf[0] = 0;  // 清空消息缓冲区
 
-	if (ret.result && ret.result != -ENODEV && initcall_debug)
-		sprintf(msgbuf, "error code %d ", ret.result);
+    // 如果返回结果为错误码且启用了初始化调用调试
+    if (ret.result && ret.result != -ENODEV && initcall_debug)
+        sprintf(msgbuf, "错误码 %d ", ret.result);
 
-	if (preempt_count() != count) {
-		strlcat(msgbuf, "preemption imbalance ", sizeof(msgbuf));
-		preempt_count() = count;
-	}
-	if (irqs_disabled()) {
-		strlcat(msgbuf, "disabled interrupts ", sizeof(msgbuf));
-		local_irq_enable();
-	}
-	if (msgbuf[0]) {
-		printk("initcall %pF returned with %s\n", fn, msgbuf);
-	}
+    // 检查抢占计数是否匹配
+    if (preempt_count() != count) {
+        strlcat(msgbuf, "抢占不平衡 ", sizeof(msgbuf));
+        preempt_count() = count;
+    }
+    // 检查中断是否被禁用
+    if (irqs_disabled()) {
+        strlcat(msgbuf, "中断已禁用 ", sizeof(msgbuf));
+        local_irq_enable();
+    }
+    // 如果消息缓冲区有内容，打印消息
+    if (msgbuf[0]) {
+        printk("初始化调用 %pF 返回 %s\n", fn, msgbuf);
+    }
 
-	return ret.result;
+    return ret.result;  // 返回初始化函数的结果
 }
-
 
 extern initcall_t __initcall_start[], __initcall_end[], __early_initcall_end[];
 

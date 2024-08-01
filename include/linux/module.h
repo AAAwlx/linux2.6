@@ -60,10 +60,10 @@ struct module_attribute {
 
 struct module_kobject
 {
-	struct kobject kobj;
-	struct module *mod;
-	struct kobject *drivers_dir;
-	struct module_param_attrs *mp;
+	struct kobject kobj;               /* 基本的 kobject 结构体，用于在 sysfs 中管理模块。kobject 是内核对象模型的一部分，用于支持对象和属性的管理。 */
+	struct module *mod;               /* 指向关联模块的指针，用于跟踪哪个模块拥有此 kobject。 */
+	struct kobject *drivers_dir;      /* 指向驱动程序目录的 kobject 指针，该目录用于组织和管理与模块相关的驱动程序信息。 */
+	struct module_param_attrs *mp;    /* 指向模块参数属性的指针，这些属性定义了模块参数的行为和属性。 */
 };
 
 /* These are either module local, or the kernel's dummy ones. */
@@ -235,149 +235,151 @@ enum module_state
 
 struct module
 {
-	enum module_state state;
+	enum module_state state;                      /* 模块的状态（加载中、已加载、卸载中等） */
 
-	/* Member of list of modules */
-	struct list_head list;
+	/* 模块列表中的成员 */
+	struct list_head list;                        /* 用于将模块连接到内核模块链表的列表头 */
 
-	/* Unique handle for this module */
-	char name[MODULE_NAME_LEN];
+	/* 模块的唯一标识符 */
+	char name[MODULE_NAME_LEN];                    /* 模块的名称，长度由 MODULE_NAME_LEN 定义 */
 
-	/* Sysfs stuff. */
-	struct module_kobject mkobj;
-	struct module_attribute *modinfo_attrs;
-	const char *version;
-	const char *srcversion;
-	struct kobject *holders_dir;
+	/* Sysfs 相关内容 */
+	struct module_kobject mkobj;                   /* 模块的 sysfs kobject，用于在 sysfs 中管理模块 */
+	struct module_attribute *modinfo_attrs;        /* 模块信息属性，用于向 sysfs 中添加模块属性 */
+	const char *version;                          /* 模块的版本信息 */
+	const char *srcversion;                       /* 模块的源代码版本信息 */
+	struct kobject *holders_dir;                  /* 指向该模块持有者的 sysfs 目录 */
 
-	/* Exported symbols */
-	const struct kernel_symbol *syms;
-	const unsigned long *crcs;
-	unsigned int num_syms;
+	/* 导出的符号 */
+	const struct kernel_symbol *syms;             /* 导出的内核符号表 */
+	const unsigned long *crcs;                    /* 导出符号的 CRC 校验和 */
+	unsigned int num_syms;                        /* 导出的符号数量 */
 
-	/* Kernel parameters. */
-	struct kernel_param *kp;
-	unsigned int num_kp;
+	/* 内核参数 */
+	struct kernel_param *kp;                      /* 模块的内核参数 */
+	unsigned int num_kp;                          /* 内核参数的数量 */
 
-	/* GPL-only exported symbols. */
-	unsigned int num_gpl_syms;
-	const struct kernel_symbol *gpl_syms;
-	const unsigned long *gpl_crcs;
+	/* 仅 GPL 的导出符号 */
+	unsigned int num_gpl_syms;                    /* 仅 GPL 导出的符号数量 */
+	const struct kernel_symbol *gpl_syms;         /* 仅 GPL 导出的符号表 */
+	const unsigned long *gpl_crcs;                /* 仅 GPL 导出符号的 CRC 校验和 */
 
 #ifdef CONFIG_UNUSED_SYMBOLS
-	/* unused exported symbols. */
-	const struct kernel_symbol *unused_syms;
-	const unsigned long *unused_crcs;
-	unsigned int num_unused_syms;
+	/* 未使用的导出符号 */
+	const struct kernel_symbol *unused_syms;      /* 未使用的导出符号表 */
+	const unsigned long *unused_crcs;             /* 未使用符号的 CRC 校验和 */
+	unsigned int num_unused_syms;                 /* 未使用符号的数量 */
 
-	/* GPL-only, unused exported symbols. */
-	unsigned int num_unused_gpl_syms;
-	const struct kernel_symbol *unused_gpl_syms;
-	const unsigned long *unused_gpl_crcs;
+	/* 仅 GPL 的未使用导出符号 */
+	unsigned int num_unused_gpl_syms;            /* 仅 GPL 未使用符号的数量 */
+	const struct kernel_symbol *unused_gpl_syms; /* 仅 GPL 未使用的导出符号表 */
+	const unsigned long *unused_gpl_crcs;        /* 仅 GPL 未使用符号的 CRC 校验和 */
 #endif
 
-	/* symbols that will be GPL-only in the near future. */
-	const struct kernel_symbol *gpl_future_syms;
-	const unsigned long *gpl_future_crcs;
-	unsigned int num_gpl_future_syms;
+	/* 将来会变为 GPL-only 的符号 */
+	const struct kernel_symbol *gpl_future_syms;  /* 将来会变为 GPL-only 的符号表 */
+	const unsigned long *gpl_future_crcs;         /* 将来会变为 GPL-only 符号的 CRC 校验和 */
+	unsigned int num_gpl_future_syms;             /* 将来会变为 GPL-only 符号的数量 */
 
-	/* Exception table */
-	unsigned int num_exentries;
-	struct exception_table_entry *extable;
+	/* 异常表 */
+	unsigned int num_exentries;                   /* 异常表中条目的数量 */
+	struct exception_table_entry *extable;        /* 异常表 */
 
-	/* Startup function. */
-	int (*init)(void);
+	/* 启动函数 */
+	int (*init)(void);                            /* 模块的初始化函数 */
 
-	/* If this is non-NULL, vfree after init() returns */
-	void *module_init;
+	/* 如果非 NULL，init() 返回后会 vfree 这个指针 */
+	void *module_init;                           /* 模块初始化后需要释放的内存 */
 
-	/* Here is the actual code + data, vfree'd on unload. */
-	void *module_core;
+	/* 实际的代码 + 数据，会在卸载时 vfree */
+	void *module_core;                           /* 模块的核心代码和数据 */
 
-	/* Here are the sizes of the init and core sections */
-	unsigned int init_size, core_size;
+	/* 初始化和核心部分的大小 */
+	unsigned int init_size, core_size;           /* 初始化和核心部分的大小 */
 
-	/* The size of the executable code in each section.  */
-	unsigned int init_text_size, core_text_size;
+	/* 执行代码部分的大小 */
+	unsigned int init_text_size, core_text_size; /* 初始化和核心部分的代码大小 */
 
-	/* Arch-specific module values */
-	struct mod_arch_specific arch;
+	/* 架构特定的模块值 */
+	struct mod_arch_specific arch;               /* 架构特定的模块数据 */
 
-	unsigned int taints;	/* same bits as kernel:tainted */
+	unsigned int taints;                         /* 内核污染标记（类似于内核的 tainted 标志） */
 
 #ifdef CONFIG_GENERIC_BUG
-	/* Support for BUG */
-	unsigned num_bugs;
-	struct list_head bug_list;
-	struct bug_entry *bug_table;
+	/* BUG 支持 */
+	unsigned num_bugs;                           /* 记录 BUG 的数量 */
+	struct list_head bug_list;                   /* BUG 列表头 */
+	struct bug_entry *bug_table;                 /* BUG 表 */
 #endif
 
 #ifdef CONFIG_KALLSYMS
 	/*
-	 * We keep the symbol and string tables for kallsyms.
-	 * The core_* fields below are temporary, loader-only (they
-	 * could really be discarded after module init).
+	 * 用于 kallsyms 的符号和字符串表。
+	 * core_* 字段是临时的，仅用于加载器（可以在模块初始化后丢弃）。
 	 */
-	Elf_Sym *symtab, *core_symtab;
-	unsigned int num_symtab, core_num_syms;
-	char *strtab, *core_strtab;
+	Elf_Sym *symtab, *core_symtab;                /* 符号表和核心符号表 */
+	unsigned int num_symtab, core_num_syms;      /* 符号表的数量 */
+	char *strtab, *core_strtab;                  /* 字符串表和核心字符串表 */
 
-	/* Section attributes */
-	struct module_sect_attrs *sect_attrs;
+	/* 节区属性 */
+	struct module_sect_attrs *sect_attrs;        /* 模块节区属性 */
 
-	/* Notes attributes */
-	struct module_notes_attrs *notes_attrs;
+	/* 注释属性 */
+	struct module_notes_attrs *notes_attrs;      /* 模块注释属性 */
 #endif
 
 #ifdef CONFIG_SMP
-	/* Per-cpu data. */
-	void __percpu *percpu;
-	unsigned int percpu_size;
+	/* 每个 CPU 的数据 */
+	void __percpu *percpu;                       /* 每个 CPU 数据的指针 */
+	unsigned int percpu_size;                   /* 每个 CPU 数据的大小 */
 #endif
 
-	/* The command line arguments (may be mangled).  People like
-	   keeping pointers to this stuff */
-	char *args;
+	/* 命令行参数（可能被篡改） */
+	char *args;                                 /* 模块的命令行参数 */
+
 #ifdef CONFIG_TRACEPOINTS
-	struct tracepoint *tracepoints;
-	unsigned int num_tracepoints;
+	struct tracepoint *tracepoints;             /* 模块的跟踪点 */
+	unsigned int num_tracepoints;               /* 跟踪点的数量 */
 #endif
 
 #ifdef CONFIG_TRACING
-	const char **trace_bprintk_fmt_start;
-	unsigned int num_trace_bprintk_fmt;
+	const char **trace_bprintk_fmt_start;       /* 追踪 printk 格式的开始 */
+	unsigned int num_trace_bprintk_fmt;        /* 追踪 printk 格式的数量 */
 #endif
+
 #ifdef CONFIG_EVENT_TRACING
-	struct ftrace_event_call *trace_events;
-	unsigned int num_trace_events;
+	struct ftrace_event_call *trace_events;     /* 事件跟踪调用 */
+	unsigned int num_trace_events;             /* 事件跟踪的数量 */
 #endif
+
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
-	unsigned long *ftrace_callsites;
-	unsigned int num_ftrace_callsites;
+	unsigned long *ftrace_callsites;            /* ftrace 调用位置 */
+	unsigned int num_ftrace_callsites;         /* ftrace 调用位置的数量 */
 #endif
 
 #ifdef CONFIG_MODULE_UNLOAD
-	/* What modules depend on me? */
-	struct list_head modules_which_use_me;
+	/* 依赖于我的模块 */
+	struct list_head modules_which_use_me;      /* 依赖于此模块的模块列表 */
 
-	/* Who is waiting for us to be unloaded */
-	struct task_struct *waiter;
+	/* 等待我们卸载的任务 */
+	struct task_struct *waiter;                 /* 等待模块卸载的任务 */
 
-	/* Destruction function. */
-	void (*exit)(void);
+	/* 卸载函数 */
+	void (*exit)(void);                        /* 模块的卸载函数 */
 
 	struct module_ref {
-		unsigned int incs;
-		unsigned int decs;
-	} __percpu *refptr;
+		unsigned int incs;                      /* 引用计数增加 */
+		unsigned int decs;                      /* 引用计数减少 */
+	} __percpu *refptr;                         /* 模块的每个 CPU 引用计数 */
 #endif
 
 #ifdef CONFIG_CONSTRUCTORS
-	/* Constructor functions. */
-	ctor_fn_t *ctors;
-	unsigned int num_ctors;
+	/* 构造函数 */
+	ctor_fn_t *ctors;                          /* 构造函数的列表 */
+	unsigned int num_ctors;                    /* 构造函数的数量 */
 #endif
 };
+
 #ifndef MODULE_ARCH_INIT
 #define MODULE_ARCH_INIT {}
 #endif

@@ -145,24 +145,31 @@ void fuse_finish_open(struct inode *inode, struct file *file)
 
 int fuse_open_common(struct inode *inode, struct file *file, bool isdir)
 {
-	struct fuse_conn *fc = get_fuse_conn(inode);
-	int err;
+    // 获取与该 inode 关联的 FUSE 连接结构体
+    struct fuse_conn *fc = get_fuse_conn(inode);
+    int err;
 
-	/* VFS checks this, but only _after_ ->open() */
-	if (file->f_flags & O_DIRECT)
-		return -EINVAL;
+    // 检查文件标志是否包含 O_DIRECT。O_DIRECT 表示直接 I/O，这在 FUSE 文件系统中不被支持。
+    // 如果设置了 O_DIRECT，返回无效参数错误
+    if (file->f_flags & O_DIRECT)
+        return -EINVAL;
 
-	err = generic_file_open(inode, file);
-	if (err)
-		return err;
+    // 调用通用文件打开函数，该函数执行了一些标准的文件打开操作
+    err = generic_file_open(inode, file);
+    if (err)
+        return err; // 如果打开文件过程中出错，则返回错误码
 
-	err = fuse_do_open(fc, get_node_id(inode), file, isdir);
-	if (err)
-		return err;
+    // 调用 FUSE 文件系统特定的打开操作
+    // 这里的 get_node_id(inode) 获取 inode 的唯一标识符，file 是打开的文件结构体，isdir 表示是否是目录
+    err = fuse_do_open(fc, get_node_id(inode), file, isdir);
+    if (err)
+        return err; // 如果 FUSE 文件系统打开操作出错，则返回错误码
 
-	fuse_finish_open(inode, file);
+    // 调用完成文件打开的 FUSE 特定操作
+    fuse_finish_open(inode, file);
 
-	return 0;
+    // 返回 0 表示成功
+    return 0;
 }
 
 static void fuse_prepare_release(struct fuse_file *ff, int flags, int opcode)

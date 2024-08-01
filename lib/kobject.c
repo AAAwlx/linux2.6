@@ -157,54 +157,62 @@ static void kobject_init_internal(struct kobject *kobj)
 
 static int kobject_add_internal(struct kobject *kobj)
 {
-	int error = 0;
-	struct kobject *parent;
+    int error = 0;
+    struct kobject *parent;
 
-	if (!kobj)
-		return -ENOENT;
+    // 检查传入的 kobject 指针是否为空
+    if (!kobj)
+        return -ENOENT; // 返回错误代码：没有这样的条目
 
-	if (!kobj->name || !kobj->name[0]) {
-		WARN(1, "kobject: (%p): attempted to be registered with empty "
-			 "name!\n", kobj);
-		return -EINVAL;
-	}
+    // 检查 kobject 的名称是否为空
+    if (!kobj->name || !kobj->name[0]) {
+        WARN(1, "kobject: (%p): attempted to be registered with empty "
+                "name!\n", kobj); // 警告：kobject 尝试以空名称注册
+        return -EINVAL; // 返回错误代码：无效参数
+    }
 
-	parent = kobject_get(kobj->parent);
+    // 获取 kobject 的父对象，并增加引用计数
+    parent = kobject_get(kobj->parent);
 
-	/* join kset if set, use it as parent if we do not already have one */
-	if (kobj->kset) {
-		if (!parent)
-			parent = kobject_get(&kobj->kset->kobj);
-		kobj_kset_join(kobj);
-		kobj->parent = parent;
-	}
+    /* 如果 kobject 指定了 kset，则将其加入到 kset 中，
+       如果没有父对象，则使用 kset 的 kobject 作为父对象 */
+    if (kobj->kset) {
+        if (!parent)
+            parent = kobject_get(&kobj->kset->kobj); // 使用 kset 的 kobject 作为父对象
+        kobj_kset_join(kobj); // 将 kobject 加入到 kset 中
+        kobj->parent = parent; // 设置 kobject 的父对象
+    }
 
-	pr_debug("kobject: '%s' (%p): %s: parent: '%s', set: '%s'\n",
-		 kobject_name(kobj), kobj, __func__,
-		 parent ? kobject_name(parent) : "<NULL>",
-		 kobj->kset ? kobject_name(&kobj->kset->kobj) : "<NULL>");
+    // 打印调试信息，显示 kobject 的名称、父对象和 kset
+    pr_debug("kobject: '%s' (%p): %s: parent: '%s', set: '%s'\n",
+             kobject_name(kobj), kobj, __func__,
+             parent ? kobject_name(parent) : "<NULL>",
+             kobj->kset ? kobject_name(&kobj->kset->kobj) : "<NULL>");
 
-	error = create_dir(kobj);
-	if (error) {
-		kobj_kset_leave(kobj);
-		kobject_put(parent);
-		kobj->parent = NULL;
+    // 尝试创建 kobject 对应的目录
+    error = create_dir(kobj);
+    if (error) {
+        // 如果创建目录失败，移除 kobject 从 kset 中
+        kobj_kset_leave(kobj);
+        kobject_put(parent); // 释放父对象的引用
+        kobj->parent = NULL; // 清空 kobject 的父对象
 
-		/* be noisy on error issues */
-		if (error == -EEXIST)
-			printk(KERN_ERR "%s failed for %s with "
-			       "-EEXIST, don't try to register things with "
-			       "the same name in the same directory.\n",
-			       __func__, kobject_name(kobj));
-		else
-			printk(KERN_ERR "%s failed for %s (%d)\n",
-			       __func__, kobject_name(kobj), error);
-		dump_stack();
-	} else
-		kobj->state_in_sysfs = 1;
+        // 根据错误代码打印详细的错误信息
+        if (error == -EEXIST)
+            printk(KERN_ERR "%s failed for %s with "
+                   "-EEXIST, don't try to register things with "
+                   "the same name in the same directory.\n",
+                   __func__, kobject_name(kobj));
+        else
+            printk(KERN_ERR "%s failed for %s (%d)\n",
+                   __func__, kobject_name(kobj), error);
+        dump_stack(); // 打印调用栈信息，帮助调试
+    } else
+        kobj->state_in_sysfs = 1; // 如果成功，将 kobject 的状态标记为已在 sysfs 中
 
-	return error;
+    return error; // 返回操作结果
 }
+
 
 /**
  * kobject_set_name_vargs - Set the name of an kobject
@@ -716,8 +724,8 @@ int kset_register(struct kset *k)
 	if (!k)
 		return -EINVAL;
 
-	kset_init(k);
-	err = kobject_add_internal(&k->kobj);
+	kset_init(k);//初始化 kset
+	err = kobject_add_internal(&k->kobj);//将kset k指向的kobj加入到内核中
 	if (err)
 		return err;
 	kobject_uevent(&k->kobj, KOBJ_ADD);
@@ -795,7 +803,7 @@ static struct kset *kset_create(const char *name,
 	struct kset *kset;
 	int retval;
 
-	kset = kzalloc(sizeof(*kset), GFP_KERNEL);
+	kset = kzalloc(sizeof(*kset), GFP_KERNEL);//为 kset 分配内存
 	if (!kset)
 		return NULL;
 	retval = kobject_set_name(&kset->kobj, name);
@@ -838,7 +846,7 @@ struct kset *kset_create_and_add(const char *name,
 	struct kset *kset;
 	int error;
 
-	kset = kset_create(name, uevent_ops, parent_kobj);
+	kset = kset_create(name, uevent_ops, parent_kobj);//创建一个 kset 结构体
 	if (!kset)
 		return NULL;
 	error = kset_register(kset);

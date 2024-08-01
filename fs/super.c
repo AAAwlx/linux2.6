@@ -865,7 +865,6 @@ error_bdev:
 error:
 	return error;
 }
-
 EXPORT_SYMBOL(get_sb_bdev);
 
 void kill_block_super(struct super_block *sb)
@@ -923,8 +922,6 @@ int get_sb_nodev(struct file_system_type *fs_type,
 	// 返回 0，表示成功
 	return 0;
 }
-
-
 EXPORT_SYMBOL(get_sb_nodev);
 
 static int compare_single(struct super_block *s, void *p)
@@ -933,31 +930,36 @@ static int compare_single(struct super_block *s, void *p)
 }
 
 int get_sb_single(struct file_system_type *fs_type,
-	int flags, void *data,
-	int (*fill_super)(struct super_block *, void *, int),
-	struct vfsmount *mnt)
+    int flags, void *data,
+    int (*fill_super)(struct super_block *, void *, int),
+    struct vfsmount *mnt)
 {
-	struct super_block *s;
-	int error;
+    struct super_block *s;
+    int error;
 
-	s = sget(fs_type, compare_single, set_anon_super, NULL);
-	if (IS_ERR(s))
-		return PTR_ERR(s);
-	if (!s->s_root) {
-		s->s_flags = flags;
-		error = fill_super(s, data, flags & MS_SILENT ? 1 : 0);
-		if (error) {
-			deactivate_locked_super(s);
-			return error;
-		}
-		s->s_flags |= MS_ACTIVE;
-	} else {
-		do_remount_sb(s, flags, data, 0);
-	}
-	simple_set_mnt(mnt, s);
-	return 0;
+    // 获取一个 super_block 结构体
+    s = sget(fs_type, compare_single, set_anon_super, NULL);
+    if (IS_ERR(s))
+        return PTR_ERR(s); // 如果获取失败，返回错误码
+
+    if (!s->s_root) {
+        // 如果 super_block 没有根目录，设置标志并填充 super_block
+        s->s_flags = flags;
+        error = fill_super(s, data, flags & MS_SILENT ? 1 : 0); // 填充 super_block
+        if (error) {
+            // 如果填充失败，释放 super_block 并返回错误码
+            deactivate_locked_super(s);
+            return error;
+        }
+        s->s_flags |= MS_ACTIVE; // 设置 super_block 为活动状态
+    } else {
+        // 如果 super_block 已经有根目录，重新挂载
+        do_remount_sb(s, flags, data, 0);
+    }
+    // 将 super_block 设置到挂载点
+    simple_set_mnt(mnt, s);
+    return 0; // 成功返回 0
 }
-
 EXPORT_SYMBOL(get_sb_single);
 
 struct vfsmount *
@@ -1052,17 +1054,29 @@ static struct vfsmount *fs_set_subtype(struct vfsmount *mnt, const char *fstype)
 struct vfsmount *
 do_kern_mount(const char *fstype, int flags, const char *name, void *data)
 {
-	struct file_system_type *type = get_fs_type(fstype);
-	struct vfsmount *mnt;
-	if (!type)
-		return ERR_PTR(-ENODEV);
-	mnt = vfs_kern_mount(type, flags, name, data);
-	if (!IS_ERR(mnt) && (type->fs_flags & FS_HAS_SUBTYPE) &&
-	    !mnt->mnt_sb->s_subtype)
-		mnt = fs_set_subtype(mnt, fstype);
-	put_filesystem(type);
-	return mnt;
+    struct file_system_type *type = get_fs_type(fstype); // 获取文件系统类型对象
+    struct vfsmount *mnt;
+
+    // 如果获取文件系统类型失败，返回设备不存在错误指针
+    if (!type)
+        return ERR_PTR(-ENODEV);
+
+    // 调用 VFS 内核挂载函数进行挂载
+    mnt = vfs_kern_mount(type, flags, name, data);
+
+    // 如果挂载成功且文件系统类型具有子类型，并且挂载点的超级块没有设置子类型
+    if (!IS_ERR(mnt) && (type->fs_flags & FS_HAS_SUBTYPE) &&
+        !mnt->mnt_sb->s_subtype)
+    {
+        // 设置文件系统子类型
+        mnt = fs_set_subtype(mnt, fstype);
+    }
+
+    put_filesystem(type); // 释放文件系统类型对象的引用计数
+
+    return mnt; // 返回挂载点对象指针
 }
+
 EXPORT_SYMBOL_GPL(do_kern_mount);
 
 struct vfsmount *kern_mount_data(struct file_system_type *type, void *data)

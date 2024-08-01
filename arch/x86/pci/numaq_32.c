@@ -144,22 +144,42 @@ static void __devinit pci_fixup_i450nx(struct pci_dev *d)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82451NX, pci_fixup_i450nx);
 
+/**
+ * pci_numaq_init - 初始化 PCI NUMA 阵列
+ *
+ * 这个函数用于初始化 NUMA (非一致性内存访问) 环境下的 PCI 总线。
+ * 它在系统启动时被调用，主要用于扫描和注册 PCI 总线及设备。
+ *
+ * 返回值：
+ *   - 0：初始化成功
+ */
 int __init pci_numaq_init(void)
 {
-	int quad;
+    int quad;
 
-	raw_pci_ops = &pci_direct_conf1_mq;
+    // 设置 PCI 操作的函数指针，指向特定的 PCI 配置函数
+    raw_pci_ops = &pci_direct_conf1_mq;
 
-	pci_root_bus = pcibios_scan_root(0);
-	if (pci_root_bus)
-		pci_bus_add_devices(pci_root_bus);
-	if (num_online_nodes() > 1)
-		for_each_online_node(quad) {
-			if (quad == 0)
-				continue;
-			printk("Scanning PCI bus %d for quad %d\n", 
-				QUADLOCAL2BUS(quad,0), quad);
-			pci_scan_bus_with_sysdata(QUADLOCAL2BUS(quad, 0));
-		}
-	return 0;
+    // 扫描根 PCI 总线并获取其设备
+    pci_root_bus = pcibios_scan_root(0);
+    if (pci_root_bus)
+        pci_bus_add_devices(pci_root_bus);
+
+    // 如果有多个在线 NUMA 节点，则对每个节点的 PCI 总线进行扫描
+    if (num_online_nodes() > 1)
+        for_each_online_node(quad) {
+            // 跳过节点 0
+            if (quad == 0)
+                continue;
+
+            // 打印扫描信息，显示当前扫描的 PCI 总线和 NUMA 节点
+            printk("Scanning PCI bus %d for quad %d\n", 
+                QUADLOCAL2BUS(quad,0), quad);
+
+            // 使用特定的数据扫描当前 NUMA 节点的 PCI 总线
+            pci_scan_bus_with_sysdata(QUADLOCAL2BUS(quad, 0));
+        }
+
+    // 初始化成功，返回 0
+    return 0;
 }

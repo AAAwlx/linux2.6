@@ -254,62 +254,82 @@ static struct dentry *fuse_d_add_directory(struct dentry *entry,
 	return d_splice_alias(inode, entry);
 }
 
+//这段代码主要用于在 FUSE 文件系统中查找文件或目录，并返回相应的 inode。
 int fuse_lookup_name(struct super_block *sb, u64 nodeid, struct qstr *name,
-		     struct fuse_entry_out *outarg, struct inode **inode)
+                     struct fuse_entry_out *outarg, struct inode **inode)
 {
-	struct fuse_conn *fc = get_fuse_conn_super(sb);
-	struct fuse_req *req;
-	struct fuse_req *forget_req;
-	u64 attr_version;
-	int err;
+    // 获取与超级块关联的 FUSE 连接
+    struct fuse_conn *fc = get_fuse_conn_super(sb);
+    struct fuse_req *req;
+    struct fuse_req *forget_req;
+    u64 attr_version;
+    int err;
 
-	*inode = NULL;
-	err = -ENAMETOOLONG;
-	if (name->len > FUSE_NAME_MAX)
-		goto out;
+    // 初始化 inode 指针为 NULL
+    *inode = NULL;
 
-	req = fuse_get_req(fc);
-	err = PTR_ERR(req);
-	if (IS_ERR(req))
-		goto out;
+    // 检查文件名长度是否超过最大允许长度
+    err = -ENAMETOOLONG;
+    if (name->len > FUSE_NAME_MAX)
+        goto out;
 
-	forget_req = fuse_get_req(fc);
-	err = PTR_ERR(forget_req);
-	if (IS_ERR(forget_req)) {
-		fuse_put_request(fc, req);
-		goto out;
-	}
+    // 获取一个 FUSE 请求结构体
+    req = fuse_get_req(fc);
+    err = PTR_ERR(req);
+    if (IS_ERR(req))
+        goto out;
 
-	attr_version = fuse_get_attr_version(fc);
+    // 获取另一个 FUSE 请求结构体，用于发送忘记请求
+    forget_req = fuse_get_req(fc);
+    err = PTR_ERR(forget_req);
+    if (IS_ERR(forget_req)) {
+        // 如果获取 forget_req 失败，释放 req 请求并退出
+        fuse_put_request(fc, req);
+        goto out;
+    }
 
-	fuse_lookup_init(fc, req, nodeid, name, outarg);
-	fuse_request_send(fc, req);
-	err = req->out.h.error;
-	fuse_put_request(fc, req);
-	/* Zero nodeid is same as -ENOENT, but with valid timeout */
-	if (err || !outarg->nodeid)
-		goto out_put_forget;
+    // 获取 FUSE 属性版本
+    attr_version = fuse_get_attr_version(fc);
 
-	err = -EIO;
-	if (!outarg->nodeid)
-		goto out_put_forget;
-	if (!fuse_valid_type(outarg->attr.mode))
-		goto out_put_forget;
+    // 初始化 lookup 请求
+    fuse_lookup_init(fc, req, nodeid, name, outarg);
+    // 发送请求到 FUSE 文件系统
+    fuse_request_send(fc, req);
+    // 获取请求返回的错误码
+    err = req->out.h.error;
+    // 释放 req 请求
+    fuse_put_request(fc, req);
 
-	*inode = fuse_iget(sb, outarg->nodeid, outarg->generation,
-			   &outarg->attr, entry_attr_timeout(outarg),
-			   attr_version);
-	err = -ENOMEM;
-	if (!*inode) {
-		fuse_send_forget(fc, forget_req, outarg->nodeid, 1);
-		goto out;
-	}
-	err = 0;
+    // 如果请求失败或返回的 nodeid 为 0，表示文件或目录不存在
+    if (err || !outarg->nodeid)
+        goto out_put_forget;
+
+    // 如果返回的 nodeid 无效，或者属性类型不正确
+    err = -EIO;
+    if (!outarg->nodeid)
+        goto out_put_forget;
+    if (!fuse_valid_type(outarg->attr.mode))
+        goto out_put_forget;
+
+    // 根据返回的 nodeid 和属性信息获取 inode
+    *inode = fuse_iget(sb, outarg->nodeid, outarg->generation,
+                       &outarg->attr, entry_attr_timeout(outarg),
+                       attr_version);
+    // 如果 inode 获取失败，发送忘记请求并退出
+    err = -ENOMEM;
+    if (!*inode) {
+        fuse_send_forget(fc, forget_req, outarg->nodeid, 1);
+        goto out;
+    }
+    // 成功获取 inode，设置错误码为 0
+    err = 0;
 
  out_put_forget:
-	fuse_put_request(fc, forget_req);
+    // 释放 forget_req 请求
+    fuse_put_request(fc, forget_req);
  out:
-	return err;
+    // 返回错误码
+    return err;
 }
 
 static struct dentry *fuse_lookup(struct inode *dir, struct dentry *entry,

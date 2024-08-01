@@ -278,7 +278,7 @@ struct pci_dev {
 #endif
 
 	pci_channel_state_t error_state;	/* current connectivity state */
-	struct	device	dev;		/* Generic device interface */
+	struct	device	dev;		/*通用设备接口*/
 
 	int		cfg_size;	/* Size of configuration space */
 

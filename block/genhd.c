@@ -680,52 +680,54 @@ EXPORT_SYMBOL(bdget_disk);
  */
 void __init printk_all_partitions(void)
 {
-	struct class_dev_iter iter;
-	struct device *dev;
+    struct class_dev_iter iter;
+    struct device *dev;
 
-	class_dev_iter_init(&iter, &block_class, NULL, &disk_type);
-	while ((dev = class_dev_iter_next(&iter))) {
-		struct gendisk *disk = dev_to_disk(dev);
-		struct disk_part_iter piter;
-		struct hd_struct *part;
-		char name_buf[BDEVNAME_SIZE];
-		char devt_buf[BDEVT_SIZE];
+    // 初始化块设备类迭代器
+    class_dev_iter_init(&iter, &block_class, NULL, &disk_type);
+    while ((dev = class_dev_iter_next(&iter))) {
+        struct gendisk *disk = dev_to_disk(dev);
+        struct disk_part_iter piter;
+        struct hd_struct *part;
+        char name_buf[BDEVNAME_SIZE];
+        char devt_buf[BDEVT_SIZE];
 
-		/*
-		 * Don't show empty devices or things that have been
-		 * surpressed
-		 */
-		if (get_capacity(disk) == 0 ||
-		    (disk->flags & GENHD_FL_SUPPRESS_PARTITION_INFO))
-			continue;
+        /*
+         * 不显示空设备或被抑制的设备
+         */
+        if (get_capacity(disk) == 0 ||
+            (disk->flags & GENHD_FL_SUPPRESS_PARTITION_INFO))
+            continue;
 
-		/*
-		 * Note, unlike /proc/partitions, I am showing the
-		 * numbers in hex - the same format as the root=
-		 * option takes.
-		 */
-		disk_part_iter_init(&piter, disk, DISK_PITER_INCL_PART0);
-		while ((part = disk_part_iter_next(&piter))) {
-			bool is_part0 = part == &disk->part0;
+        /*
+         * 注意，与 /proc/partitions 不同，这里显示的数字是十六进制的
+         * 与 root= 选项使用的格式相同。
+         */
+        disk_part_iter_init(&piter, disk, DISK_PITER_INCL_PART0);
+        while ((part = disk_part_iter_next(&piter))) {
+            bool is_part0 = part == &disk->part0;
 
-			printk("%s%s %10llu %s", is_part0 ? "" : "  ",
-			       bdevt_str(part_devt(part), devt_buf),
-			       (unsigned long long)part->nr_sects >> 1,
-			       disk_name(disk, part->partno, name_buf));
-			if (is_part0) {
-				if (disk->driverfs_dev != NULL &&
-				    disk->driverfs_dev->driver != NULL)
-					printk(" driver: %s\n",
-					      disk->driverfs_dev->driver->name);
-				else
-					printk(" (driver?)\n");
-			} else
-				printk("\n");
-		}
-		disk_part_iter_exit(&piter);
-	}
-	class_dev_iter_exit(&iter);
+            // 打印分区信息
+            printk("%s%s %10llu %s", is_part0 ? "" : "  ",
+                   bdevt_str(part_devt(part), devt_buf),
+                   (unsigned long long)part->nr_sects >> 1,
+                   disk_name(disk, part->partno, name_buf));
+            if (is_part0) {
+                // 打印驱动程序信息
+                if (disk->driverfs_dev != NULL &&
+                    disk->driverfs_dev->driver != NULL)
+                    printk(" driver: %s\n",
+                          disk->driverfs_dev->driver->name);
+                else
+                    printk(" (driver?)\n");
+            } else
+                printk("\n");
+        }
+        disk_part_iter_exit(&piter); // 退出分区迭代器
+    }
+    class_dev_iter_exit(&iter); // 退出设备类迭代器
 }
+
 
 #ifdef CONFIG_PROC_FS
 /* iterator */

@@ -540,32 +540,47 @@ static void klist_children_put(struct klist_node *n)
 }
 
 /**
- * device_initialize - init device structure.
- * @dev: device.
+ * device_initialize - 初始化设备结构体。
+ * @dev: 设备结构体指针。
  *
- * This prepares the device for use by other layers by initializing
- * its fields.
- * It is the first half of device_register(), if called by
- * that function, though it can also be called separately, so one
- * may use @dev's fields. In particular, get_device()/put_device()
- * may be used for reference counting of @dev after calling this
- * function.
+ * 该函数通过初始化设备的各个字段来准备设备，以便其他层可以使用它。
+ * 它是 device_register() 函数的前半部分，如果通过 device_register() 调用，
+ * 则可以单独调用它来使用 @dev 的字段。特别地，可以在调用该函数后使用
+ * get_device()/put_device() 来对 @dev 进行引用计数。
  *
- * NOTE: Use put_device() to give up your reference instead of freeing
- * @dev directly once you have called this function.
+ * 注意：在调用此函数后，使用 put_device() 释放引用，而不是直接释放
+ * @dev。
  */
 void device_initialize(struct device *dev)
 {
-	dev->kobj.kset = devices_kset;
-	kobject_init(&dev->kobj, &device_ktype);
-	INIT_LIST_HEAD(&dev->dma_pools);
-	init_MUTEX(&dev->sem);
-	spin_lock_init(&dev->devres_lock);
-	INIT_LIST_HEAD(&dev->devres_head);
-	device_init_wakeup(dev, 0);
-	device_pm_init(dev);
-	set_dev_node(dev, -1);
+    // 初始化设备的 kobject 结构体，设置其管理集合为 devices_kset，即为sys/device目录。
+    dev->kobj.kset = devices_kset;
+    
+    // 初始化 kobject 结构体，使用 device_ktype 作为类型信息。
+    kobject_init(&dev->kobj, &device_ktype);
+    
+    // 初始化 dma_pools 列表头，将其设置为空列表。
+    INIT_LIST_HEAD(&dev->dma_pools);
+    
+    // 初始化设备的信号量。
+    init_MUTEX(&dev->sem);
+    
+    // 初始化设备的自旋锁。
+    spin_lock_init(&dev->devres_lock);
+    
+    // 初始化 devres_head 列表头，将其设置为空列表。
+    INIT_LIST_HEAD(&dev->devres_head);
+    
+    // 初始化设备的唤醒功能，参数为 0 表示默认配置。
+    device_init_wakeup(dev, 0);
+    
+    // 初始化设备的电源管理功能。
+    device_pm_init(dev);
+    
+    // 设置设备的节点，-1 表示不将设备分配到特定节点。
+    set_dev_node(dev, -1);
 }
+
 
 #ifdef CONFIG_SYSFS_DEPRECATED
 static struct kobject *get_device_parent(struct device *dev,
@@ -915,143 +930,161 @@ int device_private_init(struct device *dev)
  * if it returned an error! Always use put_device() to give up your
  * reference instead.
  */
+/**
+ * device_add - 将设备添加到设备层次结构中
+ * @dev: 设备对象
+ *
+ * 这个函数将设备对象添加到系统的设备层次结构中，并完成相关的初始化和注册工作。
+ * 返回 0 表示成功，返回负数表示错误代码。
+ */
 int device_add(struct device *dev)
 {
-	struct device *parent = NULL;
-	struct class_interface *class_intf;
-	int error = -EINVAL;
+    struct device *parent = NULL;
+    struct class_interface *class_intf;
+    int error = -EINVAL;
 
-	dev = get_device(dev);
-	if (!dev)
-		goto done;
+    // 获取设备的引用计数，确保设备对象有效
+    dev = get_device(dev);
+    if (!dev)
+        goto done;
 
-	if (!dev->p) {
-		error = device_private_init(dev);
-		if (error)
-			goto done;
-	}
+    // 如果设备尚未初始化，进行私有数据初始化
+    if (!dev->p) {
+        error = device_private_init(dev);
+        if (error)
+            goto done;
+    }
 
-	/*
-	 * for statically allocated devices, which should all be converted
-	 * some day, we need to initialize the name. We prevent reading back
-	 * the name, and force the use of dev_name()
-	 */
-	if (dev->init_name) {
-		dev_set_name(dev, "%s", dev->init_name);
-		dev->init_name = NULL;
-	}
+    /*
+     * 对于静态分配的设备，需要初始化设备名称。
+     * 防止读取回设备名称，并强制使用 dev_name()。
+     */
+    if (dev->init_name) {
+        dev_set_name(dev, "%s", dev->init_name);
+        dev->init_name = NULL;
+    }
 
-	if (!dev_name(dev)) {
-		error = -EINVAL;
-		goto name_error;
-	}
+    // 确保设备名称已设置
+    if (!dev_name(dev)) {
+        error = -EINVAL;
+        goto name_error;
+    }
 
-	pr_debug("device: '%s': %s\n", dev_name(dev), __func__);
+    pr_debug("device: '%s': %s\n", dev_name(dev), __func__);
 
-	parent = get_device(dev->parent);
-	setup_parent(dev, parent);
+    // 获取父设备的引用计数
+    parent = get_device(dev->parent);
+    setup_parent(dev, parent);
 
-	/* use parent numa_node */
-	if (parent)
-		set_dev_node(dev, dev_to_node(parent));
+    // 使用父设备的 NUMA 节点
+    if (parent)
+        set_dev_node(dev, dev_to_node(parent));
 
-	/* first, register with generic layer. */
-	/* we require the name to be set before, and pass NULL */
-	error = kobject_add(&dev->kobj, dev->kobj.parent, NULL);
-	if (error)
-		goto Error;
+    // 首先，与通用层进行注册。要求设备名称必须已经设置，且传入 NULL
+    error = kobject_add(&dev->kobj, dev->kobj.parent, NULL);
+    if (error)
+        goto Error;
 
-	/* notify platform of device entry */
-	if (platform_notify)
-		platform_notify(dev);
+    // 通知平台设备已添加
+    if (platform_notify)
+        platform_notify(dev);
 
-	error = device_create_file(dev, &uevent_attr);
-	if (error)
-		goto attrError;
+    // 创建设备文件
+    error = device_create_file(dev, &uevent_attr);
+    if (error)
+        goto attrError;
 
-	if (MAJOR(dev->devt)) {
-		error = device_create_file(dev, &devt_attr);
-		if (error)
-			goto ueventattrError;
+    // 如果设备号 (MAJOR) 存在，创建额外的设备文件和节点
+    if (MAJOR(dev->devt)) {
+        error = device_create_file(dev, &devt_attr);
+        if (error)
+            goto ueventattrError;
 
-		error = device_create_sys_dev_entry(dev);
-		if (error)
-			goto devtattrError;
+        error = device_create_sys_dev_entry(dev);
+        if (error)
+            goto devtattrError;
 
-		devtmpfs_create_node(dev);
-	}
+        devtmpfs_create_node(dev);
+    }
 
-	error = device_add_class_symlinks(dev);
-	if (error)
-		goto SymlinkError;
-	error = device_add_attrs(dev);
-	if (error)
-		goto AttrsError;
-	error = bus_add_device(dev);
-	if (error)
-		goto BusError;
-	error = dpm_sysfs_add(dev);
-	if (error)
-		goto DPMError;
-	device_pm_add(dev);
+    // 添加类符号链接和属性
+    error = device_add_class_symlinks(dev);
+    if (error)
+        goto SymlinkError;
 
-	/* Notify clients of device addition.  This call must come
-	 * after dpm_sysf_add() and before kobject_uevent().
-	 */
-	if (dev->bus)
-		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
-					     BUS_NOTIFY_ADD_DEVICE, dev);
+    error = device_add_attrs(dev);
+    if (error)
+        goto AttrsError;
 
-	kobject_uevent(&dev->kobj, KOBJ_ADD);
-	bus_probe_device(dev);
-	if (parent)
-		klist_add_tail(&dev->p->knode_parent,
-			       &parent->p->klist_children);
+    // 将设备添加到总线
+    error = bus_add_device(dev);
+    if (error)
+        goto BusError;
 
-	if (dev->class) {
-		mutex_lock(&dev->class->p->class_mutex);
-		/* tie the class to the device */
-		klist_add_tail(&dev->knode_class,
-			       &dev->class->p->class_devices);
+    // 将设备添加到系统电源管理 (DPM) 和设备管理中
+    error = dpm_sysfs_add(dev);
+    if (error)
+        goto DPMError;
+    
+    device_pm_add(dev);
 
-		/* notify any interfaces that the device is here */
-		list_for_each_entry(class_intf,
-				    &dev->class->p->class_interfaces, node)
-			if (class_intf->add_dev)
-				class_intf->add_dev(dev, class_intf);
-		mutex_unlock(&dev->class->p->class_mutex);
-	}
+    // 通知客户端设备已添加。此调用必须在 dpm_sysfs_add() 后，kobject_uevent() 前
+    if (dev->bus)
+        blocking_notifier_call_chain(&dev->bus->p->bus_notifier, BUS_NOTIFY_ADD_DEVICE, dev);
+
+    // 发送 kobject 事件
+    kobject_uevent(&dev->kobj, KOBJ_ADD);
+
+    // 启动设备探测
+    bus_probe_device(dev);
+
+    // 如果有父设备，将设备添加到父设备的子设备列表中
+    if (parent)
+        klist_add_tail(&dev->p->knode_parent, &parent->p->klist_children);
+
+    // 如果设备有类，将设备与类绑定，并通知类接口
+    if (dev->class) {
+        mutex_lock(&dev->class->p->class_mutex);
+        klist_add_tail(&dev->knode_class, &dev->class->p->class_devices);
+
+        // 通知任何接口设备已添加
+        list_for_each_entry(class_intf, &dev->class->p->class_interfaces, node)
+            if (class_intf->add_dev)
+                class_intf->add_dev(dev, class_intf);
+        mutex_unlock(&dev->class->p->class_mutex);
+    }
 done:
-	put_device(dev);
-	return error;
+    put_device(dev); // 释放设备的引用计数
+    return error;    // 返回错误码或 0
  DPMError:
-	bus_remove_device(dev);
+    bus_remove_device(dev); // 从总线中移除设备
  BusError:
-	device_remove_attrs(dev);
+    device_remove_attrs(dev); // 移除设备的属性
  AttrsError:
-	device_remove_class_symlinks(dev);
+    device_remove_class_symlinks(dev); // 移除类的符号链接
  SymlinkError:
-	if (MAJOR(dev->devt))
-		devtmpfs_delete_node(dev);
-	if (MAJOR(dev->devt))
-		device_remove_sys_dev_entry(dev);
+    if (MAJOR(dev->devt))
+        devtmpfs_delete_node(dev); // 删除设备的临时文件系统节点
+    if (MAJOR(dev->devt))
+        device_remove_sys_dev_entry(dev); // 移除设备的系统设备条目
  devtattrError:
-	if (MAJOR(dev->devt))
-		device_remove_file(dev, &devt_attr);
+    if (MAJOR(dev->devt))
+        device_remove_file(dev, &devt_attr); // 移除设备文件
  ueventattrError:
-	device_remove_file(dev, &uevent_attr);
+    device_remove_file(dev, &uevent_attr); // 移除设备的 uevent 文件
  attrError:
-	kobject_uevent(&dev->kobj, KOBJ_REMOVE);
-	kobject_del(&dev->kobj);
+    kobject_uevent(&dev->kobj, KOBJ_REMOVE); // 发送 kobject 移除事件
+    kobject_del(&dev->kobj); // 删除 kobject
  Error:
-	cleanup_device_parent(dev);
-	if (parent)
-		put_device(parent);
+    cleanup_device_parent(dev); // 清理设备的父设备
+    if (parent)
+        put_device(parent); // 释放父设备的引用计数
 name_error:
-	kfree(dev->p);
-	dev->p = NULL;
-	goto done;
+    kfree(dev->p); // 释放设备的私有数据
+    dev->p = NULL;
+    goto done; // 跳转到 done 标签，释放设备的引用
 }
+
 
 /**
  * device_register - register a device with the system.
@@ -1070,7 +1103,7 @@ name_error:
  */
 int device_register(struct device *dev)
 {
-	device_initialize(dev);
+	device_initialize(dev);//初始化设备结构体
 	return device_add(dev);
 }
 

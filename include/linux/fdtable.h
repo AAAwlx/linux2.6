@@ -33,7 +33,7 @@ struct fdtable {
 	struct file ** fd;      /* current fd array */
 	fd_set *close_on_exec;
 	fd_set *open_fds;
-	struct rcu_head rcu;
+	struct rcu_head rcu;//将各节点链接的
 	struct fdtable *next;
 };
 
