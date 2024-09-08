@@ -260,7 +260,7 @@ ENTRY(secondary_startup_64)
 	.align	8
 	ENTRY(initial_code)
 	.quad	x86_64_start_kernel
-	ENTRY(initial_gs)
+	ENTRY(initial_gs)x86_64_start_kernel
 	.quad	INIT_PER_CPU_VAR(irq_stack_union)
 
 	ENTRY(stack_start)

@@ -113,12 +113,12 @@ do {								\
 
 /*
  * Context structure to be used while adding/removing nodes.
+ * 记录删除和添加信息的结构体
  */
 struct sysfs_addrm_cxt {
-	struct sysfs_dirent	*parent_sd;
-	struct sysfs_dirent	*removed;
+    struct sysfs_dirent *parent_sd; // 指向 sysfs_dirent 结构体的指针，表示该上下文的父目录
+    struct sysfs_dirent *removed;   // 指向 sysfs_dirent 结构体的指针，表示已被移除的目录项
 };
-
 /*
  * mount.c
  */

@@ -238,23 +238,25 @@ handle_t *ext4_journal_start_sb(struct super_block *sb, int nblocks)
 {
 	journal_t *journal;
 
+	/* 检查文件系统是否为只读，如果是则返回错误 */
 	if (sb->s_flags & MS_RDONLY)
 		return ERR_PTR(-EROFS);
 
-	/* Special case here: if the journal has aborted behind our
-	 * backs (eg. EIO in the commit thread), then we still need to
-	 * take the FS itself readonly cleanly. */
-	journal = EXT4_SB(sb)->s_journal;
+	/* 特殊情况处理：如果日志在我们不知情的情况下中止（例如
+	 * 提交线程中的 EIO 错误），我们仍然需要干净地将文件系统设为只读。 */
+	journal = EXT4_SB(sb)->s_journal;  /* 获取 ext4 文件系统的日志 */
 	if (journal) {
+		/* 检查日志是否已中止 */
 		if (is_journal_aborted(journal)) {
-			ext4_abort(sb, __func__, "Detected aborted journal");
-			return ERR_PTR(-EROFS);
+			ext4_abort(sb, __func__, "Detected aborted journal");  /* 处理日志中止错误 */
+			return ERR_PTR(-EROFS);  /* 返回只读错误 */
 		}
+		/* 启动日志，分配 nblocks 个日志块 */
 		return jbd2_journal_start(journal, nblocks);
 	}
+	/* 如果没有日志，则返回无日志的处理句柄 */
 	return ext4_get_nojournal();
 }
-
 /*
  * The only special thing we need to do here is to make sure that all
  * jbd2_journal_stop calls result in the superblock being marked dirty, so
@@ -1235,26 +1237,29 @@ static const match_table_t tokens = {
 
 static ext4_fsblk_t get_sb_block(void **data)
 {
-	ext4_fsblk_t	sb_block;
-	char		*options = (char *) *data;
+	ext4_fsblk_t sb_block;          /* 超级块的块号 */
+	char *options = (char *) *data; /* 指向传入数据的字符指针 */
 
+	/* 检查 options 是否为空，或其内容是否以 "sb=" 开头 */
 	if (!options || strncmp(options, "sb=", 3) != 0)
-		return 1;	/* Default location */
+		return 1;  /* 默认位置，返回 1 */
 
-	options += 3;
-	/* TODO: use simple_strtoll with >32bit ext4 */
+	options += 3;  /* 跳过 "sb=" 前缀，指向实际的块号部分 */
+
+	/* 使用 simple_strtoul 将 options 转换为无符号长整型块号 */
 	sb_block = simple_strtoul(options, &options, 0);
-	if (*options && *options != ',') {
+	if (*options && *options != ',') {  /* 检查转换后是否还有非法字符 */
 		printk(KERN_ERR "EXT4-fs: Invalid sb specification: %s\n",
-		       (char *) *data);
-		return 1;
+		       (char *) *data);  /* 打印错误信息 */
+		return 1;  /* 默认位置，返回 1 */
 	}
-	if (*options == ',')
-		options++;
-	*data = (void *) options;
+	if (*options == ',')  /* 如果还有 ',' 字符 */
+		options++;  /* 跳过 ',' 字符 */
+	*data = (void *) options;  /* 更新数据指针，指向剩余的字符串部分 */
 
-	return sb_block;
+	return sb_block;  /* 返回解析出的超级块块号 */
 }
+
 
 #define DEFAULT_JOURNAL_IOPRIO (IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 3))
 static char deprecated_msg[] = "Mount option \"%s\" will be removed by %s\n"
@@ -2430,6 +2435,7 @@ static int ext4_feature_set_ok(struct super_block *sb, int readonly)
 	return 1;
 }
 
+//ext4_get_sb的回调函数
 static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 				__releases(kernel_lock)
 				__acquires(kernel_lock)
@@ -2454,11 +2460,11 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	__u64 blocks_count;
 	int err;
 	unsigned int journal_ioprio = DEFAULT_JOURNAL_IOPRIO;
-
+	// 分配 ext4 超级块信息结构体内存
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
-
+	// 分配块组锁内存
 	sbi->s_blockgroup_lock =
 		kzalloc(sizeof(struct blockgroup_lock), GFP_KERNEL);
 	if (!sbi->s_blockgroup_lock) {
@@ -2476,10 +2482,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 
 	unlock_kernel();
 
-	/* Cleanup superblock name */
+	/* 清理超级块的名字 */
 	for (cp = sb->s_id; (cp = strchr(cp, '/'));)
 		*cp = '!';
-
+	// 设置文件系统块大小
 	blocksize = sb_min_blocksize(sb, EXT4_MIN_BLOCK_SIZE);
 	if (!blocksize) {
 		ext4_msg(sb, KERN_ERR, "unable to set blocksize");
@@ -2487,8 +2493,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	/*
-	 * The ext4 superblock will not be buffer aligned for other than 1kB
-	 * block sizes.  We need to calculate the offset from buffer start.
+	 * ext4 超级块的实际块位置可能不是块对齐的，需要计算从缓冲区开始的偏移量。
 	 */
 	if (blocksize != EXT4_MIN_BLOCK_SIZE) {
 		logical_sb_block = sb_block * EXT4_MIN_BLOCK_SIZE;
@@ -2501,10 +2506,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		ext4_msg(sb, KERN_ERR, "unable to read superblock");
 		goto out_fail;
 	}
-	/*
-	 * Note: s_es must be initialized as soon as possible because
-	 *       some ext4 macro-instructions depend on its value
-	 */
+	// 初始化超级块指针 es
 	es = (struct ext4_super_block *) (((char *)bh->b_data) + offset);
 	sbi->s_es = es;
 	sb->s_magic = le16_to_cpu(es->s_magic);
@@ -2524,35 +2526,44 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (def_mount_opts & EXT4_DEFM_UID16)
 		set_opt(sbi->s_mount_opt, NO_UID32);
 #ifdef CONFIG_EXT4_FS_XATTR
+	/* 如果默认挂载选项中设置了用户扩展属性支持 */
 	if (def_mount_opts & EXT4_DEFM_XATTR_USER)
-		set_opt(sbi->s_mount_opt, XATTR_USER);
+		set_opt(sbi->s_mount_opt, XATTR_USER);  /* 启用用户扩展属性 */
 #endif
+
 #ifdef CONFIG_EXT4_FS_POSIX_ACL
+	/* 如果默认挂载选项中设置了 POSIX ACL 支持 */
 	if (def_mount_opts & EXT4_DEFM_ACL)
-		set_opt(sbi->s_mount_opt, POSIX_ACL);
+		set_opt(sbi->s_mount_opt, POSIX_ACL);  /* 启用 POSIX 访问控制列表 */
 #endif
+
+	/* 根据默认挂载选项设置日志模式 */
 	if ((def_mount_opts & EXT4_DEFM_JMODE) == EXT4_DEFM_JMODE_DATA)
-		set_opt(sbi->s_mount_opt, JOURNAL_DATA);
+		set_opt(sbi->s_mount_opt, JOURNAL_DATA);  /* 设置日志模式为数据模式 */
 	else if ((def_mount_opts & EXT4_DEFM_JMODE) == EXT4_DEFM_JMODE_ORDERED)
-		set_opt(sbi->s_mount_opt, ORDERED_DATA);
+		set_opt(sbi->s_mount_opt, ORDERED_DATA);  /* 设置日志模式为有序模式 */
 	else if ((def_mount_opts & EXT4_DEFM_JMODE) == EXT4_DEFM_JMODE_WBACK)
-		set_opt(sbi->s_mount_opt, WRITEBACK_DATA);
+		set_opt(sbi->s_mount_opt, WRITEBACK_DATA);  /* 设置日志模式为写回模式 */
 
+	/* 根据超级块的错误处理设置挂载选项 */
 	if (le16_to_cpu(sbi->s_es->s_errors) == EXT4_ERRORS_PANIC)
-		set_opt(sbi->s_mount_opt, ERRORS_PANIC);
+		set_opt(sbi->s_mount_opt, ERRORS_PANIC);  /* 设置错误处理为 panic 模式 */
 	else if (le16_to_cpu(sbi->s_es->s_errors) == EXT4_ERRORS_CONTINUE)
-		set_opt(sbi->s_mount_opt, ERRORS_CONT);
+		set_opt(sbi->s_mount_opt, ERRORS_CONT);  /* 设置错误处理为继续模式 */
 	else
-		set_opt(sbi->s_mount_opt, ERRORS_RO);
+		set_opt(sbi->s_mount_opt, ERRORS_RO);  /* 设置错误处理为只读模式 */
 
+	/* 设置默认的保留用户和组 ID */
 	sbi->s_resuid = le16_to_cpu(es->s_def_resuid);
 	sbi->s_resgid = le16_to_cpu(es->s_def_resgid);
-	sbi->s_commit_interval = JBD2_DEFAULT_MAX_COMMIT_AGE * HZ;
-	sbi->s_min_batch_time = EXT4_DEF_MIN_BATCH_TIME;
-	sbi->s_max_batch_time = EXT4_DEF_MAX_BATCH_TIME;
 
+	/* 设置提交间隔和批处理时间 */
+	sbi->s_commit_interval = JBD2_DEFAULT_MAX_COMMIT_AGE * HZ;  /* 默认提交间隔时间 */
+	sbi->s_min_batch_time = EXT4_DEF_MIN_BATCH_TIME;  /* 最小批处理时间 */
+	sbi->s_max_batch_time = EXT4_DEF_MAX_BATCH_TIME;  /* 最大批处理时间 */
+
+	/* 启用磁盘操作的 barrier 功能 */
 	set_opt(sbi->s_mount_opt, BARRIER);
-
 	/*
 	 * enable delayed allocation by default
 	 * Use -o nodelalloc to turn it off
@@ -4145,29 +4156,31 @@ static int __init init_ext4_fs(void)
 {
 	int err;
 
-	err = init_ext4_system_zone();
+	err = init_ext4_system_zone();//为保留区创建缓存
 	if (err)
 		return err;
-	ext4_kset = kset_create_and_add("ext4", NULL, fs_kobj);
+	ext4_kset = kset_create_and_add("ext4", NULL, fs_kobj);//在sysfs中创建ext4目录
 	if (!ext4_kset)
 		goto out4;
-	ext4_proc_root = proc_mkdir("fs/ext4", NULL);
-	err = init_ext4_mballoc();
+	ext4_proc_root = proc_mkdir("fs/ext4", NULL);//proc
+	err = init_ext4_mballoc();//初始化块分配相关的缓存
 	if (err)
 		goto out3;
 
-	err = init_ext4_xattr();
+	err = init_ext4_xattr();//扩展属性数据缓存的初始化
 	if (err)
 		goto out2;
 	err = init_inodecache();
 	if (err)
 		goto out1;
+	//兼容 ext2 与 ext3
 	register_as_ext2();
 	register_as_ext3();
 	err = register_filesystem(&ext4_fs_type);
 	if (err)
 		goto out;
 	return 0;
+//错误处理
 out:
 	unregister_as_ext2();
 	unregister_as_ext3();

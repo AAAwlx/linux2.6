@@ -25,16 +25,16 @@ extern unsigned long saved_max_pfn;
 
 #ifndef CONFIG_NO_BOOTMEM
 /*
- * node_bootmem_map is a map pointer - the bits represent all physical 
- * memory pages (including holes) on the node.
+ * node_bootmem_map 是一个指针，用于指向该节点的 boot memory（引导内存）映射。
+ * 位图中的每一位都代表物理内存中的一个页面（包括内存空洞）。
  */
 typedef struct bootmem_data {
-	unsigned long node_min_pfn;
-	unsigned long node_low_pfn;
-	void *node_bootmem_map;
-	unsigned long last_end_off;
-	unsigned long hint_idx;
-	struct list_head list;
+    unsigned long node_min_pfn;      // 该节点中最小的页帧号 (Physical Frame Number)
+    unsigned long node_low_pfn;      // 该节点中最低的有效页帧号
+    void *node_bootmem_map;          // 指向该节点的引导内存映射的指针，通常是一个位图
+    unsigned long last_end_off;      // 用于引导内存分配的最后结束偏移，指示上次分配的位置
+    unsigned long hint_idx;          // 提示索引，提供下次内存分配的线索，提升分配效率
+    struct list_head list;           // 用于链接多个节点的链表结构
 } bootmem_data_t;
 
 extern bootmem_data_t bootmem_node_data[];

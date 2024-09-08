@@ -479,12 +479,12 @@ int elv_merge(struct request_queue *q, struct request **req, struct bio *bio)
 	 * 	noxmerges: Only simple one-hit cache try
 	 * 	merges:	   All merge tries attempted
 	 */
+
+	// 如果队列设置为不允许合并任何请求，则返回没有合并的标志。
 	if (blk_queue_nomerges(q))
 		return ELEVATOR_NO_MERGE;
 
-	/*
-	 * First try one-hit cache.
-	 */
+	// 首先尝试单次缓存合并。
 	if (q->last_merge) {
 		ret = elv_try_merge(q->last_merge, bio);
 		if (ret != ELEVATOR_NO_MERGE) {
@@ -493,21 +493,22 @@ int elv_merge(struct request_queue *q, struct request **req, struct bio *bio)
 		}
 	}
 
+	// 如果队列设置为不允许合并，只尝试一次缓存合并，则返回没有合并的标志。
 	if (blk_queue_noxmerges(q))
 		return ELEVATOR_NO_MERGE;
 
-	/*
-	 * See if our hash lookup can find a potential backmerge.
-	 */
+	// 检查哈希查找是否能找到潜在的后向合并请求。
 	__rq = elv_rqhash_find(q, bio->bi_sector);
 	if (__rq && elv_rq_merge_ok(__rq, bio)) {
 		*req = __rq;
 		return ELEVATOR_BACK_MERGE;
 	}
 
+	// 调用电梯队列的合并函数（如果有的话），尝试进行前向合并。
 	if (e->ops->elevator_merge_fn)
 		return e->ops->elevator_merge_fn(q, req, bio);
 
+	// 如果没有合并的机会，返回没有合并的标志。
 	return ELEVATOR_NO_MERGE;
 }
 

@@ -2015,29 +2015,35 @@ EXPORT_SYMBOL_GPL(lookup_create);
 
 int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 {
-	int error = may_create(dir, dentry);
+	int error = may_create(dir, dentry); // 检查是否有权限创建文件
 
 	if (error)
-		return error;
+		return error; // 如果没有权限，返回错误码
 
+	// 如果创建的是字符设备或块设备文件，且没有足够的权限，返回 -EPERM
 	if ((S_ISCHR(mode) || S_ISBLK(mode)) && !capable(CAP_MKNOD))
 		return -EPERM;
 
+	// 检查目录项是否支持 mknod 操作
 	if (!dir->i_op->mknod)
 		return -EPERM;
 
+	// 处理设备组相关的权限检查
 	error = devcgroup_inode_mknod(mode, dev);
 	if (error)
 		return error;
 
+	// 执行安全性检查
 	error = security_inode_mknod(dir, dentry, mode, dev);
 	if (error)
 		return error;
 
+	// 调用目录项的 `mknod` 操作函数创建文件
 	error = dir->i_op->mknod(dir, dentry, mode, dev);
 	if (!error)
-		fsnotify_create(dir, dentry);
-	return error;
+		fsnotify_create(dir, dentry); // 如果成功，通知文件系统事件
+
+	return error; // 返回创建文件的结果
 }
 
 static int may_mknod(mode_t mode)
@@ -2057,60 +2063,76 @@ static int may_mknod(mode_t mode)
 	}
 }
 
-SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, int, mode,
-		unsigned, dev)
+SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, int, mode, unsigned, dev)
 {
-	int error;
-	char *tmp;
-	struct dentry *dentry;
-	struct nameidata nd;
+    int error;
+    char *tmp;
+    struct dentry *dentry;
+    struct nameidata nd;
 
-	if (S_ISDIR(mode))
-		return -EPERM;
+    // 不允许创建目录
+    if (S_ISDIR(mode))
+        return -EPERM;
 
-	error = user_path_parent(dfd, filename, &nd, &tmp);
-	if (error)
-		return error;
+    // 获取文件路径的父目录并解析
+    error = user_path_parent(dfd, filename, &nd, &tmp);
+    if (error)
+        return error;
 
-	dentry = lookup_create(&nd, 0);
-	if (IS_ERR(dentry)) {
-		error = PTR_ERR(dentry);
-		goto out_unlock;
-	}
-	if (!IS_POSIXACL(nd.path.dentry->d_inode))
-		mode &= ~current_umask();
-	error = may_mknod(mode);
-	if (error)
-		goto out_dput;
-	error = mnt_want_write(nd.path.mnt);
-	if (error)
-		goto out_dput;
-	error = security_path_mknod(&nd.path, dentry, mode, dev);
-	if (error)
-		goto out_drop_write;
-	switch (mode & S_IFMT) {
-		case 0: case S_IFREG:
-			error = vfs_create(nd.path.dentry->d_inode,dentry,mode,&nd);
-			break;
-		case S_IFCHR: case S_IFBLK:
-			error = vfs_mknod(nd.path.dentry->d_inode,dentry,mode,
-					new_decode_dev(dev));
-			break;
-		case S_IFIFO: case S_IFSOCK:
-			error = vfs_mknod(nd.path.dentry->d_inode,dentry,mode,0);
-			break;
-	}
+    // 查找或创建文件的目录入口
+    dentry = lookup_create(&nd, 0);
+    if (IS_ERR(dentry)) {
+        error = PTR_ERR(dentry);
+        goto out_unlock;
+    }
+
+    // 更新文件权限，去除当前用户的 umask
+    if (!IS_POSIXACL(nd.path.dentry->d_inode))
+        mode &= ~current_umask();
+
+    // 检查是否允许创建该类型的节点
+    error = may_mknod(mode);
+    if (error)
+        goto out_dput;
+
+    // 获取挂载点的写权限
+    error = mnt_want_write(nd.path.mnt);
+    if (error)
+        goto out_dput;
+
+    // 执行安全性检查
+    error = security_path_mknod(&nd.path, dentry, mode, dev);
+    if (error)
+        goto out_drop_write;
+
+    // 根据文件类型执行相应的创建操作
+    switch (mode & S_IFMT) {
+        case 0: case S_IFREG:
+            error = vfs_create(nd.path.dentry->d_inode, dentry, mode, &nd);
+            break;
+        case S_IFCHR: case S_IFBLK://字符设备
+            error = vfs_mknod(nd.path.dentry->d_inode, dentry, mode, new_decode_dev(dev));
+            break;
+        case S_IFIFO: case S_IFSOCK:
+            error = vfs_mknod(nd.path.dentry->d_inode, dentry, mode, 0);
+            break;
+    }
+
 out_drop_write:
-	mnt_drop_write(nd.path.mnt);
+    // 释放挂载点的写权限
+    mnt_drop_write(nd.path.mnt);
 out_dput:
-	dput(dentry);
+    // 释放目录入口
+    dput(dentry);
 out_unlock:
-	mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
-	path_put(&nd.path);
-	putname(tmp);
+    // 释放路径锁和文件名内存
+    mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
+    path_put(&nd.path);
+    putname(tmp);
 
-	return error;
+    return error;
 }
+
 
 SYSCALL_DEFINE3(mknod, const char __user *, filename, int, mode, unsigned, dev)
 {

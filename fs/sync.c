@@ -93,48 +93,81 @@ EXPORT_SYMBOL_GPL(sync_filesystem);
  */
 static void sync_filesystems(int wait)
 {
-	struct super_block *sb;
-	static DEFINE_MUTEX(mutex);
+    struct super_block *sb;
+    static DEFINE_MUTEX(mutex);
 
-	mutex_lock(&mutex);		/* Could be down_interruptible */
-	spin_lock(&sb_lock);
-	list_for_each_entry(sb, &super_blocks, s_list)
-		sb->s_need_sync = 1;
+    // 获取互斥锁，防止多个线程同时进行文件系统同步操作
+    mutex_lock(&mutex);
+    
+    // 加锁，防止对超级块列表的并发访问
+    spin_lock(&sb_lock);
+
+    // 遍历所有的超级块，将每个超级块标记为需要同步
+    list_for_each_entry(sb, &super_blocks, s_list)
+        sb->s_need_sync = 1;
 
 restart:
-	list_for_each_entry(sb, &super_blocks, s_list) {
-		if (!sb->s_need_sync)
-			continue;
-		sb->s_need_sync = 0;
-		sb->s_count++;
-		spin_unlock(&sb_lock);
+    // 再次遍历超级块列表，执行实际的同步操作
+    list_for_each_entry(sb, &super_blocks, s_list) {
+        // 如果该超级块不需要同步，跳过它
+        if (!sb->s_need_sync)
+            continue;
+        
+        // 标记该超级块不再需要同步
+        sb->s_need_sync = 0;
 
-		down_read(&sb->s_umount);
-		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
-			__sync_filesystem(sb, wait);
-		up_read(&sb->s_umount);
+        // 增加超级块的引用计数，防止它在同步期间被释放
+        sb->s_count++;
 
-		/* restart only when sb is no longer on the list */
-		spin_lock(&sb_lock);
-		if (__put_super_and_need_restart(sb))
-			goto restart;
-	}
-	spin_unlock(&sb_lock);
-	mutex_unlock(&mutex);
+        // 解锁超级块列表，以便其他进程可以访问
+        spin_unlock(&sb_lock);
+
+        // 获取读锁，防止该超级块在同步期间被卸载
+        down_read(&sb->s_umount);
+
+        // 如果该超级块不是只读的，并且有根目录和后备设备信息，执行同步操作
+        if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
+            __sync_filesystem(sb, wait);
+
+        // 释放读锁
+        up_read(&sb->s_umount);
+
+        // 再次加锁以检查是否需要重新启动同步
+        spin_lock(&sb_lock);
+        
+        // 如果该超级块被释放，需要重新开始同步过程
+        if (__put_super_and_need_restart(sb))
+            goto restart;
+    }
+
+    // 解锁超级块列表
+    spin_unlock(&sb_lock);
+
+    // 释放互斥锁，完成同步操作
+    mutex_unlock(&mutex);
 }
 
 /*
- * sync everything.  Start out by waking pdflush, because that writes back
- * all queues in parallel.
+ * sync 系统调用实现，同步所有文件系统。首先唤醒 pdflush 线程，
+ * 因为它会并行地将所有队列中的脏数据写回磁盘。
  */
 SYSCALL_DEFINE0(sync)
 {
-	wakeup_flusher_threads(0);
-	sync_filesystems(0);
-	sync_filesystems(1);
-	if (unlikely(laptop_mode))
-		laptop_sync_completion();
-	return 0;
+    // 唤醒负责写回脏数据的后台线程
+    wakeup_flusher_threads(0);
+
+    // 第一次调用 sync_filesystems，不等待完成
+    sync_filesystems(0);
+
+    // 第二次调用 sync_filesystems，等待完成
+    sync_filesystems(1);
+
+    // 如果启用了笔记本模式，进行额外的同步操作
+    if (unlikely(laptop_mode))
+        laptop_sync_completion();
+
+    // 返回 0，表示系统调用成功
+    return 0;
 }
 
 static void do_sync_work(struct work_struct *work)

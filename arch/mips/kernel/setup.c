@@ -251,158 +251,158 @@ static void __init bootmem_init(void)
 
 #else  /* !CONFIG_SGI_IP27 */
 
+
+
+/*
+ * bootmem_init - 初始化引导内存管理器
+ *
+ * 该函数负责在系统启动时初始化引导内存管理系统，为内核分配和管理物理内存提供支持。
+ * 它初始化系统内存布局，设置可用内存范围，并为后续内存管理器的启动做准备。
+ */
 static void __init bootmem_init(void)
 {
-	unsigned long reserved_end;
-	unsigned long mapstart = ~0UL;
-	unsigned long bootmap_size;
-	int i;
+    unsigned long reserved_end;
+    unsigned long mapstart = ~0UL;
+    unsigned long bootmap_size;
+    int i;
 
-	/*
-	 * Init any data related to initrd. It's a nop if INITRD is
-	 * not selected. Once that done we can determine the low bound
-	 * of usable memory.
-	 */
-	reserved_end = max(init_initrd(),
-			   (unsigned long) PFN_UP(__pa_symbol(&_end)));
+    /*
+     * 初始化与 initrd（初始化内存盘）相关的数据。如果未选择 INITRD，则该操作无效。
+     * 在完成这一步后，可以确定可用内存的下限。
+     */
+    reserved_end = max(init_initrd(),
+                       (unsigned long) PFN_UP(__pa_symbol(&_end)));
 
-	/*
-	 * max_low_pfn is not a number of pages. The number of pages
-	 * of the system is given by 'max_low_pfn - min_low_pfn'.
-	 */
-	min_low_pfn = ~0UL;
-	max_low_pfn = 0;
+    /*
+     * max_low_pfn 不是页面的数量。系统页面的数量由 'max_low_pfn - min_low_pfn' 给出。
+     */
+    min_low_pfn = ~0UL;
+    max_low_pfn = 0;
 
-	/*
-	 * Find the highest page frame number we have available.
-	 */
-	for (i = 0; i < boot_mem_map.nr_map; i++) {
-		unsigned long start, end;
+    /*
+     * 查找系统中可用的最高页框号（PFN）。
+     */
+    for (i = 0; i < boot_mem_map.nr_map; i++) {
+        unsigned long start, end;
 
-		if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
-			continue;
+        // 跳过非 RAM 类型的内存块
+        if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
+            continue;
 
-		start = PFN_UP(boot_mem_map.map[i].addr);
-		end = PFN_DOWN(boot_mem_map.map[i].addr
-				+ boot_mem_map.map[i].size);
+        start = PFN_UP(boot_mem_map.map[i].addr);
+        end = PFN_DOWN(boot_mem_map.map[i].addr + boot_mem_map.map[i].size);
 
-		if (end > max_low_pfn)
-			max_low_pfn = end;
-		if (start < min_low_pfn)
-			min_low_pfn = start;
-		if (end <= reserved_end)
-			continue;
-		if (start >= mapstart)
-			continue;
-		mapstart = max(reserved_end, start);
-	}
+        // 更新最大和最小页框号
+        if (end > max_low_pfn)
+            max_low_pfn = end;
+        if (start < min_low_pfn)
+            min_low_pfn = start;
 
-	if (min_low_pfn >= max_low_pfn)
-		panic("Incorrect memory mapping !!!");
-	if (min_low_pfn > ARCH_PFN_OFFSET) {
-		pr_info("Wasting %lu bytes for tracking %lu unused pages\n",
-			(min_low_pfn - ARCH_PFN_OFFSET) * sizeof(struct page),
-			min_low_pfn - ARCH_PFN_OFFSET);
-	} else if (min_low_pfn < ARCH_PFN_OFFSET) {
-		pr_info("%lu free pages won't be used\n",
-			ARCH_PFN_OFFSET - min_low_pfn);
-	}
-	min_low_pfn = ARCH_PFN_OFFSET;
+        // 跳过在保留内存结束之前的内存
+        if (end <= reserved_end)
+            continue;
+        if (start >= mapstart)
+            continue;
+        mapstart = max(reserved_end, start);
+    }
 
-	/*
-	 * Determine low and high memory ranges
-	 */
-	max_pfn = max_low_pfn;
-	if (max_low_pfn > PFN_DOWN(HIGHMEM_START)) {
+    // 检查内存映射是否正确
+    if (min_low_pfn >= max_low_pfn)
+        panic("Incorrect memory mapping !!!");
+
+    /*
+     * 处理最小页框号和内存偏移的边界情况。
+     */
+    if (min_low_pfn > ARCH_PFN_OFFSET) {
+        pr_info("Wasting %lu bytes for tracking %lu unused pages\n",
+                (min_low_pfn - ARCH_PFN_OFFSET) * sizeof(struct page),
+                min_low_pfn - ARCH_PFN_OFFSET);
+    } else if (min_low_pfn < ARCH_PFN_OFFSET) {
+        pr_info("%lu free pages won't be used\n",
+                ARCH_PFN_OFFSET - min_low_pfn);
+    }
+    min_low_pfn = ARCH_PFN_OFFSET;
+
+    /*
+     * 确定低内存和高内存的范围。
+     */
+    max_pfn = max_low_pfn;
+    if (max_low_pfn > PFN_DOWN(HIGHMEM_START)) {
 #ifdef CONFIG_HIGHMEM
-		highstart_pfn = PFN_DOWN(HIGHMEM_START);
-		highend_pfn = max_low_pfn;
+        highstart_pfn = PFN_DOWN(HIGHMEM_START);
+        highend_pfn = max_low_pfn;
 #endif
-		max_low_pfn = PFN_DOWN(HIGHMEM_START);
-	}
+        max_low_pfn = PFN_DOWN(HIGHMEM_START);
+    }
 
-	/*
-	 * Initialize the boot-time allocator with low memory only.
-	 */
-	bootmap_size = init_bootmem_node(NODE_DATA(0), mapstart,
-					 min_low_pfn, max_low_pfn);
+    /*
+     * 使用低内存初始化引导分配器。
+     */
+    bootmap_size = init_bootmem_node(NODE_DATA(0), mapstart,
+                                     min_low_pfn, max_low_pfn);
 
+    // 注册低内存的可用范围
+    for (i = 0; i < boot_mem_map.nr_map; i++) {
+        unsigned long start, end;
 
-	for (i = 0; i < boot_mem_map.nr_map; i++) {
-		unsigned long start, end;
+        start = PFN_UP(boot_mem_map.map[i].addr);
+        end = PFN_DOWN(boot_mem_map.map[i].addr + boot_mem_map.map[i].size);
 
-		start = PFN_UP(boot_mem_map.map[i].addr);
-		end = PFN_DOWN(boot_mem_map.map[i].addr
-				+ boot_mem_map.map[i].size);
-
-		if (start <= min_low_pfn)
-			start = min_low_pfn;
-		if (start >= end)
-			continue;
+        if (start <= min_low_pfn)
+            start = min_low_pfn;
+        if (start >= end)
+            continue;
 
 #ifndef CONFIG_HIGHMEM
-		if (end > max_low_pfn)
-			end = max_low_pfn;
+        if (end > max_low_pfn)
+            end = max_low_pfn;
 
-		/*
-		 * ... finally, is the area going away?
-		 */
-		if (end <= start)
-			continue;
+        // 检查内存区域是否已经无效
+        if (end <= start)
+            continue;
 #endif
+        add_active_range(0, start, end);
+    }
 
-		add_active_range(0, start, end);
-	}
+    /*
+     * 将低内存的可用页框注册到引导内存分配器中。
+     */
+    for (i = 0; i < boot_mem_map.nr_map; i++) {
+        unsigned long start, end, size;
 
-	/*
-	 * Register fully available low RAM pages with the bootmem allocator.
-	 */
-	for (i = 0; i < boot_mem_map.nr_map; i++) {
-		unsigned long start, end, size;
+        if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
+            continue;
 
-		/*
-		 * Reserve usable memory.
-		 */
-		if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
-			continue;
+        start = PFN_UP(boot_mem_map.map[i].addr);
+        end = PFN_DOWN(boot_mem_map.map[i].addr + boot_mem_map.map[i].size);
 
-		start = PFN_UP(boot_mem_map.map[i].addr);
-		end   = PFN_DOWN(boot_mem_map.map[i].addr
-				    + boot_mem_map.map[i].size);
-		/*
-		 * We are rounding up the start address of usable memory
-		 * and at the end of the usable range downwards.
-		 */
-		if (start >= max_low_pfn)
-			continue;
-		if (start < reserved_end)
-			start = reserved_end;
-		if (end > max_low_pfn)
-			end = max_low_pfn;
+        // 对起始和结束地址进行调整
+        if (start >= max_low_pfn)
+            continue;
+        if (start < reserved_end)
+            start = reserved_end;
+        if (end > max_low_pfn)
+            end = max_low_pfn;
 
-		/*
-		 * ... finally, is the area going away?
-		 */
-		if (end <= start)
-			continue;
-		size = end - start;
+        if (end <= start)
+            continue;
+        size = end - start;
 
-		/* Register lowmem ranges */
-		free_bootmem(PFN_PHYS(start), size << PAGE_SHIFT);
-		memory_present(0, start, end);
-	}
+        // 注册低内存范围
+        free_bootmem(PFN_PHYS(start), size << PAGE_SHIFT);
+        memory_present(0, start, end);
+    }
 
-	/*
-	 * Reserve the bootmap memory.
-	 */
-	reserve_bootmem(PFN_PHYS(mapstart), bootmap_size, BOOTMEM_DEFAULT);
+    /*
+     * 保留引导映射内存。
+     */
+    reserve_bootmem(PFN_PHYS(mapstart), bootmap_size, BOOTMEM_DEFAULT);
 
-	/*
-	 * Reserve initrd memory if needed.
-	 */
-	finalize_initrd();
+    /*
+     * 如果需要，保留 initrd（初始化内存盘）的内存。
+     */
+    finalize_initrd();
 }
-
 #endif	/* CONFIG_SGI_IP27 */
 
 /*

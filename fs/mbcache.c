@@ -4,26 +4,26 @@
  */
 
 /*
- * Filesystem Meta Information Block Cache (mbcache)
+ * 文件系统元信息块缓存（mbcache）
  *
- * The mbcache caches blocks of block devices that need to be located
- * by their device/block number, as well as by other criteria (such
- * as the block's contents).
+ * mbcache缓存需要定位的块设备的块
+ * 通过它们的设备/块号，以及其他标准（例如
+ * 作为块的内容）。
  *
- * There can only be one cache entry in a cache per device and block number.
- * Additional indexes need not be unique in this sense. The number of
- * additional indexes (=other criteria) can be hardwired at compile time
- * or specified at cache create time.
+ * 每个设备和块号的缓存中只能有一个缓存条目。
+ * 从这个意义上说，附加索引不必是唯一的。数量
+ * 附加索引（=其他标准）可以在编译时硬连线
+ * 或在缓存创建时指定。
  *
- * Each cache entry is of fixed size. An entry may be `valid' or `invalid'
- * in the cache. A valid entry is in the main hash tables of the cache,
- * and may also be in the lru list. An invalid entry is not in any hashes
- * or lists.
+ * 每个缓存条目的大小都是固定的。条目可能是“有效”或“无效”
+ * 在缓存中。有效条目位于缓存的主哈希表中，
+ * 也可能在 lru 列表中。无效条目不在任何哈希中
+ * 或列表。
  *
- * A valid cache entry is only in the lru list if no handles refer to it.
- * Invalid cache entries will be freed when the last handle to the cache
- * entry is released. Entries that cannot be freed immediately are put
- * back on the lru list.
+ * 如果没有句柄引用它，则有效的缓存条目仅位于 lru 列表中。
+ * 当最后一个句柄到达缓存时，无效的缓存条目将被释放
+ * 条目已发布。无法立即释放的条目将被放入
+ * 回到 lru 列表中。
  */
 
 #include <linux/kernel.h>

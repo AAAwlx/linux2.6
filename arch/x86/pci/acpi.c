@@ -307,25 +307,36 @@ int __init pci_acpi_init(void)
 {
 	struct pci_dev *dev = NULL;
 
+	// 如果 ACPI 中断处理被禁用，直接返回错误代码 -ENODEV（无设备）
 	if (acpi_noirq)
 		return -ENODEV;
 
+	// 打印信息，表示使用 ACPI 进行 IRQ 路由
 	printk(KERN_INFO "PCI: Using ACPI for IRQ routing\n");
+
+	// 初始化 ACPI 中断惩罚机制，这通常用于处理 ACPI 中断的优先级
 	acpi_irq_penalty_init();
+
+	// 设置用于启用和禁用 PCI 中断的函数指针为 ACPI 相关的实现
 	pcibios_enable_irq = acpi_pci_irq_enable;
 	pcibios_disable_irq = acpi_pci_irq_disable;
+
+	// 将 x86 初始化结构体中的 PCI 中断初始化函数设置为无操作函数
 	x86_init.pci.init_irq = x86_init_noop;
 
+	// 如果指定了 pci=routeirq 参数
 	if (pci_routeirq) {
 		/*
-		 * PCI IRQ routing is set up by pci_enable_device(), but we
-		 * also do it here in case there are still broken drivers that
-		 * don't use pci_enable_device().
+		 * 如果配置了 "pci=routeirq" 参数，我们手动为所有 PCI 设备设置中断路由
+		 * 这是为了处理一些仍未使用 pci_enable_device() 的旧驱动程序
 		 */
 		printk(KERN_INFO "PCI: Routing PCI interrupts for all devices because \"pci=routeirq\" specified\n");
+		// 遍历所有 PCI 设备并启用其 ACPI 中断
 		for_each_pci_dev(dev)
 			acpi_pci_irq_enable(dev);
 	}
 
+	// 成功完成初始化，返回 0
 	return 0;
 }
+

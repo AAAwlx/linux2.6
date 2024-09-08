@@ -792,80 +792,80 @@ static int set_bdev_super(struct super_block *s, void *data)
 	return 0;
 }
 
-static int test_bdev_super(struct super_block *s, void *data)
-{
-	return (void *)s->s_bdev == data;
-}
-
 int get_sb_bdev(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data,
 	int (*fill_super)(struct super_block *, void *, int),
 	struct vfsmount *mnt)
 {
-	struct block_device *bdev;
-	struct super_block *s;
-	fmode_t mode = FMODE_READ;
-	int error = 0;
+	struct block_device *bdev;      /* 块设备结构体指针 */
+	struct super_block *s;         /* 超级块结构体指针 */
+	fmode_t mode = FMODE_READ;     /* 打开设备的模式，默认为只读 */
+	int error = 0;                 /* 错误码，初始为 0 */
 
+	/* 如果 flags 中没有 MS_RDONLY 标志，设置模式为读写 */
 	if (!(flags & MS_RDONLY))
 		mode |= FMODE_WRITE;
 
+	/* 打开块设备，获取独占访问权限 */
 	bdev = open_bdev_exclusive(dev_name, mode, fs_type);
 	if (IS_ERR(bdev))
-		return PTR_ERR(bdev);
+		return PTR_ERR(bdev);  /* 如果打开设备失败，返回错误码 */
 
 	/*
-	 * once the super is inserted into the list by sget, s_umount
-	 * will protect the lockfs code from trying to start a snapshot
-	 * while we are mounting
+	 * 当超级块通过 sget 函数插入列表后，s_umount 将保护锁定文件系统
+	 * 防止在我们挂载时尝试启动快照
 	 */
-	mutex_lock(&bdev->bd_fsfreeze_mutex);
-	if (bdev->bd_fsfreeze_count > 0) {
-		mutex_unlock(&bdev->bd_fsfreeze_mutex);
-		error = -EBUSY;
-		goto error_bdev;
+	mutex_lock(&bdev->bd_fsfreeze_mutex);  /* 加锁，防止文件系统冻结 */
+	if (bdev->bd_fsfreeze_count > 0) {    /* 如果设备正在冻结 */
+		mutex_unlock(&bdev->bd_fsfreeze_mutex);  /* 解锁 */
+		error = -EBUSY;  /* 设备忙，返回错误码 */
+		goto error_bdev;  /* 跳转到错误处理部分 */
 	}
-	s = sget(fs_type, test_bdev_super, set_bdev_super, bdev);
-	mutex_unlock(&bdev->bd_fsfreeze_mutex);
-	if (IS_ERR(s))
-		goto error_s;
 
-	if (s->s_root) {
-		if ((flags ^ s->s_flags) & MS_RDONLY) {
-			deactivate_locked_super(s);
-			error = -EBUSY;
-			goto error_bdev;
+	/* 查找超级块，若不存在则创建 */
+	s = sget(fs_type, test_bdev_super, set_bdev_super, bdev);
+	mutex_unlock(&bdev->bd_fsfreeze_mutex);  /* 解锁 */
+	if (IS_ERR(s))
+		goto error_s;  /* 查找超级块失败，跳转到错误处理部分 */
+
+	if (s->s_root) {  /* 如果超级块已经有根目录 */
+		if ((flags ^ s->s_flags) & MS_RDONLY) {  /* 如果挂载标志与当前标志不匹配 */
+			deactivate_locked_super(s);  /* 解除锁定超级块 */
+			error = -EBUSY;  /* 设备忙，返回错误码 */
+			goto error_bdev;  /* 跳转到错误处理部分 */
 		}
 
+		/* 关闭块设备的独占访问权限 */
 		close_bdev_exclusive(bdev, mode);
 	} else {
-		char b[BDEVNAME_SIZE];
+		char b[BDEVNAME_SIZE];  /* 存储设备名称的缓冲区 */
 
-		s->s_flags = flags;
-		s->s_mode = mode;
-		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
-		sb_set_blocksize(s, block_size(bdev));
-		error = fill_super(s, data, flags & MS_SILENT ? 1 : 0);
-		if (error) {
-			deactivate_locked_super(s);
-			goto error;
+		s->s_flags = flags;  /* 设置超级块的标志 */
+		s->s_mode = mode;    /* 设置超级块的模式 */
+		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));  /* 复制设备名称到超级块 */
+		sb_set_blocksize(s, block_size(bdev));  /* 设置块大小 */
+		error = fill_super(s, data, flags & MS_SILENT ? 1 : 0);  /* 填充超级块 */
+		if (error) {  /* 如果填充失败 */
+			deactivate_locked_super(s);  /* 解除锁定超级块 */
+			goto error;  /* 跳转到错误处理部分 */
 		}
 
-		s->s_flags |= MS_ACTIVE;
-		bdev->bd_super = s;
+		s->s_flags |= MS_ACTIVE;  /* 激活超级块 */
+		bdev->bd_super = s;      /* 将超级块指针设置到块设备 */
 	}
 
-	simple_set_mnt(mnt, s);
-	return 0;
+	simple_set_mnt(mnt, s);  /* 设置虚拟文件系统挂载点 */
+	return 0;  /* 成功，返回 0 */
 
 error_s:
-	error = PTR_ERR(s);
+	error = PTR_ERR(s);  /* 获取超级块的错误码 */
 error_bdev:
-	close_bdev_exclusive(bdev, mode);
+	close_bdev_exclusive(bdev, mode);  /* 关闭块设备的独占访问权限 */
 error:
-	return error;
+	return error;  /* 返回错误码 */
 }
-EXPORT_SYMBOL(get_sb_bdev);
+EXPORT_SYMBOL(get_sb_bdev);  /* 导出符号，使其可以在其他模块中使用 */
+
 
 void kill_block_super(struct super_block *sb)
 {

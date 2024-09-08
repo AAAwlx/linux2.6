@@ -15,11 +15,12 @@
 
 /* extensible setup data list node */
 struct setup_data {
-	__u64 next;
-	__u32 type;
-	__u32 len;
-	__u8 data[0];
+    __u64 next;   // 下一个 setup_data 结构的物理地址
+    __u32 type;   // 数据类型，标识 data 字段中的数据类型
+    __u32 len;    // 数据的长度，单位为字节
+    __u8  data[0];// 数据本身的开始位置（柔性数组成员）
 };
+
 
 struct setup_header {
 	__u8	setup_sects;

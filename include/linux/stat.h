@@ -9,17 +9,17 @@
 
 #if defined(__KERNEL__) || !defined(__GLIBC__) || (__GLIBC__ < 2)
 
-#define S_IFMT  00170000
-#define S_IFSOCK 0140000
-#define S_IFLNK	 0120000
-#define S_IFREG  0100000
-#define S_IFBLK  0060000
-#define S_IFDIR  0040000
-#define S_IFCHR  0020000
-#define S_IFIFO  0010000
-#define S_ISUID  0004000
-#define S_ISGID  0002000
-#define S_ISVTX  0001000
+#define S_IFMT  00170000//文件类型的掩码，用于提取文件的类型位
+#define S_IFSOCK 0140000//套接字
+#define S_IFLNK	 0120000//符号链接
+#define S_IFREG  0100000//常规文件
+#define S_IFBLK  0060000//块设备
+#define S_IFDIR  0040000//目录
+#define S_IFCHR  0020000//字符设备
+#define S_IFIFO  0010000//管道
+#define S_ISUID  0004000//设置用户ID位
+#define S_ISGID  0002000//设置组ID位
+#define S_ISVTX  0001000//粘滞位
 
 #define S_ISLNK(m)	(((m) & S_IFMT) == S_IFLNK)
 #define S_ISREG(m)	(((m) & S_IFMT) == S_IFREG)

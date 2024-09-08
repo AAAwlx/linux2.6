@@ -660,6 +660,7 @@ void __init initmem_init(unsigned long start_pfn, unsigned long last_pfn,
 	nodes_clear(node_online_map);
 
 #ifdef CONFIG_NUMA_EMU
+	// 如果启用了 NUMA 模拟，并且 cmdline 参数设置了且 numa_emulation 检测未通过，返回
 	if (cmdline && !numa_emulation(start_pfn, last_pfn, acpi, k8))
 		return;
 	nodes_clear(node_possible_map);
@@ -667,6 +668,7 @@ void __init initmem_init(unsigned long start_pfn, unsigned long last_pfn,
 #endif
 
 #ifdef CONFIG_ACPI_NUMA
+	// 如果启用了 ACPI NUMA 支持，并且 ACPI 参数存在且 acpi_scan_nodes 检测未通过，返回
 	if (!numa_off && acpi && !acpi_scan_nodes(start_pfn << PAGE_SHIFT,
 						  last_pfn << PAGE_SHIFT))
 		return;
@@ -675,41 +677,52 @@ void __init initmem_init(unsigned long start_pfn, unsigned long last_pfn,
 #endif
 
 #ifdef CONFIG_K8_NUMA
+	// 如果启用了 K8 NUMA 支持，并且 k8 参数存在且 k8_scan_nodes 检测未通过，返回
 	if (!numa_off && k8 && !k8_scan_nodes())
 		return;
 	nodes_clear(node_possible_map);
 	nodes_clear(node_online_map);
 #endif
+
 	printk(KERN_INFO "%s\n",
 	       numa_off ? "NUMA turned off" : "No NUMA configuration found");
-
+	
+	// 如果没有找到 NUMA 配置，打印相关信息并设置一个虚拟节点
 	printk(KERN_INFO "Faking a node at %016lx-%016lx\n",
 	       start_pfn << PAGE_SHIFT,
 	       last_pfn << PAGE_SHIFT);
+
 	/* setup dummy node covering all memory */
-	memnode_shift = 63;
-	memnodemap = memnode.embedded_map;
-	memnodemap[0] = 0;
-	node_set_online(0);
-	node_set(0, node_possible_map);
+	memnode_shift = 63;  // 设置内存节点的位移
+	memnodemap = memnode.embedded_map;  // 设置内存节点映射
+	memnodemap[0] = 0;  // 初始化节点映射
+	node_set_online(0);  // 设置节点为在线状态
+	node_set(0, node_possible_map);  // 设置节点在可能的节点映射中
 	for (i = 0; i < nr_cpu_ids; i++)
-		numa_set_node(i, 0);
-	e820_register_active_regions(0, start_pfn, last_pfn);
-	setup_node_bootmem(0, start_pfn << PAGE_SHIFT, last_pfn << PAGE_SHIFT);
+		numa_set_node(i, 0);  // 将所有 CPU 设置到节点 0
+
+	e820_register_active_regions(0, start_pfn, last_pfn);  // 注册活动的内存区域
+	setup_node_bootmem(0, start_pfn << PAGE_SHIFT, last_pfn << PAGE_SHIFT);  // 设置节点的 bootmem
 }
+
 
 unsigned long __init numa_free_all_bootmem(void)
 {
-	unsigned long pages = 0;
+	unsigned long pages = 0;  // 用于记录释放的页数
 	int i;
 
+	// 遍历所有在线节点（NUMA节点）
 	for_each_online_node(i)
+		// 对每个在线节点释放其 bootmem，并累加释放的页数
 		pages += free_all_bootmem_node(NODE_DATA(i));
 
 #ifdef CONFIG_NO_BOOTMEM
+	// 如果定义了 CONFIG_NO_BOOTMEM，则释放早期使用的内存
+	// 并累加释放的页数
 	pages += free_all_memory_core_early(MAX_NUMNODES);
 #endif
 
+	// 返回释放的总页数
 	return pages;
 }
 

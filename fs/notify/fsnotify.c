@@ -138,9 +138,11 @@ void fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is, const 
 	struct fsnotify_group *group;
 	struct fsnotify_event *event = NULL;
 	int idx;
-	/* global tests shouldn't care about events on child only the specific event */
+
+	// 1. 计算测试掩码，去掉 FS_EVENT_ON_CHILD 标志，因为全局测试通常只关心特定事件，而不是子事件
 	__u32 test_mask = (mask & ~FS_EVENT_ON_CHILD);
 
+	// 2. 如果没有 fsnotify 组，或掩码不匹配全局掩码，则返回
 	if (list_empty(&fsnotify_groups))
 		return;
 
@@ -149,37 +151,38 @@ void fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is, const 
 
 	if (!(test_mask & to_tell->i_fsnotify_mask))
 		return;
-	/*
-	 * SRCU!!  the groups list is very very much read only and the path is
-	 * very hot.  The VAST majority of events are not going to need to do
-	 * anything other than walk the list so it's crazy to pre-allocate.
-	 */
+
+	// 3. 获取 SRCU 锁以遍历 fsnotify 组
 	idx = srcu_read_lock(&fsnotify_grp_srcu);
 	list_for_each_entry_rcu(group, &fsnotify_groups, group_list) {
+		// 4. 如果掩码匹配，检查组是否应该处理该事件
 		if (test_mask & group->mask) {
 			if (!group->ops->should_send_event(group, to_tell, mask))
 				continue;
+
+			// 5. 如果没有事件对象，则创建一个新的事件对象
 			if (!event) {
 				event = fsnotify_create_event(to_tell, mask, data,
 							      data_is, file_name, cookie,
 							      GFP_KERNEL);
-				/* shit, we OOM'd and now we can't tell, maybe
-				 * someday someone else will want to do something
-				 * here */
+				// 6. 如果内存不足而事件对象未创建，则退出循环
 				if (!event)
 					break;
 			}
+
+			// 7. 处理事件
 			group->ops->handle_event(group, event);
 		}
 	}
+	// 8. 释放 SRCU 锁
 	srcu_read_unlock(&fsnotify_grp_srcu, idx);
-	/*
-	 * fsnotify_create_event() took a reference so the event can't be cleaned
-	 * up while we are still trying to add it to lists, drop that one.
-	 */
+
+	// 9. 事件创建函数 fsnotify_create_event() 已经对事件对象进行了引用计数，
+	//     在处理事件后需要释放这个事件对象的引用
 	if (event)
 		fsnotify_put_event(event);
 }
+
 EXPORT_SYMBOL_GPL(fsnotify);
 
 static __init int fsnotify_init(void)

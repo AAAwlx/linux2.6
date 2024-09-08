@@ -28,15 +28,15 @@
  * The current flushing context - we pass it instead of 5 arguments:
  */
 struct cpa_data {
-	unsigned long	*vaddr;
-	pgprot_t	mask_set;
-	pgprot_t	mask_clr;
-	int		numpages;
-	int		flags;
-	unsigned long	pfn;
-	unsigned	force_split : 1;
-	int		curpage;
-	struct page	**pages;
+    unsigned long *vaddr;  // 指向页面虚拟地址数组的指针，用于保存需要修改属性的页面地址。
+    pgprot_t mask_set;     // 需要设置的页表属性掩码，表示要应用的页面属性标志位。
+    pgprot_t mask_clr;     // 需要清除的页表属性掩码，表示要移除的页面属性标志位。
+    int numpages;          // 要修改属性的页面数，表示范围内包含的页面数量。
+    int flags;             // 标志位，用于保存额外的操作信息，例如是否是数组等。
+    unsigned long pfn;     // 保存当前页面的页帧号 (Page Frame Number)，标识物理内存中的页面。
+    unsigned force_split : 1;  // 布尔标志，用于强制大页分割为小页（4KB 页）。
+    int curpage;           // 当前正在处理的页面索引，用于在数组中跟踪处理进度。
+    struct page **pages;   // 指向页面结构体指针的数组，保存页面数组的信息。
 };
 
 /*
@@ -788,48 +788,72 @@ static int cpa_process_alias(struct cpa_data *cpa)
 
 static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
 {
-	int ret, numpages = cpa->numpages;
+    int ret, numpages = cpa->numpages;
 
-	while (numpages) {
-		/*
-		 * Store the remaining nr of pages for the large page
-		 * preservation check.
-		 */
-		cpa->numpages = numpages;
-		/* for array changes, we can't use large page */
-		if (cpa->flags & (CPA_ARRAY | CPA_PAGES_ARRAY))
-			cpa->numpages = 1;
+    while (numpages) {
+        /*
+         * 保存剩余的页面数量，以用于大页面保持检查。
+         * 在这个循环中，每次处理 `numpages` 中的页面数。
+         */
+        cpa->numpages = numpages;
 
-		if (!debug_pagealloc)
-			spin_lock(&cpa_lock);
-		ret = __change_page_attr(cpa, checkalias);
-		if (!debug_pagealloc)
-			spin_unlock(&cpa_lock);
-		if (ret)
-			return ret;
+        /* 
+         * 如果 `cpa->flags` 标志包含 CPA_ARRAY 或 CPA_PAGES_ARRAY，
+         * 表示无法处理大页面，只能单独处理每个页面，因此将 `numpages` 设置为 1。
+         */
+        if (cpa->flags & (CPA_ARRAY | CPA_PAGES_ARRAY))
+            cpa->numpages = 1;
 
-		if (checkalias) {
-			ret = cpa_process_alias(cpa);
-			if (ret)
-				return ret;
-		}
+        /*
+         * 如果未启用 debug_pagealloc（调试页面分配），锁定 `cpa_lock`。
+         * 这是为了防止并发修改页面属性。
+         */
+        if (!debug_pagealloc)
+            spin_lock(&cpa_lock);
 
-		/*
-		 * Adjust the number of pages with the result of the
-		 * CPA operation. Either a large page has been
-		 * preserved or a single page update happened.
-		 */
-		BUG_ON(cpa->numpages > numpages);
-		numpages -= cpa->numpages;
-		if (cpa->flags & (CPA_PAGES_ARRAY | CPA_ARRAY))
-			cpa->curpage++;
-		else
-			*cpa->vaddr += cpa->numpages * PAGE_SIZE;
+        /* 调用 __change_page_attr 修改页面属性 */
+        ret = __change_page_attr(cpa, checkalias);
 
-	}
-	return 0;
+        /* 解锁 cpa_lock */
+        if (!debug_pagealloc)
+            spin_unlock(&cpa_lock);
+
+        /* 如果返回值非零，表示修改页面属性时出现错误，直接返回错误代码 */
+        if (ret)
+            return ret;
+
+        /* 
+         * 如果 `checkalias` 标志为真，调用 `cpa_process_alias` 检查并处理页面的别名。
+         * 别名检查确保多个映射地址指向同一物理页时不会出现不一致性。
+         */
+        if (checkalias) {
+            ret = cpa_process_alias(cpa);
+            if (ret)
+                return ret;
+        }
+
+        /*
+         * 校验页面数 `cpa->numpages`，确保它不会大于剩余的页面数 `numpages`。
+         * 这保证每次循环后都会正确减少页面数。
+         */
+        BUG_ON(cpa->numpages > numpages);
+
+        /* 减少 `numpages` 以反映当前 CPA 操作处理的页面数 */
+        numpages -= cpa->numpages;
+
+        /*
+         * 如果使用的是数组（CPA_ARRAY 或 CPA_PAGES_ARRAY），则移动到下一个页面。
+         * 否则，更新虚拟地址以处理下一批页面。
+         */
+        if (cpa->flags & (CPA_PAGES_ARRAY | CPA_ARRAY))
+            cpa->curpage++;
+        else
+            *cpa->vaddr += cpa->numpages * PAGE_SIZE;
+    }
+
+    /* 成功处理所有页面后返回 0 */
+    return 0;
 }
-
 static inline int cache_attr(pgprot_t attr)
 {
 	return pgprot_val(attr) &
@@ -1285,37 +1309,45 @@ static int __set_pages_np(struct page *page, int numpages)
 	 */
 	return __change_page_attr_set_clr(&cpa, 0);
 }
-
 void kernel_map_pages(struct page *page, int numpages, int enable)
 {
-	if (PageHighMem(page))
-		return;
-	if (!enable) {
-		debug_check_no_locks_freed(page_address(page),
-					   numpages * PAGE_SIZE);
-	}
+    // 如果页面是高内存页（HighMem），则不进行映射，直接返回。
+    if (PageHighMem(page))
+        return;
 
-	/*
-	 * If page allocator is not up yet then do not call c_p_a():
-	 */
-	if (!debug_pagealloc_enabled)
-		return;
+    // 如果要禁用页面映射（enable 为 false），在禁用之前，执行调试检查。
+    // 确保在禁用映射时，页面地址上的锁没有被释放，这个调试函数有助于防止释放内存中的锁。
+    if (!enable) {
+        debug_check_no_locks_freed(page_address(page),
+                                   numpages * PAGE_SIZE);
+    }
 
-	/*
-	 * The return value is ignored as the calls cannot fail.
-	 * Large pages for identity mappings are not used at boot time
-	 * and hence no memory allocations during large page split.
-	 */
-	if (enable)
-		__set_pages_p(page, numpages);
-	else
-		__set_pages_np(page, numpages);
+    /*
+     * 如果页面分配器尚未启动，则不要调用 c_p_a（__set_pages_p 和 __set_pages_np）。
+     * debug_pagealloc_enabled 是一个标志，用于指示页面分配器是否可用。
+     * 如果分配器不可用，则函数返回，不进行映射操作。
+     */
+    if (!debug_pagealloc_enabled)
+        return;
 
-	/*
-	 * We should perform an IPI and flush all tlbs,
-	 * but that can deadlock->flush only current cpu:
-	 */
-	__flush_tlb_all();
+    /*
+     * 设置页面的映射属性。
+     * 如果 enable 为 true，调用 __set_pages_p 将页面映射到内核虚拟地址空间。
+     * 否则调用 __set_pages_np 取消页面的映射。
+     * 函数的返回值被忽略，因为这些调用不能失败。
+     *
+     * 在内核启动时，大页映射通常不会被使用，因此在大页分裂过程中不会分配内存。
+     */
+    if (enable)
+        __set_pages_p(page, numpages);  // 启用页映射
+    else
+        __set_pages_np(page, numpages); // 禁用页映射
+
+    /*
+     * 通常我们需要发出一个 IPI（中断请求）并刷新所有处理器上的 TLB（翻译后备缓冲区）。
+     * 但是这可能会导致死锁，因此这里只刷新当前 CPU 的 TLB。
+     */
+    __flush_tlb_all();  // 刷新当前 CPU 的 TLB 缓存以确保新的页表生效
 }
 
 #ifdef CONFIG_HIBERNATION

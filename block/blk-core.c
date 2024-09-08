@@ -1241,129 +1241,141 @@ static inline bool queue_should_plug(struct request_queue *q)
 
 static int __make_request(struct request_queue *q, struct bio *bio)
 {
-	struct request *req;
-	int el_ret;
-	unsigned int bytes = bio->bi_size;
-	const unsigned short prio = bio_prio(bio);
-	const bool sync = bio_rw_flagged(bio, BIO_RW_SYNCIO);
-	const bool unplug = bio_rw_flagged(bio, BIO_RW_UNPLUG);
-	const unsigned int ff = bio->bi_rw & REQ_FAILFAST_MASK;
-	int rw_flags;
+	// 定义了所需的局部变量
+	struct request *req;	// 请求指针
+	int el_ret;	// 电梯合并的返回值
+	unsigned int bytes = bio->bi_size;	// BIO 中的数据大小
+	const unsigned short prio = bio_prio(bio);	// BIO 的优先级
+	const bool sync = bio_rw_flagged(bio, BIO_RW_SYNCIO);	// 是否为同步 I/O
+	const bool unplug = bio_rw_flagged(bio, BIO_RW_UNPLUG);	// 是否解除插入标记
+	const unsigned int ff = bio->bi_rw & REQ_FAILFAST_MASK;	// 快速失败标志
+	int rw_flags;	// 读写标志位
 
+	// 如果请求是带屏障的写操作并且队列不支持屏障请求，则返回不支持错误
 	if (bio_rw_flagged(bio, BIO_RW_BARRIER) &&
 	    (q->next_ordered == QUEUE_ORDERED_NONE)) {
-		bio_endio(bio, -EOPNOTSUPP);
+		bio_endio(bio, -EOPNOTSUPP);	// 结束 I/O，返回不支持
 		return 0;
 	}
-	/*
-	 * low level driver can indicate that it wants pages above a
-	 * certain limit bounced to low memory (ie for highmem, or even
-	 * ISA dma in theory)
-	 */
+
+	// 如果设备不支持高内存，进行内存的回弹（bounce）
 	blk_queue_bounce(q, &bio);
 
+	// 锁定队列，确保并发安全
 	spin_lock_irq(q->queue_lock);
 
+	// 如果请求是屏障写操作或电梯（I/O调度器）队列为空，跳到请求分配阶段
 	if (unlikely(bio_rw_flagged(bio, BIO_RW_BARRIER)) || elv_queue_empty(q))
 		goto get_rq;
 
+	// 尝试进行电梯合并操作
 	el_ret = elv_merge(q, &req, bio);
+
+	// 根据电梯返回值选择合并策略
 	switch (el_ret) {
 	case ELEVATOR_BACK_MERGE:
-		BUG_ON(!rq_mergeable(req));
+		BUG_ON(!rq_mergeable(req));	// 验证请求是否可以合并
 
+		// 后向合并 BIO，如果不成功则跳出
 		if (!ll_back_merge_fn(q, req, bio))
 			break;
 
+		// 记录后向合并事件
 		trace_block_bio_backmerge(q, bio);
 
+		// 如果请求标志位不同于 BIO 的标志位，设置混合合并标志
 		if ((req->cmd_flags & REQ_FAILFAST_MASK) != ff)
 			blk_rq_set_mixed_merge(req);
 
+		// 将当前 BIO 加入到请求链表的尾部
 		req->biotail->bi_next = bio;
 		req->biotail = bio;
-		req->__data_len += bytes;
-		req->ioprio = ioprio_best(req->ioprio, prio);
-		if (!blk_rq_cpu_valid(req))
+		req->__data_len += bytes;	// 更新请求的数据长度
+		req->ioprio = ioprio_best(req->ioprio, prio);	// 更新请求的优先级
+		if (!blk_rq_cpu_valid(req))	// 更新请求的 CPU 信息
 			req->cpu = bio->bi_comp_cpu;
+
+		// 尝试后向合并
 		drive_stat_acct(req, 0);
 		if (!attempt_back_merge(q, req))
 			elv_merged_request(q, req, el_ret);
 		goto out;
 
 	case ELEVATOR_FRONT_MERGE:
-		BUG_ON(!rq_mergeable(req));
+		BUG_ON(!rq_mergeable(req));	// 验证请求是否可以合并
 
+		// 前向合并 BIO，如果不成功则跳出
 		if (!ll_front_merge_fn(q, req, bio))
 			break;
 
+		// 记录前向合并事件
 		trace_block_bio_frontmerge(q, bio);
 
+		// 如果请求标志位不同于 BIO 的标志位，设置混合合并标志
 		if ((req->cmd_flags & REQ_FAILFAST_MASK) != ff) {
 			blk_rq_set_mixed_merge(req);
 			req->cmd_flags &= ~REQ_FAILFAST_MASK;
 			req->cmd_flags |= ff;
 		}
 
+		// 将当前 BIO 插入到请求链表的头部
 		bio->bi_next = req->bio;
 		req->bio = bio;
 
-		/*
-		 * may not be valid. if the low level driver said
-		 * it didn't need a bounce buffer then it better
-		 * not touch req->buffer either...
-		 */
+		// 更新请求的扇区和数据长度
 		req->buffer = bio_data(bio);
 		req->__sector = bio->bi_sector;
 		req->__data_len += bytes;
-		req->ioprio = ioprio_best(req->ioprio, prio);
-		if (!blk_rq_cpu_valid(req))
+		req->ioprio = ioprio_best(req->ioprio, prio);	// 更新请求的优先级
+		if (!blk_rq_cpu_valid(req))	// 更新请求的 CPU 信息
 			req->cpu = bio->bi_comp_cpu;
+
+		// 尝试前向合并
 		drive_stat_acct(req, 0);
 		if (!attempt_front_merge(q, req))
 			elv_merged_request(q, req, el_ret);
 		goto out;
 
-	/* ELV_NO_MERGE: elevator says don't/can't merge. */
+	// 如果电梯不允许合并或不能合并，继续请求分配
 	default:
 		;
 	}
 
 get_rq:
-	/*
-	 * This sync check and mask will be re-done in init_request_from_bio(),
-	 * but we need to set it earlier to expose the sync flag to the
-	 * rq allocator and io schedulers.
-	 */
+	// 如果是同步 I/O，设置同步标志位
 	rw_flags = bio_data_dir(bio);
 	if (sync)
 		rw_flags |= REQ_RW_SYNC;
 
-	/*
-	 * Grab a free request. This is might sleep but can not fail.
-	 * Returns with the queue unlocked.
-	 */
+	// 获取一个可用的请求，这可能会睡眠，但不会失败
 	req = get_request_wait(q, rw_flags, bio);
 
-	/*
-	 * After dropping the lock and possibly sleeping here, our request
-	 * may now be mergeable after it had proven unmergeable (above).
-	 * We don't worry about that case for efficiency. It won't happen
-	 * often, and the elevators are able to handle it.
-	 */
+	// 初始化请求
 	init_request_from_bio(req, bio);
 
+	// 重新加锁，确保并发安全
 	spin_lock_irq(q->queue_lock);
+
+	// 如果设置了 CPU 亲和性标志或队列标志，则为请求分配 CPU
 	if (test_bit(QUEUE_FLAG_SAME_COMP, &q->queue_flags) ||
 	    bio_flagged(bio, BIO_CPU_AFFINE))
 		req->cpu = blk_cpu_to_group(smp_processor_id());
+
+	// 如果电梯队列为空，则插入设备
 	if (queue_should_plug(q) && elv_queue_empty(q))
 		blk_plug_device(q);
+
+	// 将请求添加到队列
 	add_request(q, req);
+
 out:
+	// 如果需要解除插入标记或队列不应插入，则解除设备插入标记
 	if (unplug || !queue_should_plug(q))
 		__generic_unplug_device(q);
+
+	// 解锁队列
 	spin_unlock_irq(q->queue_lock);
+
 	return 0;
 }
 

@@ -51,10 +51,11 @@
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
 struct e820entry {
-	__u64 addr;	/* start of memory segment */
-	__u64 size;	/* size of memory segment */
-	__u32 type;	/* type of memory segment */
+	__u64 addr;    /* 内存段的起始地址 */
+	__u64 size;    /* 内存段的大小 */
+	__u32 type;    /* 内存段的类型 */
 } __attribute__((packed));
+
 
 struct e820map {
 	__u32 nr_map;

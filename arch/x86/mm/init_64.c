@@ -576,19 +576,19 @@ void __init initmem_init(unsigned long start_pfn, unsigned long end_pfn,
 #ifndef CONFIG_NO_BOOTMEM
 	unsigned long bootmap_size, bootmap;
 
-	bootmap_size = bootmem_bootmap_pages(end_pfn)<<PAGE_SHIFT;
+	bootmap_size = bootmem_bootmap_pages(end_pfn)<<PAGE_SHIFT;  // 计算 bootmem bitmap的大小
 	bootmap = find_e820_area(0, end_pfn<<PAGE_SHIFT, bootmap_size,
-				 PAGE_SIZE);
+				 PAGE_SIZE);  // 查找适合的 bootmem 区域
 	if (bootmap == -1L)
-		panic("Cannot find bootmem map of size %ld\n", bootmap_size);
-	reserve_early(bootmap, bootmap + bootmap_size, "BOOTMAP");
+		panic("Cannot find bootmem map of size %ld\n", bootmap_size);  // 如果找不到合适区域，则引发 panic
+	reserve_early(bootmap, bootmap + bootmap_size, "BOOTMAP");  // 预留 bootmem 区域
 	/* don't touch min_low_pfn */
 	bootmap_size = init_bootmem_node(NODE_DATA(0), bootmap >> PAGE_SHIFT,
-					 0, end_pfn);
-	e820_register_active_regions(0, start_pfn, end_pfn);
-	free_bootmem_with_active_regions(0, end_pfn);
+					 0, end_pfn);  // 初始化 bootmem 节点
+	e820_register_active_regions(0, start_pfn, end_pfn);  // 注册活动的内存区域
+	free_bootmem_with_active_regions(0, end_pfn);  // 清理不再需要的 bootmem 区域
 #else
-	e820_register_active_regions(0, start_pfn, end_pfn);
+	e820_register_active_regions(0, start_pfn, end_pfn);  // 只注册活动区域，不处理 bootmem
 #endif
 }
 #endif
@@ -597,22 +597,28 @@ void __init paging_init(void)
 {
 	unsigned long max_zone_pfns[MAX_NR_ZONES];
 
+	// 初始化 max_zone_pfns 数组为零
 	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
-	max_zone_pfns[ZONE_DMA] = MAX_DMA_PFN;
-	max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;
-	max_zone_pfns[ZONE_NORMAL] = max_pfn;
 
+	// 设置不同区域的最大页帧号
+	max_zone_pfns[ZONE_DMA] = MAX_DMA_PFN;      // DMA 区域的最大页帧号
+	max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;  // 32 位 DMA 区域的最大页帧号
+	max_zone_pfns[ZONE_NORMAL] = max_pfn;      // 普通内存区域的最大页帧号
+
+	// 设置稀疏内存模型的活动区域
 	sparse_memory_present_with_active_regions(MAX_NUMNODES);
+
+	// 初始化稀疏内存模型
 	sparse_init();
 
 	/*
-	 * clear the default setting with node 0
-	 * note: don't use nodes_clear here, that is really clearing when
-	 *	 numa support is not compiled in, and later node_set_state
-	 *	 will not set it back.
+	 * 清除节点 0 的默认设置
+	 * 注意：不要在这里使用 nodes_clear，因为那是在没有 NUMA 支持时清除节点状态，
+	 * 并且稍后 node_set_state 将不会恢复它。
 	 */
 	node_clear_state(0, N_NORMAL_MEMORY);
 
+	// 初始化各个节点的内存区域
 	free_area_init_nodes(max_zone_pfns);
 }
 
@@ -678,40 +684,55 @@ void __init mem_init(void)
 	long codesize, reservedpages, datasize, initsize;
 	unsigned long absent_pages;
 
+	// 为PCI IOMMU分配内存（如果有）
 	pci_iommu_alloc();
 
-	/* clear_bss() already clear the empty_zero_page */
+	/* clear_bss() 函数已经清除了 empty_zero_page */
 
-	reservedpages = 0;
+	reservedpages = 0;  // 初始化保留页数为0
 
-	/* this will put all low memory onto the freelists */
+	// 将所有低位内存放入空闲列表
 #ifdef CONFIG_NUMA
+	// 如果启用了NUMA（非一致性内存访问），释放所有节点的bootmem，并返回系统中的总内存页数
 	totalram_pages = numa_free_all_bootmem();
 #else
+	// 否则，释放所有的bootmem，并返回系统中的总内存页数
 	totalram_pages = free_all_bootmem();
 #endif
 
+	// 计算从0到最大页帧号（max_pfn）之间的缺失页数
 	absent_pages = absent_pages_in_range(0, max_pfn);
+	
+	// 计算保留页的数量 = 最大页帧数 - 总可用页数 - 缺失页数
 	reservedpages = max_pfn - totalram_pages - absent_pages;
+	
+	// 设置标志，表示bootmem初始化已经结束
 	after_bootmem = 1;
 
-	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
-	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
-	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
+	// 计算代码段的大小 = _etext - _text
+	codesize = (unsigned long) &_etext - (unsigned long) &_text;
 
-	/* Register memory areas for /proc/kcore */
+	// 计算数据段的大小 = _edata - _etext
+	datasize = (unsigned long) &_edata - (unsigned long) &_etext;
+
+	// 计算初始化段的大小 = __init_end - __init_begin
+	initsize = (unsigned long) &__init_end - (unsigned long) &__init_begin;
+
+	// 为 /proc/kcore 注册内存区域
+	// 注册虚拟系统调用区域到 kcore 列表
 	kclist_add(&kcore_vsyscall, (void *)VSYSCALL_START,
 			 VSYSCALL_END - VSYSCALL_START, KCORE_OTHER);
 
+	// 输出内存信息到内核日志中
 	printk(KERN_INFO "Memory: %luk/%luk available (%ldk kernel code, "
 			 "%ldk absent, %ldk reserved, %ldk data, %ldk init)\n",
-		nr_free_pages() << (PAGE_SHIFT-10),
-		max_pfn << (PAGE_SHIFT-10),
-		codesize >> 10,
-		absent_pages << (PAGE_SHIFT-10),
-		reservedpages << (PAGE_SHIFT-10),
-		datasize >> 10,
-		initsize >> 10);
+		nr_free_pages() << (PAGE_SHIFT-10),  // 当前空闲的内存页数，转换为千字节
+		max_pfn << (PAGE_SHIFT-10),          // 系统的最大页帧数，转换为千字节
+		codesize >> 10,                      // 内核代码段的大小（以千字节为单位）
+		absent_pages << (PAGE_SHIFT-10),     // 缺失页数，转换为千字节
+		reservedpages << (PAGE_SHIFT-10),    // 保留页数，转换为千字节
+		datasize >> 10,                      // 内核数据段的大小（以千字节为单位）
+		initsize >> 10);                     // 内核初始化段的大小（以千字节为单位）
 }
 
 #ifdef CONFIG_DEBUG_RODATA

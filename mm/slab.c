@@ -1388,6 +1388,7 @@ static void __init set_up_list3s(struct kmem_cache *cachep, int index)
  */
 void __init kmem_cache_init(void)
 {
+	// 初始化过程中使用的一些变量
 	size_t left_over;
 	struct cache_sizes *sizes;
 	struct cache_names *names;
@@ -1395,9 +1396,11 @@ void __init kmem_cache_init(void)
 	int order;
 	int node;
 
+	// 如果系统中只有一个节点，不使用外来缓存
 	if (num_possible_nodes() == 1)
 		use_alien_caches = 0;
 
+	// 初始化初始的 slab 列表
 	for (i = 0; i < NUM_INIT_LISTS; i++) {
 		kmem_list3_init(&initkmem_list3[i]);
 		if (i < MAX_NUMNODES)
@@ -1405,84 +1408,53 @@ void __init kmem_cache_init(void)
 	}
 	set_up_list3s(&cache_cache, CACHE_CACHE);
 
-	/*
-	 * Fragmentation resistance on low memory - only use bigger
-	 * page orders on machines with more than 32MB of memory.
-	 */
+	// 如果总的内存超过32MB，设置slab分配器使用的页数更大，以减少碎片化
 	if (totalram_pages > (32 << 20) >> PAGE_SHIFT)
 		slab_break_gfp_order = BREAK_GFP_ORDER_HI;
 
-	/* Bootstrap is tricky, because several objects are allocated
-	 * from caches that do not exist yet:
-	 * 1) initialize the cache_cache cache: it contains the struct
-	 *    kmem_cache structures of all caches, except cache_cache itself:
-	 *    cache_cache is statically allocated.
-	 *    Initially an __init data area is used for the head array and the
-	 *    kmem_list3 structures, it's replaced with a kmalloc allocated
-	 *    array at the end of the bootstrap.
-	 * 2) Create the first kmalloc cache.
-	 *    The struct kmem_cache for the new cache is allocated normally.
-	 *    An __init data area is used for the head array.
-	 * 3) Create the remaining kmalloc caches, with minimally sized
-	 *    head arrays.
-	 * 4) Replace the __init data head arrays for cache_cache and the first
-	 *    kmalloc cache with kmalloc allocated arrays.
-	 * 5) Replace the __init data for kmem_list3 for cache_cache and
-	 *    the other cache's with kmalloc allocated memory.
-	 * 6) Resize the head arrays of the kmalloc caches to their final sizes.
-	 */
+	// 第一步: 创建缓存，用于管理 kmem_cache 结构
+	node = numa_node_id();  // 获取当前 NUMA 节点的 ID
 
-	node = numa_node_id();
+	// 初始化 cache_cache，管理所有缓存描述符
+	INIT_LIST_HEAD(&cache_chain);  // 初始化 cache_chain 列表
+	list_add(&cache_cache.next, &cache_chain);  // 将 cache_cache 加入链表
+	cache_cache.colour_off = cache_line_size();  // 设置 cache 的颜色偏移量
+	cache_cache.array[smp_processor_id()] = &initarray_cache.cache;  // 设置 per-CPU 缓存
+	cache_cache.nodelists[node] = &initkmem_list3[CACHE_CACHE + node];  // 设置节点列表
 
-	/* 1) create the cache_cache */
-	INIT_LIST_HEAD(&cache_chain);
-	list_add(&cache_cache.next, &cache_chain);
-	cache_cache.colour_off = cache_line_size();
-	cache_cache.array[smp_processor_id()] = &initarray_cache.cache;
-	cache_cache.nodelists[node] = &initkmem_list3[CACHE_CACHE + node];
-
-	/*
-	 * struct kmem_cache size depends on nr_node_ids, which
-	 * can be less than MAX_NUMNODES.
-	 */
+	// 设置 cache_cache 的大小，确保它对齐缓存行
 	cache_cache.buffer_size = offsetof(struct kmem_cache, nodelists) +
 				 nr_node_ids * sizeof(struct kmem_list3 *);
-#if DEBUG
-	cache_cache.obj_size = cache_cache.buffer_size;
-#endif
 	cache_cache.buffer_size = ALIGN(cache_cache.buffer_size,
 					cache_line_size());
 	cache_cache.reciprocal_buffer_size =
 		reciprocal_value(cache_cache.buffer_size);
 
+	// 估算缓存大小，确保有足够的空间来存放对象
 	for (order = 0; order < MAX_ORDER; order++) {
 		cache_estimate(order, cache_cache.buffer_size,
 			cache_line_size(), 0, &left_over, &cache_cache.num);
 		if (cache_cache.num)
 			break;
 	}
-	BUG_ON(!cache_cache.num);
-	cache_cache.gfporder = order;
-	cache_cache.colour = left_over / cache_cache.colour_off;
+	BUG_ON(!cache_cache.num);  // 如果计算失败，触发 BUG
+	cache_cache.gfporder = order;  // 设置缓存使用的页面顺序
+	cache_cache.colour = left_over / cache_cache.colour_off;  // 设置缓存颜色
 	cache_cache.slab_size = ALIGN(cache_cache.num * sizeof(kmem_bufctl_t) +
-				      sizeof(struct slab), cache_line_size());
+				      sizeof(struct slab), cache_line_size());  // 设置 slab 大小
 
-	/* 2+3) create the kmalloc caches */
+	// 第二步: 创建 kmalloc 缓存，用于分配内存对象
 	sizes = malloc_sizes;
 	names = cache_names;
 
-	/*
-	 * Initialize the caches that provide memory for the array cache and the
-	 * kmem_list3 structures first.  Without this, further allocations will
-	 * bug.
-	 */
-
+	// 创建内存池，确保能够正确分配 array cache 和 kmem_list3 结构
 	sizes[INDEX_AC].cs_cachep = kmem_cache_create(names[INDEX_AC].name,
 					sizes[INDEX_AC].cs_size,
 					ARCH_KMALLOC_MINALIGN,
 					ARCH_KMALLOC_FLAGS|SLAB_PANIC,
 					NULL);
 
+	// 如果 INDEX_AC 与 INDEX_L3 不同，也创建 L3 缓存
 	if (INDEX_AC != INDEX_L3) {
 		sizes[INDEX_L3].cs_cachep =
 			kmem_cache_create(names[INDEX_L3].name,
@@ -1492,16 +1464,10 @@ void __init kmem_cache_init(void)
 				NULL);
 	}
 
-	slab_early_init = 0;
+	slab_early_init = 0;  // slab 初始化标志
 
+	// 为每种大小的 slab 缓存创建内存池
 	while (sizes->cs_size != ULONG_MAX) {
-		/*
-		 * For performance, all the general caches are L1 aligned.
-		 * This should be particularly beneficial on SMP boxes, as it
-		 * eliminates "false sharing".
-		 * Note for systems short on memory removing the alignment will
-		 * allow tighter packing of the smaller caches.
-		 */
 		if (!sizes->cs_cachep) {
 			sizes->cs_cachep = kmem_cache_create(names->name,
 					sizes->cs_size,
@@ -1510,6 +1476,7 @@ void __init kmem_cache_init(void)
 					NULL);
 		}
 #ifdef CONFIG_ZONE_DMA
+		// 如果有 DMA 区域，为其创建单独的缓存
 		sizes->cs_dmacachep = kmem_cache_create(
 					names->name_dma,
 					sizes->cs_size,
@@ -1521,43 +1488,33 @@ void __init kmem_cache_init(void)
 		sizes++;
 		names++;
 	}
-	/* 4) Replace the bootstrap head arrays */
+
+	// 第四步: 替换缓存的初始化数组
 	{
 		struct array_cache *ptr;
 
 		ptr = kmalloc(sizeof(struct arraycache_init), GFP_NOWAIT);
-
 		BUG_ON(cpu_cache_get(&cache_cache) != &initarray_cache.cache);
 		memcpy(ptr, cpu_cache_get(&cache_cache),
 		       sizeof(struct arraycache_init));
-		/*
-		 * Do not assume that spinlocks can be initialized via memcpy:
-		 */
 		spin_lock_init(&ptr->lock);
-
 		cache_cache.array[smp_processor_id()] = ptr;
 
 		ptr = kmalloc(sizeof(struct arraycache_init), GFP_NOWAIT);
-
 		BUG_ON(cpu_cache_get(malloc_sizes[INDEX_AC].cs_cachep)
 		       != &initarray_generic.cache);
 		memcpy(ptr, cpu_cache_get(malloc_sizes[INDEX_AC].cs_cachep),
 		       sizeof(struct arraycache_init));
-		/*
-		 * Do not assume that spinlocks can be initialized via memcpy:
-		 */
 		spin_lock_init(&ptr->lock);
-
-		malloc_sizes[INDEX_AC].cs_cachep->array[smp_processor_id()] =
-		    ptr;
+		malloc_sizes[INDEX_AC].cs_cachep->array[smp_processor_id()] = ptr;
 	}
-	/* 5) Replace the bootstrap kmem_list3's */
+
+	// 第五步: 替换 kmem_list3 的初始化数据
 	{
 		int nid;
 
 		for_each_online_node(nid) {
 			init_list(&cache_cache, &initkmem_list3[CACHE_CACHE + nid], nid);
-
 			init_list(malloc_sizes[INDEX_AC].cs_cachep,
 				  &initkmem_list3[SIZE_AC + nid], nid);
 
@@ -1568,6 +1525,7 @@ void __init kmem_cache_init(void)
 		}
 	}
 
+	// 标志 CPU 缓存已初始化
 	g_cpucache_up = EARLY;
 }
 

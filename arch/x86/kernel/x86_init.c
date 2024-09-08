@@ -32,53 +32,54 @@ void iommu_shutdown_noop(void) { }
 struct x86_init_ops x86_init __initdata = {
 
 	.resources = {
-		.probe_roms		= x86_init_noop,
-		.reserve_resources	= reserve_standard_io_resources,
-		.memory_setup		= default_machine_specific_memory_setup,
+		.probe_roms		= x86_init_noop,  // 处理 ROM 的探测操作，这里指定为一个无操作的函数
+		.reserve_resources	= reserve_standard_io_resources,  // 保留标准 I/O 资源
+		.memory_setup		= default_machine_specific_memory_setup,  // 设置特定于机器的内存配置
 	},
 
 	.mpparse = {
-		.mpc_record		= x86_init_uint_noop,
-		.setup_ioapic_ids	= x86_init_noop,
-		.mpc_apic_id		= default_mpc_apic_id,
-		.smp_read_mpc_oem	= default_smp_read_mpc_oem,
-		.mpc_oem_bus_info	= default_mpc_oem_bus_info,
-		.find_smp_config	= default_find_smp_config,
-		.get_smp_config		= default_get_smp_config,
+		.mpc_record		= x86_init_uint_noop,  // MPC 记录解析，这里指定为一个无操作的函数
+		.setup_ioapic_ids	= x86_init_noop,  // 设置 IOAPIC IDs，这里指定为一个无操作的函数
+		.mpc_apic_id		= default_mpc_apic_id,  // 获取 MPC APIC ID
+		.smp_read_mpc_oem	= default_smp_read_mpc_oem,  // 读取 SMP 的 MPC OEM 信息
+		.mpc_oem_bus_info	= default_mpc_oem_bus_info,  // 获取 MPC OEM 总线信息
+		.find_smp_config	= default_find_smp_config,  // 查找 SMP 配置
+		.get_smp_config		= default_get_smp_config,  // 获取 SMP 配置
 	},
 
 	.irqs = {
-		.pre_vector_init	= init_ISA_irqs,
-		.intr_init		= native_init_IRQ,
-		.trap_init		= x86_init_noop,
+		.pre_vector_init	= init_ISA_irqs,  // 初始化 ISA 中断向量
+		.intr_init		= native_init_IRQ,  // 初始化本地中断
+		.trap_init		= x86_init_noop,  // 初始化陷阱处理，这里指定为一个无操作的函数
 	},
 
 	.oem = {
-		.arch_setup		= x86_init_noop,
-		.banner			= default_banner,
+		.arch_setup		= x86_init_noop,  // 架构特定的初始化设置，这里指定为一个无操作的函数
+		.banner			= default_banner,  // 打印启动横幅
 	},
 
 	.paging = {
-		.pagetable_setup_start	= native_pagetable_setup_start,
-		.pagetable_setup_done	= native_pagetable_setup_done,
+		.pagetable_setup_start	= native_pagetable_setup_start,  // 设置页表的开始阶段
+		.pagetable_setup_done	= native_pagetable_setup_done,  // 设置页表的完成阶段
 	},
 
 	.timers = {
-		.setup_percpu_clockev	= setup_boot_APIC_clock,
-		.tsc_pre_init		= x86_init_noop,
-		.timer_init		= hpet_time_init,
+		.setup_percpu_clockev	= setup_boot_APIC_clock,  // 设置每个 CPU 的 APIC 时钟
+		.tsc_pre_init		= x86_init_noop,  // 处理 TSC（时间戳计数器）的预初始化，这里指定为一个无操作的函数
+		.timer_init		= hpet_time_init,  // 初始化 HPET（高精度事件定时器）
 	},
 
 	.iommu = {
-		.iommu_init		= iommu_init_noop,
+		.iommu_init		= iommu_init_noop,  // IOMMU 的初始化，这里指定为一个无操作的函数
 	},
 
 	.pci = {
-		.init			= x86_default_pci_init,
-		.init_irq		= x86_default_pci_init_irq,
-		.fixup_irqs		= x86_default_pci_fixup_irqs,
+		.init			= x86_default_pci_init,  // PCI 总线的默认初始化
+		.init_irq		= x86_default_pci_init_irq,  // PCI 中断的默认初始化
+		.fixup_irqs		= x86_default_pci_fixup_irqs,  // 修复 PCI 中断问题的默认函数
 	},
 };
+
 
 struct x86_cpuinit_ops x86_cpuinit __cpuinitdata = {
 	.setup_percpu_clockev		= setup_secondary_APIC_clock,

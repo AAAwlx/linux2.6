@@ -21,10 +21,11 @@
 #include <linux/slab.h>
 #include "ext4.h"
 
+//该结构体用于描述 ext4 文件系统中的系统保留区（system zone)
 struct ext4_system_zone {
-	struct rb_node	node;
-	ext4_fsblk_t	start_blk;
-	unsigned int	count;
+	struct rb_node	node;//node: 用于将 ext4_system_zone 插入红黑树（rb_tree）中
+	ext4_fsblk_t	start_blk;//系统保留区的起始块号（文件系统中的块）
+	unsigned int	count;//系统保留区中块的数量
 };
 
 static struct kmem_cache *ext4_system_zone_cachep;

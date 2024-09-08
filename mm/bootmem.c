@@ -223,34 +223,45 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 	struct page *page;
 	unsigned long start, end, pages, count = 0;
 
+	// 如果当前节点的 bootmem 位图为空，则直接返回 0
 	if (!bdata->node_bootmem_map)
 		return 0;
 
+	// 获取该节点的起始页帧号 (start) 和结束页帧号 (end)
 	start = bdata->node_min_pfn;
 	end = bdata->node_low_pfn;
 
 	/*
-	 * If the start is aligned to the machines wordsize, we might
-	 * be able to free pages in bulks of that order.
+	 * 如果起始页帧号是机器字大小对齐的，
+	 * 那么我们可能可以批量释放这些页帧。
 	 */
 	aligned = !(start & (BITS_PER_LONG - 1));
 
 	bdebug("nid=%td start=%lx end=%lx aligned=%d\n",
 		bdata - bootmem_node_data, start, end, aligned);
 
+	// 遍历节点的所有页帧，批量或单个释放页面
 	while (start < end) {
 		unsigned long *map, idx, vec;
 
+		// 获取节点的 bootmem 位图指针
 		map = bdata->node_bootmem_map;
+
+		// 计算当前页帧对应的位图索引
 		idx = start - bdata->node_min_pfn;
+
+		// 获取当前页帧的位图值，取反后得到未分配的页帧
 		vec = ~map[idx / BITS_PER_LONG];
 
+		// 如果对齐，并且当前 BITS_PER_LONG 个页面全未分配，批量释放
 		if (aligned && vec == ~0UL && start + BITS_PER_LONG < end) {
 			int order = ilog2(BITS_PER_LONG);
 
+			// 批量释放页面
 			__free_pages_bootmem(pfn_to_page(start), order);
 			count += BITS_PER_LONG;
 		} else {
+			// 否则，按位检查和释放单个页面
 			unsigned long off = 0;
 
 			while (vec && off < BITS_PER_LONG) {
@@ -263,9 +274,11 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 				off++;
 			}
 		}
+		// 处理下一批页面
 		start += BITS_PER_LONG;
 	}
 
+	// 释放节点的 bootmem 位图所占用的页面
 	page = virt_to_page(bdata->node_bootmem_map);
 	pages = bdata->node_low_pfn - bdata->node_min_pfn;
 	pages = bootmem_bootmap_pages(pages);
@@ -275,9 +288,11 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 
 	bdebug("nid=%td released=%lx\n", bdata - bootmem_node_data, count);
 
+	// 返回释放的页面总数
 	return count;
 }
 #endif
+
 
 /**
  * free_all_bootmem_node - release a node's free pages to the buddy allocator
@@ -556,30 +571,39 @@ static void * __init alloc_bootmem_core(struct bootmem_data *bdata,
 	unsigned long fallback = 0;
 	unsigned long min, max, start, sidx, midx, step;
 
+	// 调试输出当前的分配请求
 	bdebug("nid=%td size=%lx [%lu pages] align=%lx goal=%lx limit=%lx\n",
 		bdata - bootmem_node_data, size, PAGE_ALIGN(size) >> PAGE_SHIFT,
 		align, goal, limit);
 
-	BUG_ON(!size);
-	BUG_ON(align & (align - 1));
-	BUG_ON(limit && goal + size > limit);
+	// 检查参数合法性
+	BUG_ON(!size); // 大小不能为0
+	BUG_ON(align & (align - 1)); // 对齐要求必须是2的幂
+	BUG_ON(limit && goal + size > limit); // 目标地址加上大小不能超过限制
 
+	// 如果没有引导内存映射，返回NULL
 	if (!bdata->node_bootmem_map)
 		return NULL;
 
+	// 获取当前节点的最小和最大页面帧号
 	min = bdata->node_min_pfn;
 	max = bdata->node_low_pfn;
 
+	// 将目标和限制地址从字节转换为页面帧号
 	goal >>= PAGE_SHIFT;
 	limit >>= PAGE_SHIFT;
 
+	// 如果限制地址不为0，并且最大页面帧号大于限制地址，则调整最大页面帧号
 	if (limit && max > limit)
 		max = limit;
+	// 如果最大页面帧号小于最小页面帧号，返回NULL
 	if (max <= min)
 		return NULL;
 
+	// 计算对齐步长
 	step = max(align >> PAGE_SHIFT, 1UL);
 
+	// 根据目标地址和最小页面帧号计算起始页面帧号
 	if (goal && min < goal && goal < max)
 		start = ALIGN(goal, step);
 	else
@@ -590,8 +614,7 @@ static void * __init alloc_bootmem_core(struct bootmem_data *bdata,
 
 	if (bdata->hint_idx > sidx) {
 		/*
-		 * Handle the valid case of sidx being zero and still
-		 * catch the fallback below.
+		 * 处理 sidx 为零的有效情况，并仍然捕捉到下面的回退
 		 */
 		fallback = sidx + 1;
 		sidx = align_idx(bdata, bdata->hint_idx, step);
@@ -601,14 +624,18 @@ static void * __init alloc_bootmem_core(struct bootmem_data *bdata,
 		int merge;
 		void *region;
 		unsigned long eidx, i, start_off, end_off;
+
 find_block:
+		// 寻找下一个零位
 		sidx = find_next_zero_bit(bdata->node_bootmem_map, midx, sidx);
 		sidx = align_idx(bdata, sidx, step);
 		eidx = sidx + PFN_UP(size);
 
+		// 如果找到的块超出范围，退出循环
 		if (sidx >= midx || eidx > midx)
 			break;
 
+		// 检查找到的块是否有占用的页面
 		for (i = sidx; i < eidx; i++)
 			if (test_bit(i, bdata->node_bootmem_map)) {
 				sidx = align_idx(bdata, i, step);
@@ -617,42 +644,46 @@ find_block:
 				goto find_block;
 			}
 
+		// 计算实际的起始地址
 		if (bdata->last_end_off & (PAGE_SIZE - 1) &&
 				PFN_DOWN(bdata->last_end_off) + 1 == sidx)
 			start_off = align_off(bdata, bdata->last_end_off, align);
 		else
 			start_off = PFN_PHYS(sidx);
 
+		// 判断是否需要合并内存区域
 		merge = PFN_DOWN(start_off) < sidx;
 		end_off = start_off + size;
 
+		// 更新最后结束偏移和提示索引
 		bdata->last_end_off = end_off;
 		bdata->hint_idx = PFN_UP(end_off);
 
 		/*
-		 * Reserve the area now:
+		 * 现在预留这个区域：
 		 */
 		if (__reserve(bdata, PFN_DOWN(start_off) + merge,
 				PFN_UP(end_off), BOOTMEM_EXCLUSIVE))
 			BUG();
 
+		// 将物理地址转换为虚拟地址，并清零分配的内存
 		region = phys_to_virt(PFN_PHYS(bdata->node_min_pfn) +
 				start_off);
 		memset(region, 0, size);
-		/*
-		 * The min_count is set to 0 so that bootmem allocated blocks
-		 * are never reported as leaks.
-		 */
+
+		// 记录分配的内存以进行泄漏检测
 		kmemleak_alloc(region, size, 0, 0);
 		return region;
 	}
 
+	// 如果需要回退，尝试之前记录的起始位置
 	if (fallback) {
 		sidx = align_idx(bdata, fallback - 1, step);
 		fallback = 0;
 		goto find_block;
 	}
 
+	// 如果没有成功分配，返回 NULL
 	return NULL;
 }
 
@@ -686,50 +717,64 @@ static void * __init ___alloc_bootmem_nopanic(unsigned long size,
 #ifdef CONFIG_NO_BOOTMEM
 	void *ptr;
 
+	// 如果 slab 分配器可用，发出警告并尝试使用 kzalloc 分配内存
 	if (WARN_ON_ONCE(slab_is_available()))
 		return kzalloc(size, GFP_NOWAIT);
 
 restart:
 
+	// 尝试从早期内存分配器中分配内存
 	ptr = __alloc_memory_core_early(MAX_NUMNODES, size, align, goal, limit);
 
+	// 如果分配成功，返回分配的内存指针
 	if (ptr)
 		return ptr;
 
+	// 如果目标内存地址不为0，则尝试将目标地址设为0，然后重新尝试分配
 	if (goal != 0) {
 		goal = 0;
 		goto restart;
 	}
 
+	// 如果分配失败且目标地址为0，返回 NULL
 	return NULL;
 #else
 	bootmem_data_t *bdata;
 	void *region;
 
 restart:
+	// 尝试从体系结构优选的引导内存分配器中分配内存
 	region = alloc_arch_preferred_bootmem(NULL, size, align, goal, limit);
 	if (region)
 		return region;
 
+	// 遍历所有引导内存数据结构，尝试从每个数据结构中分配内存
 	list_for_each_entry(bdata, &bdata_list, list) {
+		// 跳过低于目标地址的节点
 		if (goal && bdata->node_low_pfn <= PFN_DOWN(goal))
 			continue;
+
+		// 如果节点的最小页面帧号大于限制，退出循环
 		if (limit && bdata->node_min_pfn >= PFN_DOWN(limit))
 			break;
 
+		// 尝试从当前节点的引导内存中分配内存
 		region = alloc_bootmem_core(bdata, size, align, goal, limit);
 		if (region)
 			return region;
 	}
 
+	// 如果目标地址不为0，尝试将目标地址设为0，然后重新尝试分配
 	if (goal) {
 		goal = 0;
 		goto restart;
 	}
 
+	// 如果分配失败且目标地址为0，返回 NULL
 	return NULL;
 #endif
 }
+
 
 /**
  * __alloc_bootmem_nopanic - allocate boot memory without panicking

@@ -773,7 +773,7 @@ void __init setup_arch(char **cmdline_p)
 	setup_memory_map();
 	parse_setup_data();
 	/* update the e820_saved too */
-	e820_reserve_setup_data();
+	e820_reserve_setup_data();//遍历 boot_params 中的 setup_data 链表，并将这些区域标记为E820_RESERVED_KERN，以避免这些内存区域被操作系统用于普通用途
 
 	copy_edd();
 
@@ -816,7 +816,7 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	x86_configure_nx();
 
-	parse_early_param();
+	parse_early_param();//解析内核的启动参数
 
 	x86_report_nx();
 
@@ -838,7 +838,7 @@ void __init setup_arch(char **cmdline_p)
 		early_dump_pci_devices();
 #endif
 
-	finish_e820_parsing();
+	finish_e820_parsing();//检查用户是否提供了自定义的内存映射，对该映射进行验证和处理
 
 	if (efi_enabled)
 		efi_init();

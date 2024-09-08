@@ -278,36 +278,36 @@ static handle_t *new_handle(int nblocks)
  *
  * Return a pointer to a newly allocated handle, or NULL on failure
  */
-handle_t *jbd2_journal_start(journal_t *journal, int nblocks)
+/*
+ * jbd2_journal_start/end 的包装函数。
+ *
+ * 我们需要确保所有 journal_end 调用都使超级块被标记为脏，
+ * 以便 sync() 在适当的时候调用文件系统的 write_super 回调。
+ */
+handle_t *ext4_journal_start_sb(struct super_block *sb, int nblocks)
 {
-	handle_t *handle = journal_current_handle();
-	int err;
+	journal_t *journal;
 
-	if (!journal)
+	/* 检查文件系统是否为只读，如果是则返回错误 */
+	if (sb->s_flags & MS_RDONLY)
 		return ERR_PTR(-EROFS);
 
-	if (handle) {
-		J_ASSERT(handle->h_transaction->t_journal == journal);
-		handle->h_ref++;
-		return handle;
+	/* 特殊情况处理：如果日志在我们不知情的情况下中止（例如
+	 * 提交线程中的 EIO 错误），我们仍然需要干净地将文件系统设为只读。 */
+	journal = EXT4_SB(sb)->s_journal;  /* 获取 ext4 文件系统的日志 */
+	if (journal) {
+		/* 检查日志是否已中止 */
+		if (is_journal_aborted(journal)) {
+			ext4_abort(sb, __func__, "Detected aborted journal");  /* 处理日志中止错误 */
+			return ERR_PTR(-EROFS);  /* 返回只读错误 */
+		}
+		/* 启动日志，分配 nblocks 个日志块 */
+		return jbd2_journal_start(journal, nblocks);
 	}
-
-	handle = new_handle(nblocks);
-	if (!handle)
-		return ERR_PTR(-ENOMEM);
-
-	current->journal_info = handle;
-
-	err = start_this_handle(journal, handle);
-	if (err < 0) {
-		jbd2_free_handle(handle);
-		current->journal_info = NULL;
-		handle = ERR_PTR(err);
-		goto out;
-	}
-out:
-	return handle;
+	/* 如果没有日志，则返回无日志的处理句柄 */
+	return ext4_get_nojournal();
 }
+
 
 /**
  * int jbd2_journal_extend() - extend buffer credits.

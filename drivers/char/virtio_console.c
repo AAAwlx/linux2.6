@@ -1411,6 +1411,16 @@ static const struct file_operations portdev_fops = {
  * config space to see how many ports the host has spawned.  We
  * initialize each port found.
  */
+/**
+ * virtcons_probe - 处理 virtio 设备的探测并初始化
+ * @vdev: 指向 virtio 设备结构体的指针
+ *
+ * 这个函数用于处理一个虚拟控制台设备的探测过程，初始化所需的资源，
+ * 并将设备注册到系统中。
+ *
+ * 返回值：
+ * 成功时返回 0，失败时返回负的错误码。
+ */
 static int __devinit virtcons_probe(struct virtio_device *vdev)
 {
 	struct ports_device *portdev;
@@ -1418,22 +1428,24 @@ static int __devinit virtcons_probe(struct virtio_device *vdev)
 	int err;
 	bool multiport;
 
+	// 分配 ports_device 结构体的内存
 	portdev = kmalloc(sizeof(*portdev), GFP_KERNEL);
 	if (!portdev) {
-		err = -ENOMEM;
+		err = -ENOMEM;  // 内存分配失败
 		goto fail;
 	}
 
-	/* Attach this portdev to this virtio_device, and vice-versa. */
+	// 将 portdev 附加到 virtio_device，并将 virtio_device 附加到 portdev
 	portdev->vdev = vdev;
 	vdev->priv = portdev;
 
+	// 对 drv_index 进行自增，并获取锁
 	spin_lock_irq(&pdrvdata_lock);
 	portdev->drv_index = pdrvdata.index++;
 	spin_unlock_irq(&pdrvdata_lock);
 
-	portdev->chr_major = register_chrdev(0, "virtio-portsdev",
-					     &portdev_fops);
+	// 注册字符设备
+	portdev->chr_major = register_chrdev(0, "virtio-portsdev", &portdev_fops);
 	if (portdev->chr_major < 0) {
 		dev_err(&vdev->dev,
 			"Error %d registering chrdev for device %u\n",
@@ -1445,11 +1457,12 @@ static int __devinit virtcons_probe(struct virtio_device *vdev)
 	multiport = false;
 	portdev->config.nr_ports = 1;
 	portdev->config.max_nr_ports = 1;
-#if 0 /* Multiport is not quite ready yet --RR */
+#if 0 /* 多端口功能暂时未准备好 --RR */
 	if (virtio_has_feature(vdev, VIRTIO_CONSOLE_F_MULTIPORT)) {
 		multiport = true;
 		vdev->features[0] |= 1 << VIRTIO_CONSOLE_F_MULTIPORT;
 
+		// 获取端口数量和最大端口数量
 		vdev->config->get(vdev,
 				  offsetof(struct virtio_console_multiport_conf,
 					   nr_ports),
@@ -1471,26 +1484,30 @@ static int __devinit virtcons_probe(struct virtio_device *vdev)
 		}
 	}
 
-	/* Let the Host know we support multiple ports.*/
+	// 通知 Host 我们支持多个端口
 	vdev->config->finalize_features(vdev);
 #endif
 
+	// 初始化虚拟队列
 	err = init_vqs(portdev);
 	if (err < 0) {
 		dev_err(&vdev->dev, "Error %d initializing vqs\n", err);
 		goto free_chrdev;
 	}
 
+	// 初始化锁和端口列表
 	spin_lock_init(&portdev->ports_lock);
 	INIT_LIST_HEAD(&portdev->ports);
 
 	if (multiport) {
 		unsigned int nr_added_bufs;
 
+		// 初始化控制队列锁和工作队列
 		spin_lock_init(&portdev->cvq_lock);
 		INIT_WORK(&portdev->control_work, &control_work_handler);
 		INIT_WORK(&portdev->config_work, &config_work_handler);
 
+		// 填充队列缓冲区
 		nr_added_bufs = fill_queue(portdev->c_ivq, &portdev->cvq_lock);
 		if (!nr_added_bufs) {
 			dev_err(&vdev->dev,
@@ -1500,24 +1517,29 @@ static int __devinit virtcons_probe(struct virtio_device *vdev)
 		}
 	}
 
+	// 添加端口
 	for (i = 0; i < portdev->config.nr_ports; i++)
 		add_port(portdev, i);
 
-	/* Start using the new console output. */
+	// 启动新的控制台输出
 	early_put_chars = NULL;
 	return 0;
 
 free_vqs:
+	// 释放虚拟队列资源
 	vdev->config->del_vqs(vdev);
 	kfree(portdev->in_vqs);
 	kfree(portdev->out_vqs);
 free_chrdev:
+	// 注销字符设备
 	unregister_chrdev(portdev->chr_major, "virtio-portsdev");
 free:
+	// 释放分配的内存
 	kfree(portdev);
 fail:
 	return err;
 }
+
 
 static void virtcons_remove(struct virtio_device *vdev)
 {

@@ -34,28 +34,32 @@
  *
  * Returns 0 on success, -errno on error.
  */
-static long vfs_ioctl(struct file *filp, unsigned int cmd,
-		      unsigned long arg)
+static long vfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	int error = -ENOTTY;
+	int error = -ENOTTY; /* 默认错误代码：不是终端设备 */
 
+	/* 检查文件操作结构体是否存在 */
 	if (!filp->f_op)
 		goto out;
 
+	/* 检查是否支持 `unlocked_ioctl` 方法 */
 	if (filp->f_op->unlocked_ioctl) {
+		/* 调用 `unlocked_ioctl` 方法处理 IOCTL 命令 */
 		error = filp->f_op->unlocked_ioctl(filp, cmd, arg);
+		/* 如果返回错误是 `ENOIOCTLCMD`，则表示没有该 IOCTL 命令，设置为 `EINVAL` 错误代码 */
 		if (error == -ENOIOCTLCMD)
 			error = -EINVAL;
 		goto out;
 	} else if (filp->f_op->ioctl) {
-		lock_kernel();
-		error = filp->f_op->ioctl(filp->f_path.dentry->d_inode,
-					  filp, cmd, arg);
-		unlock_kernel();
+		/* 如果没有 `unlocked_ioctl` 方法，检查是否支持旧版 `ioctl` 方法 */
+		lock_kernel(); /* 加锁，确保线程安全 */
+		/* 调用旧版 `ioctl` 方法处理 IOCTL 命令 */
+		error = filp->f_op->ioctl(filp->f_path.dentry->d_inode, filp, cmd, arg);
+		unlock_kernel(); /* 解锁 */
 	}
 
  out:
-	return error;
+	return error; /* 返回处理结果 */
 }
 
 static int ioctl_fibmap(struct file *filp, int __user *p)
@@ -450,24 +454,42 @@ int ioctl_preallocate(struct file *filp, void __user *argp)
 	return do_fallocate(filp, FALLOC_FL_KEEP_SIZE, sr.l_start, sr.l_len);
 }
 
-static int file_ioctl(struct file *filp, unsigned int cmd,
-		unsigned long arg)
+/**
+ * file_ioctl - 执行文件特定的 IOCTL 命令
+ * @filp: 指向文件描述符的结构体的指针
+ * @cmd: IOCTL 命令
+ * @arg: IOCTL 命令的参数
+ *
+ * 该函数用于处理与文件相关的 IOCTL 命令。根据传入的命令，它会调用不同的处理函数来执行具体的操作。
+ *
+ * 返回值:
+ * 成功时返回 0，失败时返回负错误代码。
+ */
+static int file_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
-	int __user *p = (int __user *)arg;
+	struct inode *inode = filp->f_path.dentry->d_inode; /* 获取文件的 inode */
+	int __user *p = (int __user *)arg; /* 将用户空间参数指针转换为 `int` 类型 */
 
 	switch (cmd) {
+	/* 映射文件块的逻辑块到设备块 */
 	case FIBMAP:
 		return ioctl_fibmap(filp, p);
+
+	/* 获取文件的剩余字节数 */
 	case FIONREAD:
+		/* 将文件剩余字节数返回给用户空间 */
 		return put_user(i_size_read(inode) - filp->f_pos, p);
+
+	/* 预分配文件空间（64位） */
 	case FS_IOC_RESVSP:
 	case FS_IOC_RESVSP64:
 		return ioctl_preallocate(filp, p);
 	}
 
+	/* 如果不匹配任何已知命令，则调用 `vfs_ioctl` 进行处理 */
 	return vfs_ioctl(filp, cmd, arg);
 }
+
 
 static int ioctl_fionbio(struct file *filp, int __user *argp)
 {
@@ -623,21 +645,34 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 
 SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
-	struct file *filp;
-	int error = -EBADF;
-	int fput_needed;
+    // 定义一个指向文件结构体的指针，用于存储打开的文件描述符信息
+    struct file *filp;
+    // 用于存储函数执行的错误码，初始设为 -EBADF（表示文件描述符无效）
+    int error = -EBADF;
+    // 文件句柄是否需要释放的标志
+    int fput_needed;
 
-	filp = fget_light(fd, &fput_needed);
-	if (!filp)
-		goto out;
+    // 获取文件指针。fget_light() 是一个轻量级的获取文件描述符函数
+    // fput_needed 标志表明是否需要在函数结束时释放文件指针
+    filp = fget_light(fd, &fput_needed);
+    // 如果文件指针为空，表示获取失败，跳转到出错处理代码
+    if (!filp)
+        goto out;
 
-	error = security_file_ioctl(filp, cmd, arg);
-	if (error)
-		goto out_fput;
+    // 调用安全检查函数，检查当前操作是否允许
+    error = security_file_ioctl(filp, cmd, arg);
+    // 如果安全检查失败，跳转到释放文件指针的处理代码
+    if (error)
+        goto out_fput;
 
-	error = do_vfs_ioctl(filp, fd, cmd, arg);
- out_fput:
-	fput_light(filp, fput_needed);
- out:
-	return error;
+    // 调用实际的 I/O 控制处理函数，执行具体的 I/O 操作
+    error = do_vfs_ioctl(filp, fd, cmd, arg);
+
+out_fput:
+    // 释放文件指针。如果 fput_needed 为真，则需要释放文件指针
+    fput_light(filp, fput_needed);
+
+out:
+    // 返回错误码或成功标志
+    return error;
 }

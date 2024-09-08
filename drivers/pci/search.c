@@ -128,14 +128,32 @@ pci_find_next_bus(const struct pci_bus *from)
  * decrement the reference count by calling pci_dev_put().
  * If no device is found, %NULL is returned.
  */
+/**
+ * pci_get_slot - 查找指定 PCI 插槽的 PCI 设备
+ * @bus: PCI 总线，设备所在的总线
+ * @devfn: 编码了 PCI 插槽的编号以及在多功能设备中的逻辑设备编号
+ *
+ * 根据给定的 PCI 总线和插槽/功能号，在指定总线上的 PCI 设备列表中查找设备。
+ * 
+ * 如果找到设备，函数将增加该设备的引用计数，并返回指向设备数据结构的指针。
+ * 调用者在完成对设备的操作后必须调用 pci_dev_put() 来减少引用计数。
+ * 
+ * 如果在指定的插槽/功能号处未找到设备，函数将返回 %NULL。
+ *
+ * 注意：此函数不能在中断上下文中调用，因为它使用了 pci_bus_sem 信号量进行同步。
+ */
 struct pci_dev * pci_get_slot(struct pci_bus *bus, unsigned int devfn)
 {
 	struct list_head *tmp;
 	struct pci_dev *dev;
 
+	// 确保函数在非中断上下文中调用
 	WARN_ON(in_interrupt());
+	
+	// 获取对 PCI 总线设备列表的读锁
 	down_read(&pci_bus_sem);
 
+	// 遍历设备列表，查找匹配的设备
 	list_for_each(tmp, &bus->devices) {
 		dev = pci_dev_b(tmp);
 		if (dev->devfn == devfn)
@@ -144,8 +162,13 @@ struct pci_dev * pci_get_slot(struct pci_bus *bus, unsigned int devfn)
 
 	dev = NULL;
  out:
+	// 增加设备的引用计数
 	pci_dev_get(dev);
+	
+	// 释放对 PCI 总线设备列表的读锁
 	up_read(&pci_bus_sem);
+	
+	// 返回找到的设备或 NULL
 	return dev;
 }
 

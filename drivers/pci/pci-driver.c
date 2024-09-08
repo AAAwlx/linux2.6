@@ -303,7 +303,7 @@ static int pci_call_probe(struct pci_driver *drv, struct pci_dev *dev,
 	   bus is attached to.  This way the driver likely allocates
 	   its local memory on the right node without any need to
 	   change it. */
-	node = dev_to_node(&dev->dev);
+	node = dev_to_node(&dev->dev);//返回对应的numa点
 	if (node >= 0) {
 		int cpu;
 

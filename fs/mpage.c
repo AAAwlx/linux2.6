@@ -636,220 +636,224 @@ EXPORT_SYMBOL(mpage_readpage);
  */
 
 struct mpage_data {
+	// 指向 BIO 的指针，用于进行块设备的批量 I/O 操作
 	struct bio *bio;
+
+	// BIO 中最后一个块的编号，用于检查页面是否可以追加到现有的 BIO 中
 	sector_t last_block_in_bio;
+
+	// 函数指针，用于获取块的映射信息
 	get_block_t *get_block;
+
+	// 指示是否使用 writepage 回退方式的标志
 	unsigned use_writepage;
 };
 
 static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 		      void *data)
 {
-	struct mpage_data *mpd = data;
-	struct bio *bio = mpd->bio;
-	struct address_space *mapping = page->mapping;
-	struct inode *inode = page->mapping->host;
-	const unsigned blkbits = inode->i_blkbits;
-	unsigned long end_index;
-	const unsigned blocks_per_page = PAGE_CACHE_SIZE >> blkbits;
-	sector_t last_block;
-	sector_t block_in_file;
-	sector_t blocks[MAX_BUF_PER_PAGE];
-	unsigned page_block;
-	unsigned first_unmapped = blocks_per_page;
-	struct block_device *bdev = NULL;
-	int boundary = 0;
-	sector_t boundary_block = 0;
-	struct block_device *boundary_bdev = NULL;
-	int length;
-	struct buffer_head map_bh;
-	loff_t i_size = i_size_read(inode);
-	int ret = 0;
+    struct mpage_data *mpd = data;  // 包含写回过程中需要的元数据
+    struct bio *bio = mpd->bio;  // 当前的 BIO 请求，用于块设备写入
+    struct address_space *mapping = page->mapping;  // 页面所属的地址空间
+    struct inode *inode = page->mapping->host;  // 页面对应的 inode（文件节点）
+    const unsigned blkbits = inode->i_blkbits;  // 每个块的位数
+    unsigned long end_index;
+    const unsigned blocks_per_page = PAGE_CACHE_SIZE >> blkbits;  // 每页包含的块数
+    sector_t last_block;  // 文件中的最后一个块
+    sector_t block_in_file;  // 文件中的当前块号
+    sector_t blocks[MAX_BUF_PER_PAGE];  // 存储当前页的块号
+    unsigned page_block;  // 当前处理的页中的块号
+    unsigned first_unmapped = blocks_per_page;  // 首个未映射的块
+    struct block_device *bdev = NULL;  // 块设备指针
+    int boundary = 0;  // 是否遇到块边界
+    sector_t boundary_block = 0;  // 边界块号
+    struct block_device *boundary_bdev = NULL;  // 边界块设备
+    int length;
+    struct buffer_head map_bh;  // 用于块映射的缓冲头
+    loff_t i_size = i_size_read(inode);  // 文件的大小
+    int ret = 0;  // 返回值
 
-	if (page_has_buffers(page)) {
-		struct buffer_head *head = page_buffers(page);
-		struct buffer_head *bh = head;
+    // 如果页面有缓冲区，尝试直接使用缓冲区信息
+    if (page_has_buffers(page)) {
+        struct buffer_head *head = page_buffers(page);  // 获取页面的缓冲头
+        struct buffer_head *bh = head;  // 当前处理的缓冲头
 
-		/* If they're all mapped and dirty, do it */
-		page_block = 0;
-		do {
-			BUG_ON(buffer_locked(bh));
-			if (!buffer_mapped(bh)) {
-				/*
-				 * unmapped dirty buffers are created by
-				 * __set_page_dirty_buffers -> mmapped data
-				 */
-				if (buffer_dirty(bh))
-					goto confused;
-				if (first_unmapped == blocks_per_page)
-					first_unmapped = page_block;
-				continue;
-			}
+        /* 如果所有的缓冲区都已映射并且是脏的，则处理该页面 */
+        page_block = 0;
+        do {
+            BUG_ON(buffer_locked(bh));  // 确保缓冲区未被锁定
+            if (!buffer_mapped(bh)) {
+                /* 
+                 * 遇到未映射的脏缓冲区（由 mmapped 数据创建），
+                 * 如果存在脏缓冲区，则无法继续。
+                 */
+                if (buffer_dirty(bh))
+                    goto confused;
+                if (first_unmapped == blocks_per_page)
+                    first_unmapped = page_block;
+                continue;
+            }
 
-			if (first_unmapped != blocks_per_page)
-				goto confused;	/* hole -> non-hole */
+            // 如果存在未映射的块，但此时遇到映射的块，表示页面有“洞”，无法处理
+            if (first_unmapped != blocks_per_page)
+                goto confused;
 
-			if (!buffer_dirty(bh) || !buffer_uptodate(bh))
-				goto confused;
-			if (page_block) {
-				if (bh->b_blocknr != blocks[page_block-1] + 1)
-					goto confused;
-			}
-			blocks[page_block++] = bh->b_blocknr;
-			boundary = buffer_boundary(bh);
-			if (boundary) {
-				boundary_block = bh->b_blocknr;
-				boundary_bdev = bh->b_bdev;
-			}
-			bdev = bh->b_bdev;
-		} while ((bh = bh->b_this_page) != head);
+            // 确保缓冲区是脏的并且是最新的
+            if (!buffer_dirty(bh) || !buffer_uptodate(bh))
+                goto confused;
 
-		if (first_unmapped)
-			goto page_is_mapped;
+            // 确保缓冲区块号是连续的
+            if (page_block) {
+                if (bh->b_blocknr != blocks[page_block - 1] + 1)
+                    goto confused;
+            }
 
-		/*
-		 * Page has buffers, but they are all unmapped. The page was
-		 * created by pagein or read over a hole which was handled by
-		 * block_read_full_page().  If this address_space is also
-		 * using mpage_readpages then this can rarely happen.
-		 */
-		goto confused;
-	}
+            // 保存当前缓冲区的块号，并更新边界信息
+            blocks[page_block++] = bh->b_blocknr;
+            boundary = buffer_boundary(bh);
+            if (boundary) {
+                boundary_block = bh->b_blocknr;
+                boundary_bdev = bh->b_bdev;
+            }
+            bdev = bh->b_bdev;  // 保存当前块设备
+        } while ((bh = bh->b_this_page) != head);
 
-	/*
-	 * The page has no buffers: map it to disk
-	 */
-	BUG_ON(!PageUptodate(page));
-	block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);
-	last_block = (i_size - 1) >> blkbits;
-	map_bh.b_page = page;
-	for (page_block = 0; page_block < blocks_per_page; ) {
+        // 页面是映射的，可以继续写入
+        if (first_unmapped)
+            goto page_is_mapped;
 
-		map_bh.b_state = 0;
-		map_bh.b_size = 1 << blkbits;
-		if (mpd->get_block(inode, block_in_file, &map_bh, 1))
-			goto confused;
-		if (buffer_new(&map_bh))
-			unmap_underlying_metadata(map_bh.b_bdev,
-						map_bh.b_blocknr);
-		if (buffer_boundary(&map_bh)) {
-			boundary_block = map_bh.b_blocknr;
-			boundary_bdev = map_bh.b_bdev;
-		}
-		if (page_block) {
-			if (map_bh.b_blocknr != blocks[page_block-1] + 1)
-				goto confused;
-		}
-		blocks[page_block++] = map_bh.b_blocknr;
-		boundary = buffer_boundary(&map_bh);
-		bdev = map_bh.b_bdev;
-		if (block_in_file == last_block)
-			break;
-		block_in_file++;
-	}
-	BUG_ON(page_block == 0);
+        // 如果页面的所有缓冲区都未映射，转到 confused 处理
+        goto confused;
+    }
 
-	first_unmapped = page_block;
+    /*
+     * 页面没有缓冲区，需要将其映射到磁盘上
+     */
+    BUG_ON(!PageUptodate(page));  // 页面必须是最新的
+    block_in_file = (sector_t)page->index << (PAGE_CACHE_SHIFT - blkbits);  // 计算文件中的第一个块号
+    last_block = (i_size - 1) >> blkbits;  // 文件中的最后一个块号
+    map_bh.b_page = page;  // 将页面指针赋值给缓冲头
+    for (page_block = 0; page_block < blocks_per_page; ) {
+        map_bh.b_state = 0;
+        map_bh.b_size = 1 << blkbits;  // 每个缓冲区的大小
+        // 调用回调函数获取块映射，如果失败，跳到 confused 处理
+        if (mpd->get_block(inode, block_in_file, &map_bh, 1))
+            goto confused;
+        if (buffer_new(&map_bh))
+            unmap_underlying_metadata(map_bh.b_bdev, map_bh.b_blocknr);  // 处理新分配的块
+        if (buffer_boundary(&map_bh)) {
+            boundary_block = map_bh.b_blocknr;
+            boundary_bdev = map_bh.b_bdev;
+        }
+        // 确保块号是连续的
+        if (page_block) {
+            if (map_bh.b_blocknr != blocks[page_block - 1] + 1)
+                goto confused;
+        }
+        blocks[page_block++] = map_bh.b_blocknr;
+        boundary = buffer_boundary(&map_bh);
+        bdev = map_bh.b_bdev;
+        if (block_in_file == last_block)
+            break;
+        block_in_file++;
+    }
+    BUG_ON(page_block == 0);
+
+    first_unmapped = page_block;  // 更新首个未映射的块号
 
 page_is_mapped:
-	end_index = i_size >> PAGE_CACHE_SHIFT;
-	if (page->index >= end_index) {
-		/*
-		 * The page straddles i_size.  It must be zeroed out on each
-		 * and every writepage invocation because it may be mmapped.
-		 * "A file is mapped in multiples of the page size.  For a file
-		 * that is not a multiple of the page size, the remaining memory
-		 * is zeroed when mapped, and writes to that region are not
-		 * written out to the file."
-		 */
-		unsigned offset = i_size & (PAGE_CACHE_SIZE - 1);
+    end_index = i_size >> PAGE_CACHE_SHIFT;
+    if (page->index >= end_index) {
+        /* 
+         * 页面跨越了文件的大小。为了保证文件映射的正确性，必须将页面的多余部分置零。
+         * 根据文件的映射规则，如果文件不是页面大小的倍数，映射时文件末尾部分会被置零，
+         * 且对该部分的写入不会写回到文件中。
+         */
+        unsigned offset = i_size & (PAGE_CACHE_SIZE - 1);
 
-		if (page->index > end_index || !offset)
-			goto confused;
-		zero_user_segment(page, offset, PAGE_CACHE_SIZE);
-	}
+        if (page->index > end_index || !offset)
+            goto confused;
+        zero_user_segment(page, offset, PAGE_CACHE_SIZE);  // 将页面中多余部分置零
+    }
 
-	/*
-	 * This page will go to BIO.  Do we need to send this BIO off first?
-	 */
-	if (bio && mpd->last_block_in_bio != blocks[0] - 1)
-		bio = mpage_bio_submit(WRITE, bio);
+    /*
+     * 准备将该页面加入 BIO。如果当前的 BIO 中的块号不连续，则需要提交当前的 BIO。
+     */
+    if (bio && mpd->last_block_in_bio != blocks[0] - 1)
+        bio = mpage_bio_submit(WRITE, bio);
 
 alloc_new:
-	if (bio == NULL) {
-		bio = mpage_alloc(bdev, blocks[0] << (blkbits - 9),
-				bio_get_nr_vecs(bdev), GFP_NOFS|__GFP_HIGH);
-		if (bio == NULL)
-			goto confused;
-	}
+    if (bio == NULL) {
+        bio = mpage_alloc(bdev, blocks[0] << (blkbits - 9),
+                          bio_get_nr_vecs(bdev), GFP_NOFS | __GFP_HIGH);  // 分配新的 BIO
+        if (bio == NULL)
+            goto confused;
+    }
 
-	/*
-	 * Must try to add the page before marking the buffer clean or
-	 * the confused fail path above (OOM) will be very confused when
-	 * it finds all bh marked clean (i.e. it will not write anything)
-	 */
-	length = first_unmapped << blkbits;
-	if (bio_add_page(bio, page, length, 0) < length) {
-		bio = mpage_bio_submit(WRITE, bio);
-		goto alloc_new;
-	}
+    /*
+     * 必须在标记缓冲区为干净之前将页面加入 BIO，否则如果内存不足，无法处理
+     * 清除标记后，无法正确执行写入操作。
+     */
+    length = first_unmapped << blkbits;
+    if (bio_add_page(bio, page, length, 0) < length) {
+        bio = mpage_bio_submit(WRITE, bio);
+        goto alloc_new;
+    }
 
-	/*
-	 * OK, we have our BIO, so we can now mark the buffers clean.  Make
-	 * sure to only clean buffers which we know we'll be writing.
-	 */
-	if (page_has_buffers(page)) {
-		struct buffer_head *head = page_buffers(page);
-		struct buffer_head *bh = head;
-		unsigned buffer_counter = 0;
+    /*
+     * 成功将页面加入 BIO，现在可以将页面的缓冲区标记为干净。
+     * 只标记已写入的缓冲区为干净。
+     */
+    if (page_has_buffers(page)) {
+        struct buffer_head *head = page_buffers(page);
+        struct buffer_head *bh = head;
+        unsigned buffer_counter = 0;
 
-		do {
-			if (buffer_counter++ == first_unmapped)
-				break;
-			clear_buffer_dirty(bh);
-			bh = bh->b_this_page;
-		} while (bh != head);
+        do {
+            if (buffer_counter++ == first_unmapped)
+                break;
+            clear_buffer_dirty(bh);  // 将缓冲区标记为干净
+            bh = bh->b_this_page;
+        } while (bh != head);
 
-		/*
-		 * we cannot drop the bh if the page is not uptodate
-		 * or a concurrent readpage would fail to serialize with the bh
-		 * and it would read from disk before we reach the platter.
-		 */
-		if (buffer_heads_over_limit && PageUptodate(page))
-			try_to_free_buffers(page);
-	}
+        /*
+         * 如果页面是最新的，尝试释放缓冲区。
+         */
+        if (buffer_heads_over_limit && PageUptodate(page))
+            try_to_free_buffers(page);
+    }
 
-	BUG_ON(PageWriteback(page));
-	set_page_writeback(page);
-	unlock_page(page);
-	if (boundary || (first_unmapped != blocks_per_page)) {
-		bio = mpage_bio_submit(WRITE, bio);
-		if (boundary_block) {
-			write_boundary_block(boundary_bdev,
-					boundary_block, 1 << blkbits);
-		}
-	} else {
-		mpd->last_block_in_bio = blocks[blocks_per_page - 1];
-	}
-	goto out;
+    BUG_ON(PageWriteback(page));  // 确保页面尚未被回写
+    set_page_writeback(page);  // 标记页面正在被回写
+    unlock_page(page);  // 解锁页面
+
+    if (boundary || (first_unmapped != blocks_per_page)) {
+        bio = mpage_bio_submit(WRITE, bio);  // 提交 BIO
+        if (boundary_block) {
+            write_boundary_block(boundary_bdev, boundary_block, 1 << blkbits);  // 处理边界块
+        }
+    } else {
+        mpd->last_block_in_bio = blocks[blocks_per_page - 1];  // 更新最后一个块号
+    }
+    goto out;
 
 confused:
-	if (bio)
-		bio = mpage_bio_submit(WRITE, bio);
+    if (bio)
+        bio = mpage_bio_submit(WRITE, bio);  // 如果处理过程中出错，提交已处理的 BIO
 
-	if (mpd->use_writepage) {
-		ret = mapping->a_ops->writepage(page, wbc);
-	} else {
-		ret = -EAGAIN;
-		goto out;
-	}
-	/*
-	 * The caller has a ref on the inode, so *mapping is stable
-	 */
-	mapping_set_error(mapping, ret);
+    // 如果无法处理页面，则调用文件系统的默认写回函数
+    if (mpd->use_writepage) {
+        ret = mapping->a_ops->writepage(page, wbc);
+    } else {
+        ret = -EAGAIN;
+        goto out;
+    }
+
+    mapping_set_error(mapping, ret);  // 标记写入错误
+
 out:
-	mpd->bio = bio;
-	return ret;
+    mpd->bio = bio;  // 更新 mpd 中的 BIO
+    return ret;  // 返回结果
 }
 
 /**

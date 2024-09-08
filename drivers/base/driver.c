@@ -224,29 +224,40 @@ int driver_register(struct device_driver *drv)
 	int ret;
 	struct device_driver *other;
 
+	// 确保 drv->bus 指针不为空，即驱动程序必须与一个总线相关联
 	BUG_ON(!drv->bus->p);
 
+	// 如果驱动程序定义了自己的 probe、remove 或 shutdown 函数，但总线类型也定义了这些函数，发出警告
+	// 提示驱动程序需要更新以使用总线类型的方法
 	if ((drv->bus->probe && drv->probe) ||
 	    (drv->bus->remove && drv->remove) ||
 	    (drv->bus->shutdown && drv->shutdown))
 		printk(KERN_WARNING "Driver '%s' needs updating - please use "
 			"bus_type methods\n", drv->name);
 
+	// 查找是否已经存在具有相同名称和总线类型的驱动程序
 	other = driver_find(drv->name, drv->bus);
 	if (other) {
+		// 如果找到其他相同名称的驱动程序，则释放其引用计数
 		put_driver(other);
+		// 打印错误信息并返回 -EBUSY，表示驱动程序已经被注册
 		printk(KERN_ERR "Error: Driver '%s' is already registered, "
 			"aborting...\n", drv->name);
 		return -EBUSY;
 	}
 
+	// 将驱动程序添加到总线中
 	ret = bus_add_driver(drv);
 	if (ret)
-		return ret;
+		return ret; // 如果添加失败，返回错误代码
+
+	// 添加驱动程序的属性组
 	ret = driver_add_groups(drv, drv->groups);
 	if (ret)
+		// 如果添加属性组失败，则从总线中移除驱动程序
 		bus_remove_driver(drv);
-	return ret;
+
+	return ret; // 返回最终的结果
 }
 EXPORT_SYMBOL_GPL(driver_register);
 

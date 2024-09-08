@@ -375,23 +375,20 @@ static struct device_driver *next_driver(struct klist_iter *i)
 }
 
 /**
- * bus_for_each_drv - driver iterator
- * @bus: bus we're dealing with.
- * @start: driver to start iterating on.
- * @data: data to pass to the callback.
- * @fn: function to call for each driver.
+ * bus_for_each_drv - 驱动程序迭代器
+ * @bus: 需要处理的总线
+ * @start: 从哪个驱动开始迭代
+ * @data: 传递给回调函数的数据
+ * @fn: 对每个驱动调用的函数
  *
- * This is nearly identical to the device iterator above.
- * We iterate over each driver that belongs to @bus, and call
- * @fn for each. If @fn returns anything but 0, we break out
- * and return it. If @start is not NULL, we use it as the head
- * of the list.
+ * 这个函数与设备迭代器几乎相同。
+ * 我们遍历属于 @bus 的每个驱动程序，并对每个驱动程序调用 @fn 函数。
+ * 如果 @fn 返回非零值，则我们会退出并返回该值。
+ * 如果 @start 不是 NULL，我们将其作为列表的头节点。
  *
- * NOTE: we don't return the driver that returns a non-zero
- * value, nor do we leave the reference count incremented for that
- * driver. If the caller needs to know that info, it must set it
- * in the callback. It must also be sure to increment the refcount
- * so it doesn't disappear before returning to the caller.
+ * 注意：我们不会返回返回非零值的驱动程序，也不会保留对该驱动程序的引用计数。
+ * 如果调用者需要知道这些信息，必须在回调函数中设置。调用者还必须确保
+ * 增加引用计数，以防在返回调用者之前驱动程序消失。
  */
 int bus_for_each_drv(struct bus_type *bus, struct device_driver *start,
 		     void *data, int (*fn)(struct device_driver *, void *))
@@ -403,11 +400,17 @@ int bus_for_each_drv(struct bus_type *bus, struct device_driver *start,
 	if (!bus)
 		return -EINVAL;
 
+	// 初始化驱动程序列表迭代器
 	klist_iter_init_node(&bus->p->klist_drivers, &i,
 			     start ? &start->p->knode_bus : NULL);
+	
+	// 遍历驱动程序列表，并对每个驱动程序调用回调函数
 	while ((drv = next_driver(&i)) && !error)
 		error = fn(drv, data);
+	
+	// 退出驱动程序列表迭代器
 	klist_iter_exit(&i);
+	
 	return error;
 }
 EXPORT_SYMBOL_GPL(bus_for_each_drv);
@@ -652,65 +655,83 @@ int bus_add_driver(struct device_driver *drv)
 	struct driver_private *priv;
 	int error = 0;
 
+	// 获取总线对象的引用
 	bus = bus_get(drv->bus);
 	if (!bus)
-		return -EINVAL;
+		return -EINVAL;  // 如果获取失败，返回无效参数错误
 
 	pr_debug("bus: '%s': add driver %s\n", bus->name, drv->name);
 
+	// 分配驱动程序私有数据结构
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
-		error = -ENOMEM;
-		goto out_put_bus;
+		error = -ENOMEM;  // 内存分配失败，返回内存不足错误
+		goto out_put_bus;  // 跳转到释放总线对象的代码
 	}
+
+	// 初始化设备列表
 	klist_init(&priv->klist_devices, NULL, NULL);
 	priv->driver = drv;
 	drv->p = priv;
+
+	// 初始化并添加驱动程序的kobject
 	priv->kobj.kset = bus->p->drivers_kset;
 	error = kobject_init_and_add(&priv->kobj, &driver_ktype, NULL,
 				     "%s", drv->name);
 	if (error)
-		goto out_unregister;
+		goto out_unregister;  // 跳转到注销kobject的代码
 
+	// 如果总线支持自动探测，尝试附加驱动程序
 	if (drv->bus->p->drivers_autoprobe) {
 		error = driver_attach(drv);
 		if (error)
-			goto out_unregister;
+			goto out_unregister;  // 跳转到注销kobject的代码
 	}
+
+	// 将驱动程序添加到总线的驱动程序列表中
 	klist_add_tail(&priv->knode_bus, &bus->p->klist_drivers);
+
+	// 将驱动程序模块添加到系统中
 	module_add_driver(drv->owner, drv);
 
+	// 创建驱动程序的文件属性
 	error = driver_create_file(drv, &driver_attr_uevent);
 	if (error) {
 		printk(KERN_ERR "%s: uevent attr (%s) failed\n",
 			__func__, drv->name);
 	}
+
+	// 添加驱动程序的其他属性
 	error = driver_add_attrs(bus, drv);
 	if (error) {
-		/* How the hell do we get out of this pickle? Give up */
+		// 如果失败，打印错误信息
 		printk(KERN_ERR "%s: driver_add_attrs(%s) failed\n",
 			__func__, drv->name);
 	}
 
+	// 如果没有抑制绑定属性，则添加绑定文件
 	if (!drv->suppress_bind_attrs) {
 		error = add_bind_files(drv);
 		if (error) {
-			/* Ditto */
+			// 如果失败，打印错误信息
 			printk(KERN_ERR "%s: add_bind_files(%s) failed\n",
 				__func__, drv->name);
 		}
 	}
 
+	// 通知系统驱动程序已添加
 	kobject_uevent(&priv->kobj, KOBJ_ADD);
-	return 0;
+	return 0;  // 成功返回0
 
 out_unregister:
+	// 注销kobject并释放私有数据结构
 	kobject_put(&priv->kobj);
 	kfree(drv->p);
 	drv->p = NULL;
 out_put_bus:
+	// 释放总线对象的引用
 	bus_put(bus);
-	return error;
+	return error;  // 返回错误码
 }
 
 /**
@@ -883,6 +904,7 @@ int bus_register(struct bus_type *bus)
 	int retval;
 	struct bus_type_private *priv;
 
+	// 为总线类型的私有数据分配内存
 	priv = kzalloc(sizeof(struct bus_type_private), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -890,24 +912,30 @@ int bus_register(struct bus_type *bus)
 	priv->bus = bus;
 	bus->p = priv;
 
+	// 初始化通知头
 	BLOCKING_INIT_NOTIFIER_HEAD(&priv->bus_notifier);
 
+	// 设置总线的 kobject 名称
 	retval = kobject_set_name(&priv->subsys.kobj, "%s", bus->name);
 	if (retval)
 		goto out;
 
+	// 关联 kobject 结构体到总线 kset
 	priv->subsys.kobj.kset = bus_kset;
 	priv->subsys.kobj.ktype = &bus_ktype;
 	priv->drivers_autoprobe = 1;
 
+	// 注册总线的 kset
 	retval = kset_register(&priv->subsys);
 	if (retval)
 		goto out;
 
+	// 为总线创建并注册 uevent 属性文件
 	retval = bus_create_file(bus, &bus_attr_uevent);
 	if (retval)
 		goto bus_uevent_fail;
 
+	// 创建 "devices" kset 并添加到总线的 kobject 子对象
 	priv->devices_kset = kset_create_and_add("devices", NULL,
 						 &priv->subsys.kobj);
 	if (!priv->devices_kset) {
@@ -915,6 +943,7 @@ int bus_register(struct bus_type *bus)
 		goto bus_devices_fail;
 	}
 
+	// 创建 "drivers" kset 并添加到总线的 kobject 子对象
 	priv->drivers_kset = kset_create_and_add("drivers", NULL,
 						 &priv->subsys.kobj);
 	if (!priv->drivers_kset) {
@@ -922,17 +951,21 @@ int bus_register(struct bus_type *bus)
 		goto bus_drivers_fail;
 	}
 
+	// 初始化设备和驱动的 klist
 	klist_init(&priv->klist_devices, klist_devices_get, klist_devices_put);
 	klist_init(&priv->klist_drivers, NULL, NULL);
 
+	// 添加探测文件（probe files）
 	retval = add_probe_files(bus);
 	if (retval)
 		goto bus_probe_files_fail;
 
+	// 添加总线的属性文件
 	retval = bus_add_attrs(bus);
 	if (retval)
 		goto bus_attrs_fail;
 
+	// 打印调试信息，表示总线已成功注册
 	pr_debug("bus: '%s': registered\n", bus->name);
 	return 0;
 

@@ -93,40 +93,51 @@ void __ref put_page_bootmem(struct page *page)
 
 static void register_page_bootmem_info_section(unsigned long start_pfn)
 {
-	unsigned long *usemap, mapsize, section_nr, i;
-	struct mem_section *ms;
-	struct page *page, *memmap;
+    unsigned long *usemap, mapsize, section_nr, i;
+    struct mem_section *ms;
+    struct page *page, *memmap;
 
-	if (!pfn_valid(start_pfn))
-		return;
+    // 如果起始页帧号 (pfn) 无效，直接返回
+    if (!pfn_valid(start_pfn))
+        return;
 
-	section_nr = pfn_to_section_nr(start_pfn);
-	ms = __nr_to_section(section_nr);
+    // 获取对应的内存节编号
+    section_nr = pfn_to_section_nr(start_pfn);
+    
+    // 根据节号获取 mem_section 结构
+    ms = __nr_to_section(section_nr);
 
-	/* Get section's memmap address */
-	memmap = sparse_decode_mem_map(ms->section_mem_map, section_nr);
+    // 获取该节的 memmap（页面映射）地址
+    memmap = sparse_decode_mem_map(ms->section_mem_map, section_nr);
 
-	/*
-	 * Get page for the memmap's phys address
-	 * XXX: need more consideration for sparse_vmemmap...
-	 */
-	page = virt_to_page(memmap);
-	mapsize = sizeof(struct page) * PAGES_PER_SECTION;
-	mapsize = PAGE_ALIGN(mapsize) >> PAGE_SHIFT;
+    /*
+     * 获取 memmap 的虚拟地址对应的 struct page 结构
+     * XXX: 这里需要更多的考虑用于稀疏内存虚拟映射 (sparse_vmemmap) 的场景
+     */
+    page = virt_to_page(memmap);
 
-	/* remember memmap's page */
-	for (i = 0; i < mapsize; i++, page++)
-		get_page_bootmem(section_nr, page, SECTION_INFO);
+    // 计算 memmap 所占用的页面数
+    mapsize = sizeof(struct page) * PAGES_PER_SECTION;
+    mapsize = PAGE_ALIGN(mapsize) >> PAGE_SHIFT;
 
-	usemap = __nr_to_section(section_nr)->pageblock_flags;
-	page = virt_to_page(usemap);
+    // 记录 memmap 所占用的页面信息
+    for (i = 0; i < mapsize; i++, page++)
+        get_page_bootmem(section_nr, page, SECTION_INFO);
 
-	mapsize = PAGE_ALIGN(usemap_size()) >> PAGE_SHIFT;
+    // 获取 pageblock_flags（表示内存节状态的标志位数组）的地址
+    usemap = __nr_to_section(section_nr)->pageblock_flags;
+    
+    // 将 usemap 转换为 struct page 结构
+    page = virt_to_page(usemap);
 
-	for (i = 0; i < mapsize; i++, page++)
-		get_page_bootmem(section_nr, page, MIX_SECTION_INFO);
+    // 计算 usemap 所占用的页面数
+    mapsize = PAGE_ALIGN(usemap_size()) >> PAGE_SHIFT;
 
+    // 记录 usemap 所占用的页面信息
+    for (i = 0; i < mapsize; i++, page++)
+        get_page_bootmem(section_nr, page, MIX_SECTION_INFO);
 }
+
 
 void register_page_bootmem_info_node(struct pglist_data *pgdat)
 {
@@ -138,30 +149,37 @@ void register_page_bootmem_info_node(struct pglist_data *pgdat)
 	nr_pages = PAGE_ALIGN(sizeof(struct pglist_data)) >> PAGE_SHIFT;
 	page = virt_to_page(pgdat);
 
+	// 为该节点的 pglist_data 所占用的页添加 bootmem 信息
 	for (i = 0; i < nr_pages; i++, page++)
 		get_page_bootmem(node, page, NODE_INFO);
 
+	// 遍历该节点的所有内存区域(zone)
 	zone = &pgdat->node_zones[0];
 	for (; zone < pgdat->node_zones + MAX_NR_ZONES - 1; zone++) {
+		// 如果该区域的等待队列表不为空
 		if (zone->wait_table) {
+			// 计算等待队列表占用的页数
 			nr_pages = zone->wait_table_hash_nr_entries
 				* sizeof(wait_queue_head_t);
 			nr_pages = PAGE_ALIGN(nr_pages) >> PAGE_SHIFT;
+			// 获取等待队列表的起始页
 			page = virt_to_page(zone->wait_table);
 
+			// 为等待队列表的每一页添加 bootmem 信息
 			for (i = 0; i < nr_pages; i++, page++)
 				get_page_bootmem(node, page, NODE_INFO);
 		}
 	}
 
+	// 获取该节点的起始页帧号(PFN)和结束页帧号(PFN)
 	pfn = pgdat->node_start_pfn;
 	end_pfn = pfn + pgdat->node_spanned_pages;
 
-	/* register_section info */
+	// 为该节点的每个内存段(section)注册 bootmem 信息
 	for (; pfn < end_pfn; pfn += PAGES_PER_SECTION)
 		register_page_bootmem_info_section(pfn);
-
 }
+
 #endif /* !CONFIG_SPARSEMEM_VMEMMAP */
 
 static void grow_zone_span(struct zone *zone, unsigned long start_pfn,

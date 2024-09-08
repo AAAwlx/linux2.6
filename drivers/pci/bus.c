@@ -193,35 +193,41 @@ void pci_bus_add_devices(const struct pci_bus *bus)
 	struct pci_bus *child;
 	int retval;
 
+	// 遍历总线上的所有 PCI 设备
 	list_for_each_entry(dev, &bus->devices, bus_list) {
-		/* Skip already-added devices */
+		// 跳过已经添加的设备
 		if (dev->is_added)
 			continue;
+
+		// 添加设备到总线
 		retval = pci_bus_add_device(dev);
 		if (retval)
 			dev_err(&dev->dev, "Error adding device, continuing\n");
 	}
 
+	// 遍历总线上的所有 PCI 设备
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		// 确保设备已经被添加
 		BUG_ON(!dev->is_added);
 
+		// 处理设备的子总线
 		child = dev->subordinate;
 		/*
-		 * If there is an unattached subordinate bus, attach
-		 * it and then scan for unattached PCI devices.
+		 * 如果存在未附加的子总线，则附加它
+		 * 并扫描未附加的 PCI 设备
 		 */
 		if (!child)
 			continue;
 		if (list_empty(&child->node)) {
-			down_write(&pci_bus_sem);
-			list_add_tail(&child->node, &dev->bus->children);
-			up_write(&pci_bus_sem);
+			down_write(&pci_bus_sem); // 获取写锁
+			list_add_tail(&child->node, &dev->bus->children); // 将子总线添加到父总线的子列表中
+			up_write(&pci_bus_sem); // 释放写锁
 		}
+		// 递归添加子总线上的设备
 		pci_bus_add_devices(child);
 
 		/*
-		 * register the bus with sysfs as the parent is now
-		 * properly registered.
+		 * 注册子总线到 sysfs，因为父总线现在已经被正确注册
 		 */
 		if (child->is_added)
 			continue;

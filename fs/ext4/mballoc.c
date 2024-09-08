@@ -2607,7 +2607,7 @@ static void ext4_remove_debugfs_entry(void)
 }
 
 #endif
-
+//初始化块分配需要的缓存
 int __init init_ext4_mballoc(void)
 {
 	ext4_pspace_cachep =
@@ -3903,46 +3903,52 @@ static inline void ext4_mb_show_ac(struct ext4_allocation_context *ac)
  */
 static void ext4_mb_group_or_file(struct ext4_allocation_context *ac)
 {
-	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);
-	int bsbits = ac->ac_sb->s_blocksize_bits;
+	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);  // 获取超级块信息
+	int bsbits = ac->ac_sb->s_blocksize_bits;  // 块大小的位数
 	loff_t size, isize;
 
+	// 如果不是数据分配请求，直接返回
 	if (!(ac->ac_flags & EXT4_MB_HINT_DATA))
 		return;
 
+	// 如果只使用目标分配，不需要进一步处理，直接返回
 	if (unlikely(ac->ac_flags & EXT4_MB_HINT_GOAL_ONLY))
 		return;
 
+	// 计算当前分配后的文件大小
 	size = ac->ac_o_ex.fe_logical + ac->ac_o_ex.fe_len;
+	// 计算当前inode的大小，以块大小对齐
 	isize = (i_size_read(ac->ac_inode) + ac->ac_sb->s_blocksize - 1)
 		>> bsbits;
 
+	// 如果分配后的文件大小等于当前文件大小，并且文件系统不忙，
+	// 并且当前inode没有活跃的写入操作，则禁用预分配
 	if ((size == isize) &&
 	    !ext4_fs_is_busy(sbi) &&
 	    (atomic_read(&ac->ac_inode->i_writecount) == 0)) {
-		ac->ac_flags |= EXT4_MB_HINT_NOPREALLOC;
+		ac->ac_flags |= EXT4_MB_HINT_NOPREALLOC;  // 设置禁用预分配标志
 		return;
 	}
 
-	/* don't use group allocation for large files */
-	size = max(size, isize);
+	// 对于大文件，不使用组分配
+	size = max(size, isize);  // 使用更大的值作为分配的文件大小
 	if (size > sbi->s_mb_stream_request) {
-		ac->ac_flags |= EXT4_MB_STREAM_ALLOC;
+		ac->ac_flags |= EXT4_MB_STREAM_ALLOC;  // 设置流式分配标志
 		return;
 	}
 
+	// 确保局部分配组指针为空
 	BUG_ON(ac->ac_lg != NULL);
 	/*
-	 * locality group prealloc space are per cpu. The reason for having
-	 * per cpu locality group is to reduce the contention between block
-	 * request from multiple CPUs.
+	 * 局部组预分配空间是基于每个CPU的。使用每个CPU单独的局部组
+	 * 的原因是减少来自多个CPU的块请求之间的争用。
 	 */
-	ac->ac_lg = __this_cpu_ptr(sbi->s_locality_groups);
+	ac->ac_lg = __this_cpu_ptr(sbi->s_locality_groups);  // 获取当前CPU的局部组
 
-	/* we're going to use group allocation */
+	// 将使用组分配，设置相关标志
 	ac->ac_flags |= EXT4_MB_HINT_GROUP_ALLOC;
 
-	/* serialize all allocations in the group */
+	// 为了序列化组中的所有分配操作，获取局部组的互斥锁
 	mutex_lock(&ac->ac_lg->lg_mutex);
 }
 
@@ -3958,40 +3964,42 @@ ext4_mb_initialize_context(struct ext4_allocation_context *ac,
 	ext4_fsblk_t goal;
 	ext4_grpblk_t block;
 
-	/* we can't allocate > group size */
+	/* 不能分配超过组大小的块 */
 	len = ar->len;
 
-	/* just a dirty hack to filter too big requests  */
+	/* 通过这个小技巧过滤掉过大的请求 */
 	if (len >= EXT4_BLOCKS_PER_GROUP(sb) - 10)
 		len = EXT4_BLOCKS_PER_GROUP(sb) - 10;
 
-	/* start searching from the goal */
+	/* 从目标块号开始搜索 */
 	goal = ar->goal;
 	if (goal < le32_to_cpu(es->s_first_data_block) ||
 			goal >= ext4_blocks_count(es))
 		goal = le32_to_cpu(es->s_first_data_block);
 	ext4_get_group_no_and_offset(sb, goal, &group, &block);
 
-	/* set up allocation goals */
-	memset(ac, 0, sizeof(struct ext4_allocation_context));
-	ac->ac_b_ex.fe_logical = ar->logical;
-	ac->ac_status = AC_STATUS_CONTINUE;
-	ac->ac_sb = sb;
-	ac->ac_inode = ar->inode;
-	ac->ac_o_ex.fe_logical = ar->logical;
-	ac->ac_o_ex.fe_group = group;
-	ac->ac_o_ex.fe_start = block;
-	ac->ac_o_ex.fe_len = len;
-	ac->ac_g_ex.fe_logical = ar->logical;
-	ac->ac_g_ex.fe_group = group;
-	ac->ac_g_ex.fe_start = block;
-	ac->ac_g_ex.fe_len = len;
-	ac->ac_flags = ar->flags;
+	/* 设置分配目标 */
+	memset(ac, 0, sizeof(struct ext4_allocation_context));  // 初始化分配上下文结构体为0
+	ac->ac_b_ex.fe_logical = ar->logical;  // 设置逻辑块号
+	ac->ac_status = AC_STATUS_CONTINUE;  // 设置分配状态为继续
+	ac->ac_sb = sb;  // 关联超级块
+	ac->ac_inode = ar->inode;  // 关联inode
+	ac->ac_o_ex.fe_logical = ar->logical;  // 设置原始分配请求的逻辑块号
+	ac->ac_o_ex.fe_group = group;  // 设置目标组号
+	ac->ac_o_ex.fe_start = block;  // 设置组内偏移量
+	ac->ac_o_ex.fe_len = len;  // 设置分配长度
+	ac->ac_g_ex.fe_logical = ar->logical;  // 设置分配目标的逻辑块号
+	ac->ac_g_ex.fe_group = group;  // 设置分配目标的组号
+	ac->ac_g_ex.fe_start = block;  // 设置组内偏移量
+	ac->ac_g_ex.fe_len = len;  // 设置分配长度
+	ac->ac_flags = ar->flags;  // 设置分配标志
 
-	/* we have to define context: we'll we work with a file or
-	 * locality group. this is a policy, actually */
+	/* 定义分配策略：是针对文件分配还是局部分配组分配
+	 * 实际上这是一个策略判断，用于判断当前分配是面向文件还是局部分配组
+	 */
 	ext4_mb_group_or_file(ac);
 
+	/* 调试信息输出：打印初始化分配上下文的详细信息 */
 	mb_debug(1, "init ac: %u blocks @ %u, goal %u, flags %x, 2^%d, "
 			"left: %u/%u, right %u/%u to %swritable\n",
 			(unsigned) ar->len, (unsigned) ar->logical,
@@ -3999,8 +4007,7 @@ ext4_mb_initialize_context(struct ext4_allocation_context *ac,
 			(unsigned) ar->lleft, (unsigned) ar->pleft,
 			(unsigned) ar->lright, (unsigned) ar->pright,
 			atomic_read(&ar->inode->i_writecount) ? "" : "non-");
-	return 0;
-
+	return 0;  // 返回成功
 }
 
 static noinline_for_stack void
@@ -4218,119 +4225,121 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 	sb = ar->inode->i_sb;
 	sbi = EXT4_SB(sb);
 
-	trace_ext4_request_blocks(ar);
+	trace_ext4_request_blocks(ar);  // 记录块分配请求的跟踪信息，用于调试
 
 	/*
-	 * For delayed allocation, we could skip the ENOSPC and
-	 * EDQUOT check, as blocks and quotas have been already
-	 * reserved when data being copied into pagecache.
+	 * 对于延迟分配，跳过ENOSPC（无空间）和
+	 * EDQUOT（配额超限）检查，因为在将数据复制到
+	 * pagecache 时已经预留了块和配额。
 	 */
 	if (EXT4_I(ar->inode)->i_delalloc_reserved_flag)
 		ar->flags |= EXT4_MB_DELALLOC_RESERVED;
 	else {
-		/* Without delayed allocation we need to verify
-		 * there is enough free blocks to do block allocation
-		 * and verify allocation doesn't exceed the quota limits.
+		/* 在没有延迟分配的情况下，我们需要验证是否有足够的
+		 * 空闲块进行分配，并确保分配不会超出配额限制。
 		 */
 		while (ar->len && ext4_claim_free_blocks(sbi, ar->len)) {
-			/* let others to free the space */
+			/* 让出处理器以允许其他线程释放空间 */
 			yield();
-			ar->len = ar->len >> 1;
+			ar->len = ar->len >> 1;  // 将请求长度减半
 		}
 		if (!ar->len) {
-			*errp = -ENOSPC;
+			*errp = -ENOSPC;  // 无空间
 			return 0;
 		}
 		reserv_blks = ar->len;
 		while (ar->len && dquot_alloc_block(ar->inode, ar->len)) {
-			ar->flags |= EXT4_MB_HINT_NOPREALLOC;
+			ar->flags |= EXT4_MB_HINT_NOPREALLOC;  // 提示避免预分配
 			ar->len--;
 		}
 		inquota = ar->len;
 		if (ar->len == 0) {
-			*errp = -EDQUOT;
+			*errp = -EDQUOT;  // 配额超限
 			goto out3;
 		}
 	}
 
+	/* 为分配上下文分配内存 */
 	ac = kmem_cache_alloc(ext4_ac_cachep, GFP_NOFS);
 	if (!ac) {
 		ar->len = 0;
-		*errp = -ENOMEM;
+		*errp = -ENOMEM;  // 内存不足
 		goto out1;
 	}
 
+	/* 初始化分配上下文 */
 	*errp = ext4_mb_initialize_context(ac, ar);
 	if (*errp) {
 		ar->len = 0;
 		goto out2;
 	}
 
+	/* 检查是否可以使用预分配的块 */
 	ac->ac_op = EXT4_MB_HISTORY_PREALLOC;
 	if (!ext4_mb_use_preallocated(ac)) {
 		ac->ac_op = EXT4_MB_HISTORY_ALLOC;
-		ext4_mb_normalize_request(ac, ar);
+		ext4_mb_normalize_request(ac, ar);  // 标准化分配请求
 repeat:
-		/* allocate space in core */
+		/* 正常分配块 */
 		ext4_mb_regular_allocator(ac);
 
-		/* as we've just preallocated more space than
-		 * user requested orinally, we store allocated
-		 * space in a special descriptor */
+		/* 如果分配的空间超过了用户最初请求的空间，
+		 * 将多余的空间存储在一个特殊的描述符中。
+		 */
 		if (ac->ac_status == AC_STATUS_FOUND &&
 				ac->ac_o_ex.fe_len < ac->ac_b_ex.fe_len)
-			ext4_mb_new_preallocation(ac);
+			ext4_mb_new_preallocation(ac);  // 创建新的预分配块
 	}
 	if (likely(ac->ac_status == AC_STATUS_FOUND)) {
-		*errp = ext4_mb_mark_diskspace_used(ac, handle, reserv_blks);
+		*errp = ext4_mb_mark_diskspace_used(ac, handle, reserv_blks);  // 标记使用的磁盘空间
 		if (*errp ==  -EAGAIN) {
 			/*
-			 * drop the reference that we took
-			 * in ext4_mb_use_best_found
+			 * 如果分配失败，释放引用并重试
 			 */
 			ext4_mb_release_context(ac);
 			ac->ac_b_ex.fe_group = 0;
 			ac->ac_b_ex.fe_start = 0;
 			ac->ac_b_ex.fe_len = 0;
 			ac->ac_status = AC_STATUS_CONTINUE;
-			goto repeat;
+			goto repeat;  // 重试分配
 		} else if (*errp) {
-			ext4_discard_allocated_blocks(ac);
+			ext4_discard_allocated_blocks(ac);  // 丢弃已分配的块
 			ac->ac_b_ex.fe_len = 0;
 			ar->len = 0;
-			ext4_mb_show_ac(ac);
+			ext4_mb_show_ac(ac);  // 显示分配上下文的调试信息
 		} else {
-			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
+			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);  // 获取分配的块号
 			ar->len = ac->ac_b_ex.fe_len;
 		}
 	} else {
-		freed  = ext4_mb_discard_preallocations(sb, ac->ac_o_ex.fe_len);
+		freed  = ext4_mb_discard_preallocations(sb, ac->ac_o_ex.fe_len);  // 丢弃预分配的块
 		if (freed)
-			goto repeat;
-		*errp = -ENOSPC;
+			goto repeat;  // 如果释放了预分配块，重试分配
+		*errp = -ENOSPC;  // 无空间
 		ac->ac_b_ex.fe_len = 0;
 		ar->len = 0;
-		ext4_mb_show_ac(ac);
+		ext4_mb_show_ac(ac);  // 显示分配上下文的调试信息
 	}
 
-	ext4_mb_release_context(ac);
+	ext4_mb_release_context(ac);  // 释放分配上下文
 
 out2:
-	kmem_cache_free(ext4_ac_cachep, ac);
+	kmem_cache_free(ext4_ac_cachep, ac);  // 释放上下文内存
 out1:
+	/* 如果实际分配的块数少于预期，则释放多余的配额 */
 	if (inquota && ar->len < inquota)
 		dquot_free_block(ar->inode, inquota - ar->len);
 out3:
 	if (!ar->len) {
 		if (!EXT4_I(ar->inode)->i_delalloc_reserved_flag)
-			/* release all the reserved blocks if non delalloc */
+			/* 如果没有延迟分配，则释放所有预留的块 */
 			percpu_counter_sub(&sbi->s_dirtyblocks_counter,
 						reserv_blks);
 	}
 
-	trace_ext4_allocate_blocks(ar, (unsigned long long)block);
+	trace_ext4_allocate_blocks(ar, (unsigned long long)block);  // 跟踪块分配
 
-	return block;
+	return block;  // 返回分配的块号
 }
 
 /*

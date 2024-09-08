@@ -95,59 +95,113 @@ struct cfq_rb_root {
 struct cfq_queue {
 	/* reference count */
 	atomic_t ref;
+	// 引用计数，用于控制队列的生命周期。
+
 	/* various state flags, see below */
 	unsigned int flags;
+	// 用于存储队列的各种状态标志。
+
 	/* parent cfq_data */
 	struct cfq_data *cfqd;
+	// 指向所属的 cfq_data 结构体（即 CFQ 调度器的主要数据结构）。
+
 	/* service_tree member */
 	struct rb_node rb_node;
+	// 队列在服务树（service_tree）中的红黑树节点。
+
 	/* service_tree key */
 	unsigned long rb_key;
+	// 用于排序队列的键值，通常用于服务树（service_tree）中调度顺序的确定。
+
 	/* prio tree member */
 	struct rb_node p_node;
+	// 队列在优先级树（prio_tree）中的红黑树节点。
+
 	/* prio tree root we belong to, if any */
 	struct rb_root *p_root;
+	// 指向队列所属的优先级树根节点。
+
 	/* sorted list of pending requests */
 	struct rb_root sort_list;
+	// 按扇区号排序的等待处理请求的红黑树。
+
 	/* if fifo isn't expired, next request to serve */
 	struct request *next_rq;
+	// 如果 FIFO 队列没有过期，指向下一个要服务的请求。
+
 	/* requests queued in sort_list */
 	int queued[2];
+	// 分别表示同步和异步请求队列中的请求数量（即 sort_list 中的请求数量）。
+
 	/* currently allocated requests */
 	int allocated[2];
+	// 表示同步和异步请求的已分配数量。
+
 	/* fifo list of requests in sort_list */
 	struct list_head fifo;
+	// 按到达顺序排列的请求的 FIFO 列表。
 
 	/* time when queue got scheduled in to dispatch first request. */
 	unsigned long dispatch_start;
+	// 队列首次调度请求的时间戳。
+
 	unsigned int allocated_slice;
+	// 为该队列分配的时间片大小。
+
 	unsigned int slice_dispatch;
+	// 队列在当前调度时间片内已派发的请求数。
+
 	/* time when first request from queue completed and slice started. */
 	unsigned long slice_start;
+	// 当前时间片开始时队列第一个请求完成的时间戳。
+
 	unsigned long slice_end;
+	// 当前时间片结束的时间戳。
+
 	long slice_resid;
+	// 当前时间片的剩余时间。
 
 	/* pending metadata requests */
 	int meta_pending;
+	// 表示当前正在等待处理的元数据请求的数量。
+
 	/* number of requests that are on the dispatch list or inside driver */
 	int dispatched;
+	// 当前在调度列表中或已派发到驱动程序的请求数。
 
 	/* io prio of this group */
 	unsigned short ioprio, org_ioprio;
+	// 队列的当前 I/O 优先级和原始 I/O 优先级。
+
 	unsigned short ioprio_class, org_ioprio_class;
+	// 队列的当前 I/O 优先级类和原始 I/O 优先级类。
 
 	pid_t pid;
+	// 创建此队列的进程 ID。
 
 	u32 seek_history;
+	// 记录队列的寻道历史信息。
+
 	sector_t last_request_pos;
+	// 队列中最后一个请求的扇区位置，用于计算寻道行为。
 
 	struct cfq_rb_root *service_tree;
+	// 指向该队列所属的服务树根节点。
+
 	struct cfq_queue *new_cfqq;
+	// 当队列被重新分配时，指向新的 cfq_queue 结构体。
+
 	struct cfq_group *cfqg;
+	// 指向该队列所属的 cfq_group（用于分组 I/O 控制）。
+
 	struct cfq_group *orig_cfqg;
+	// 队列的原始 cfq_group，用于恢复之前的分组设置。
+
 	/* Sectors dispatched in current dispatch round */
 	unsigned long nr_sectors;
+	// 在当前派发轮次中已派发的扇区数。
 };
+
 
 /*
  * First index in the service_trees.
@@ -1356,37 +1410,42 @@ static void cfq_del_rq_rb(struct request *rq)
 
 static void cfq_add_rq_rb(struct request *rq)
 {
+	// 获取请求所属的 CFQ 队列和调度器数据
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
 	struct cfq_data *cfqd = cfqq->cfqd;
+	// 用于可能的重复请求别名
 	struct request *__alias, *prev;
 
+	// 根据请求的类型（同步或异步）增加队列中的请求计数
 	cfqq->queued[rq_is_sync(rq)]++;
 
 	/*
-	 * looks a little odd, but the first insert might return an alias.
-	 * if that happens, put the alias on the dispatch list
+	 * 看起来有些奇怪，但第一次插入可能返回一个重复请求（别名）。
+	 * 如果发生这种情况，将别名放入调度列表。
 	 */
 	while ((__alias = elv_rb_add(&cfqq->sort_list, rq)) != NULL)
 		cfq_dispatch_insert(cfqd->queue, __alias);
 
+	// 如果队列不在轮转调度列表中，则将其加入到轮转列表
 	if (!cfq_cfqq_on_rr(cfqq))
 		cfq_add_cfqq_rr(cfqd, cfqq);
 
 	/*
-	 * check if this request is a better next-serve candidate
+	 * 检查该请求是否是一个更好的下一个服务候选者
 	 */
+	// 保存当前的下一个请求，并选择下一个要处理的请求
 	prev = cfqq->next_rq;
 	cfqq->next_rq = cfq_choose_req(cfqd, cfqq->next_rq, rq, cfqd->last_position);
 
 	/*
-	 * adjust priority tree position, if ->next_rq changes
+	 * 如果 ->next_rq 发生了变化，调整优先级树中的位置
 	 */
 	if (prev != cfqq->next_rq)
 		cfq_prio_tree_add(cfqd, cfqq);
 
+	// 确保队列的 next_rq 不为空
 	BUG_ON(!cfqq->next_rq);
 }
-
 static void cfq_reposition_rq_rb(struct cfq_queue *cfqq, struct request *rq)
 {
 	elv_rb_del(&cfqq->sort_list, rq);
@@ -3207,18 +3266,28 @@ cfq_rq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 
 static void cfq_insert_request(struct request_queue *q, struct request *rq)
 {
-	struct cfq_data *cfqd = q->elevator->elevator_data;
-	struct cfq_queue *cfqq = RQ_CFQQ(rq);
+	struct cfq_data *cfqd = q->elevator->elevator_data;  // 获取 CFQ (Completely Fair Queuing) 数据
+	struct cfq_queue *cfqq = RQ_CFQQ(rq);  // 获取与请求关联的 CFQ 队列
 
+	// 记录 CFQ 队列的日志信息
 	cfq_log_cfqq(cfqd, cfqq, "insert_request");
+
+	// 初始化优先级数据
 	cfq_init_prio_data(cfqq, RQ_CIC(rq)->ioc);
 
+	// 设置请求的 FIFO 超时
 	rq_set_fifo_time(rq, jiffies + cfqd->cfq_fifo_expire[rq_is_sync(rq)]);
+
+	// 将请求添加到 CFQ 队列的 FIFO 列表尾部
 	list_add_tail(&rq->queuelist, &cfqq->fifo);
+
+	// 将请求添加到红黑树中，以便于 CFQ 调度算法的进一步处理
 	cfq_add_rq_rb(rq);
 
+	// 更新 CFQ 数据结构中的相关统计信息
 	cfq_rq_enqueued(cfqd, cfqq, rq);
 }
+
 
 /*
  * Update hw_tag based on peak queue depth over 50 samples under

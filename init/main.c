@@ -566,10 +566,10 @@ asmlinkage void __init start_kernel(void)
 	lock_kernel();
 	tick_init();
 	boot_cpu_init();
-	page_address_init();
+	page_address_init();//该函数初始化高端内存（High Memory）线性地址空间中永久映射相关的全局变量
 	printk(KERN_NOTICE "%s", linux_banner);
 	setup_arch(&command_line);
-	mm_init_owner(&init_mm, &init_task);
+	mm_init_owner(&init_mm, &init_task);//初始化0号线程的mm_struct结构
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
 	setup_per_cpu_areas();
@@ -584,8 +584,7 @@ asmlinkage void __init start_kernel(void)
 		   __stop___param - __start___param,
 		   &unknown_bootoption);
 	/*
-	 * These use large bootmem allocations and must precede
-	 * kmem_cache_init()
+	 * 它们使用较大的 bootmem 分配，并且必须先于 kmem_cache_init()
 	 */
 	pidhash_init();
 	vfs_caches_init_early();//初始化vfs数据结构的缓存

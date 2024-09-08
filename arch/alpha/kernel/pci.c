@@ -278,40 +278,45 @@ pcibios_fixup_device_resources(struct pci_dev *dev, struct pci_bus *bus)
 	}
 }
 
-void __devinit
-pcibios_fixup_bus(struct pci_bus *bus)
+// /根据总线的类型和设备的状态，调整内存空间和 I/O 空间的分配
+void pcibios_fixup_bus(struct pci_bus *bus)
 {
-	/* Propagate hose info into the subordinate devices.  */
+    /* Propagate hose info into the subordinate devices.  */
+    // 将总线控制器的资源信息传播到下属设备
 
-	struct pci_controller *hose = bus->sysdata;
-	struct pci_dev *dev = bus->self;
+    struct pci_controller *hose = bus->sysdata; // 从总线结构体中获取 PCI 控制器
+    struct pci_dev *dev = bus->self; // 获取总线的上级设备（如桥接设备）
 
-	if (!dev) {
-		/* Root bus. */
-		u32 pci_mem_end;
-		u32 sg_base = hose->sg_pci ? hose->sg_pci->dma_base : ~0;
-		unsigned long end;
+    if (!dev) {
+        /* Root bus. */
+        // 如果没有上级设备，说明这是根总线
+        u32 pci_mem_end;
+        u32 sg_base = hose->sg_pci ? hose->sg_pci->dma_base : ~0; // 获取 DMA 基址
+        unsigned long end;
 
-		bus->resource[0] = hose->io_space;
-		bus->resource[1] = hose->mem_space;
+        // 设置总线的资源信息
+        bus->resource[0] = hose->io_space; // 设置 I/O 空间
+        bus->resource[1] = hose->mem_space; // 设置内存空间
 
-		/* Adjust hose mem_space limit to prevent PCI allocations
-		   in the iommu windows. */
-		pci_mem_end = min((u32)__direct_map_base, sg_base) - 1;
-		end = hose->mem_space->start + pci_mem_end;
-		if (hose->mem_space->end > end)
-			hose->mem_space->end = end;
- 	} else if (pci_probe_only &&
- 		   (dev->class >> 8) == PCI_CLASS_BRIDGE_PCI) {
- 		pci_read_bridge_bases(bus);
- 		pcibios_fixup_device_resources(dev, bus);
-	} 
+        // 调整内存空间限制，以防止 PCI 分配超出 IOMMU 窗口
+        pci_mem_end = min((u32)__direct_map_base, sg_base) - 1; // 计算内存空间结束地址
+        end = hose->mem_space->start + pci_mem_end; // 计算新的内存空间结束位置
+        if (hose->mem_space->end > end) // 如果新的结束位置小于当前的结束位置
+            hose->mem_space->end = end; // 更新内存空间结束位置
+    } else if (pci_probe_only &&
+           (dev->class >> 8) == PCI_CLASS_BRIDGE_PCI) {
+        // 如果处于探测模式且设备是 PCI 桥
+        pci_read_bridge_bases(bus); // 读取 PCI 桥的基址
+        pcibios_fixup_device_resources(dev, bus); // 修复 PCI 桥设备的资源
+    } 
 
-	list_for_each_entry(dev, &bus->devices, bus_list) {
-		pdev_save_srm_config(dev);
-		if ((dev->class >> 8) != PCI_CLASS_BRIDGE_PCI)
-			pcibios_fixup_device_resources(dev, bus);
-	}
+    // 遍历总线上的所有设备
+    list_for_each_entry(dev, &bus->devices, bus_list) {
+        pdev_save_srm_config(dev); // 保存设备的配置
+        // 如果设备不是 PCI 桥，则修复设备资源
+        if ((dev->class >> 8) != PCI_CLASS_BRIDGE_PCI)
+            pcibios_fixup_device_resources(dev, bus);
+    }
 }
 
 void __init

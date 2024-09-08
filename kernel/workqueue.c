@@ -62,13 +62,8 @@ struct cpu_workqueue_struct {
  * per-CPU workqueues:
  */
 
-<<<<<<< HEAD
-// 每种工作者线程有一个这样的结构体。
-// 一种工作者线程有一个这样的结构体，然后在这个结构体内部有一个cpu_workqueue_struct组成的数组，数组的每一个元素代表该种工作者线程在每一个cpu上的实例
-=======
 // 每种!!!(记住是种不是个)工作者线程有一个这样的结构体。
 // 一种!!!(记住是种不是个)工作者线程有一个这样的结构体，然后在这个结构体内部有一个cpu_workqueue_struct组成的数组，数组的每一个元素代表该种工作者线程在每一个cpu上的实例
->>>>>>> ccc/main
 
 // 每个工作者线程类型关联一个自己的workqueue_struct。该结构体里面，给每个线程分配一个cpu_workqueue_struct，
 // 因而也就是给每个处理器分配一个，因为每个处理器都有一个该类型的工作者线程
@@ -79,11 +74,7 @@ struct workqueue_struct {
 	// 系统每一个CPU对应一个工作者线程，所以对于给定计算机来说，就是每个处理器，
 	// 每个工作者线程对应一个这样的cpu_workqueue_struct结构体。
 	struct cpu_workqueue_struct *cpu_wq;		// 一个数组，总数为cpu数，代表者该种工作者线程在每一个cpu上的实体
-<<<<<<< HEAD
-	struct list_head list;
-=======
 	struct list_head list;	// list of all workqueues,用于将多个工作队列连接成链表的链表头节点。
->>>>>>> ccc/main
 	const char *name;
 	int singlethread;		// 标志位，表示该工作队列是否只有单个线程在处理工作项。
 	int freezeable;		/* Freeze threads during suspend */	// 标志位，表示在系统挂起期间是否冻结工作者线程。
@@ -401,15 +392,9 @@ EXPORT_SYMBOL_GPL(queue_delayed_work_on);
 
 static void run_workqueue(struct cpu_workqueue_struct *cwq)
 {
-<<<<<<< HEAD
-	spin_lock_irq(&cwq->lock);
-	// 当链表不为空，选取下一个节点对象。
-	while (!list_empty(&cwq->worklist)) {
-=======
 	spin_lock_irq(&cwq->lock);	// 获取工作队列的自旋锁
 	// 当链表不为空，选取下一个节点对象。
 	while (!list_empty(&cwq->worklist)) {	// 当工作队列中还有任务时循环执行
->>>>>>> ccc/main
 		struct work_struct *work = list_entry(cwq->worklist.next,
 						struct work_struct, entry);
 		work_func_t f = work->func;	// 获取工作函数
@@ -424,15 +409,9 @@ static void run_workqueue(struct cpu_workqueue_struct *cwq)
 		 */
 		struct lockdep_map lockdep_map = work->lockdep_map;	// 为了避免锁依赖检测的问题，复制锁依赖映射
 #endif
-<<<<<<< HEAD
-		trace_workqueue_execution(cwq->thread, work);
-		debug_work_deactivate(work);
-		cwq->current_work = work;
-=======
 		trace_workqueue_execution(cwq->thread, work);	// 跟踪工作队列的执行
 		debug_work_deactivate(work);		// 调试函数，用于禁用工作项的调试标志
 		cwq->current_work = work;		// 设置当前正在执行的工作项
->>>>>>> ccc/main
 		// 把该节点从链表上解下来
 		list_del_init(cwq->worklist.next);
 		spin_unlock_irq(&cwq->lock);	// 解锁
@@ -440,15 +419,9 @@ static void run_workqueue(struct cpu_workqueue_struct *cwq)
 		// 检查工作项是否属于当前工作队列
 		BUG_ON(get_wq_data(work) != cwq);
 		// 将待处理标志位pending清零
-<<<<<<< HEAD
 		work_clear_pending(work);
 		lock_map_acquire(&cwq->wq->lockdep_map);
 		lock_map_acquire(&lockdep_map);
-=======
-		work_clear_pending(work);	// 清除工作项的待处理标志位
-		lock_map_acquire(&cwq->wq->lockdep_map);	// 获取工作队列所属的锁依赖映射
-		lock_map_acquire(&lockdep_map);	// 获取复制的锁依赖映射
->>>>>>> ccc/main
 		// 调用函数
 		f(work);
 		lock_map_release(&lockdep_map);		// 释放复制的锁依赖映射
@@ -490,11 +463,7 @@ static int worker_thread(void *__cwq)
 		if (!freezing(current) &&
 		    !kthread_should_stop() &&
 		    list_empty(&cwq->worklist))
-<<<<<<< HEAD
-				//如果工作链表是空，线程调用schedule进入休眠 
-=======
 				//如果工作链表是空，线程调用schedule进入休眠，等待被唤醒
->>>>>>> ccc/main
 			schedule();
 		// 如果链表中由对象，线程不会睡眠。相反，它将自己状态设置为TASK_RUNNING，脱离等待队列
 		finish_wait(&cwq->more_work, &wait);
@@ -544,24 +513,35 @@ static void insert_wq_barrier(struct cpu_workqueue_struct *cwq,
 
 static int flush_cpu_workqueue(struct cpu_workqueue_struct *cwq)
 {
-	int active = 0;
-	struct wq_barrier barr;
+    int active = 0;  // 表示工作队列是否有未完成的任务
+    struct wq_barrier barr;  // 用于阻塞和同步工作队列的屏障
 
-	WARN_ON(cwq->thread == current);
+    // 如果当前正在执行的线程是工作队列线程，发出警告
+    WARN_ON(cwq->thread == current);
 
-	spin_lock_irq(&cwq->lock);
-	if (!list_empty(&cwq->worklist) || cwq->current_work != NULL) {
-		insert_wq_barrier(cwq, &barr, &cwq->worklist);
-		active = 1;
-	}
-	spin_unlock_irq(&cwq->lock);
+    // 获取工作队列的自旋锁，以防止并发修改
+    spin_lock_irq(&cwq->lock);
 
-	if (active) {
-		wait_for_completion(&barr.done);
-		destroy_work_on_stack(&barr.work);
-	}
+    // 如果工作队列中有未完成的任务，或当前有正在处理的任务
+    if (!list_empty(&cwq->worklist) || cwq->current_work != NULL) {
+        // 将屏障插入到工作队列中，以确保所有未完成的任务完成后继续执行
+        insert_wq_barrier(cwq, &barr, &cwq->worklist);
+        active = 1;  // 标记工作队列有活动任务
+    }
 
-	return active;
+    // 释放自旋锁
+    spin_unlock_irq(&cwq->lock);
+
+    // 如果工作队列有未完成的任务
+    if (active) {
+        // 等待屏障完成，直到所有任务都执行完毕
+        wait_for_completion(&barr.done);
+        // 销毁堆栈上的工作队列屏障，释放相关资源
+        destroy_work_on_stack(&barr.work);
+    }
+
+    // 返回工作队列是否有活动任务
+    return active;
 }
 
 /**

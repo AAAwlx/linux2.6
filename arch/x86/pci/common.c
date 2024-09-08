@@ -375,33 +375,40 @@ void __init dmi_check_pciprobe(void)
 
 struct pci_bus * __devinit pcibios_scan_root(int busnum)
 {
-	struct pci_bus *bus = NULL;
-	struct pci_sysdata *sd;
+	struct pci_bus *bus = NULL;          // 初始化 PCI 总线指针为 NULL
+	struct pci_sysdata *sd;              // 用于存储每个根总线特定于架构的数据
 
+	// 查找现有的 PCI 总线
 	while ((bus = pci_find_next_bus(bus)) != NULL) {
 		if (bus->number == busnum) {
-			/* Already scanned */
+			// 如果找到指定的总线号，则返回该总线，因为它已经被扫描过
 			return bus;
 		}
 	}
 
-	/* Allocate per-root-bus (not per bus) arch-specific data.
-	 * TODO: leak; this memory is never freed.
-	 * It's arguable whether it's worth the trouble to care.
+	/*
+	 * 为每个根总线分配特定于架构的数据（而不是每个总线）。
+	 * TODO: 内存泄漏；这个内存从未释放。
+	 * 是否值得关心这个问题是有争议的。
 	 */
 	sd = kzalloc(sizeof(*sd), GFP_KERNEL);
 	if (!sd) {
+		// 如果内存分配失败，打印错误信息，并返回 NULL
 		printk(KERN_ERR "PCI: OOM, not probing PCI bus %02x\n", busnum);
 		return NULL;
 	}
 
+	// 获取该总线对应的 NUMA 节点
 	sd->node = get_mp_bus_to_node(busnum);
 
 	printk(KERN_DEBUG "PCI: Probing PCI hardware (bus %02x)\n", busnum);
+	// 扫描 PCI 总线并将其初始化
 	bus = pci_scan_bus_parented(NULL, busnum, &pci_root_ops, sd);
 	if (!bus)
+		// 如果扫描失败，释放分配的内存
 		kfree(sd);
 
+	// 返回扫描到的总线
 	return bus;
 }
 
@@ -409,16 +416,17 @@ int __init pcibios_init(void)
 {
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 
+	// 检查系统是否支持 PCI
 	if (!raw_pci_ops) {
 		printk(KERN_WARNING "PCI: System does not support PCI\n");
 		return 0;
 	}
 
 	/*
-	 * Set PCI cacheline size to that of the CPU if the CPU has reported it.
-	 * (For older CPUs that don't support cpuid, we se it to 32 bytes
-	 * It's also good for 386/486s (which actually have 16)
-	 * as quite a few PCI devices do not support smaller values.
+	 * 如果 CPU 报告了缓存行大小，则将 PCI 缓存行大小设置为 CPU 的缓存行大小。
+	 * 对于不支持 cpuid 的旧 CPU，我们将其设置为 32 字节。
+	 * 对于 386/486 系列 CPU，16 字节通常是较好的选择，
+	 * 因为许多 PCI 设备不支持更小的值。
 	 */
 	if (c->x86_clflush_size > 0) {
 		pci_dfl_cache_line_size = c->x86_clflush_size >> 2;
@@ -429,13 +437,15 @@ int __init pcibios_init(void)
 		printk(KERN_DEBUG "PCI: Unknown cacheline size. Setting to 32 bytes\n");
 	}
 
+	// 调查 PCI 资源
 	pcibios_resource_survey();
 
+	// 根据配置排序 PCI 设备
 	if (pci_bf_sort >= pci_force_bf)
 		pci_sort_breadthfirst();
+
 	return 0;
 }
-
 char * __devinit  pcibios_setup(char *str)
 {
 	if (!strcmp(str, "off")) {

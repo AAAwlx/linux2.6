@@ -55,8 +55,8 @@ static inline int get_pageblock_migratetype(struct page *page)
 }
 
 struct free_area {
-	struct list_head	free_list[MIGRATE_TYPES];
-	unsigned long		nr_free;
+    struct list_head free_list[MIGRATE_TYPES];  // 不同迁移类型的空闲页链表数组
+    unsigned long nr_free;                      // 该区域中空闲页面的总数
 };
 
 struct pglist_data;
@@ -267,14 +267,20 @@ struct zone_reclaim_stat {
 	 * that cache is.
 	 *
 	 * The anon LRU stats live in [0], file LRU stats in [1]
+	 *//*
+	 * vmscan.c 中的页面回收代码跟踪了内存/交换支持的页面和文件支持的页面
+	 * 的引用情况。`recent_rotated` 和 `recent_scanned` 用来表示最近被回收和
+	 * 扫描的页面数量。rotated/scanned 比率越高，该缓存越有价值。
+	 *
+	 * `recent_rotated` 和 `recent_scanned` 分别表示匿名 LRU 和文件 LRU 的统计数据。
+	 * 匿名 LRU 统计数据存储在索引 [0]，文件 LRU 统计数据存储在索引 [1]。
 	 */
-	unsigned long		recent_rotated[2];
-	unsigned long		recent_scanned[2];
-
+	unsigned long		recent_rotated[2];// 记录最近被回收的页面数（分别针对匿名 LRU 和文件 LRU）
+	unsigned long		recent_scanned[2];// 记录最近被扫描的页面数（分别针对匿名 LRU 和文件 LRU）
 	/*
 	 * accumulated for batching
 	 */
-	unsigned long		nr_saved_scan[NR_LRU_LISTS];
+	unsigned long		nr_saved_scan[NR_LRU_LISTS];  // 保存针对每种 LRU 列表的扫描页面数
 };
 
 struct zone {
@@ -642,9 +648,9 @@ struct zonelist {
 
 #ifdef CONFIG_ARCH_POPULATES_NODE_MAP
 struct node_active_region {
-	unsigned long start_pfn;
-	unsigned long end_pfn;
-	int nid;
+	unsigned long start_pfn;//该节点活动内存区域的起始页帧号（PFN）
+	unsigned long end_pfn;//该节点活动内存区域的结束页帧号（PFN）
+	int nid;//节点号
 };
 #endif /* CONFIG_ARCH_POPULATES_NODE_MAP */
 
@@ -666,38 +672,41 @@ extern struct page *mem_map;
  */
 struct bootmem_data;
 typedef struct pglist_data {
-	struct zone node_zones[MAX_NR_ZONES];
-	struct zonelist node_zonelists[MAX_ZONELISTS];
-	int nr_zones;
-#ifdef CONFIG_FLAT_NODE_MEM_MAP	/* means !SPARSEMEM */
-	struct page *node_mem_map;
-#ifdef CONFIG_CGROUP_MEM_RES_CTLR
-	struct page_cgroup *node_page_cgroup;
-#endif
-#endif
-#ifndef CONFIG_NO_BOOTMEM
-	struct bootmem_data *bdata;
-#endif
-#ifdef CONFIG_MEMORY_HOTPLUG
-	/*
-	 * Must be held any time you expect node_start_pfn, node_present_pages
-	 * or node_spanned_pages stay constant.  Holding this will also
-	 * guarantee that any pfn_valid() stays that way.
-	 *
-	 * Nests above zone->lock and zone->size_seqlock.
-	 */
-	spinlock_t node_size_lock;
-#endif
-	unsigned long node_start_pfn;
-	unsigned long node_present_pages; /* total number of physical pages */
-	unsigned long node_spanned_pages; /* total size of physical page
-					     range, including holes */
-	int node_id;
-	wait_queue_head_t kswapd_wait;
-	struct task_struct *kswapd;
-	int kswapd_max_order;
-} pg_data_t;
+    struct zone node_zones[MAX_NR_ZONES];    // 该节点中的不同内存区（如DMA, Normal, HighMem）
+    struct zonelist node_zonelists[MAX_ZONELISTS]; // 区域列表，帮助内存分配器快速找到内存区域
+    int nr_zones;    // 节点中存在的内存区域数量
 
+#ifdef CONFIG_FLAT_NODE_MEM_MAP    /* 表示非稀疏内存模型 */
+    struct page *node_mem_map;     // 节点的内存页数组（页框映射）
+#ifdef CONFIG_CGROUP_MEM_RES_CTLR
+    struct page_cgroup *node_page_cgroup;    // 用于内存控制组的页群组
+#endif
+#endif
+
+#ifndef CONFIG_NO_BOOTMEM
+    struct bootmem_data *bdata;    // 引导内存分配器的相关数据
+#endif
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+    /*
+     * 只要你希望 node_start_pfn, node_present_pages 或 node_spanned_pages 保持不变时，
+     * 必须持有这个锁。持有该锁还保证 pfn_valid() 保持有效。
+     *
+     * 该锁优先级高于 zone->lock 和 zone->size_seqlock。
+     */
+    spinlock_t node_size_lock;     // 锁保护节点大小相关数据的修改（如启动页框号等）
+#endif
+
+    unsigned long node_start_pfn;      // 节点中内存范围的起始页框号
+    unsigned long node_present_pages;  // 节点中物理页面的总数（不包括空洞）
+    unsigned long node_spanned_pages;  // 节点中物理页面范围的总大小（包括空洞）
+    
+    int node_id;       // 节点的ID号
+
+    wait_queue_head_t kswapd_wait; // 等待队列头，用于内存回收守护进程 (kswapd) 等待
+    struct task_struct *kswapd;    // 指向内存回收守护进程的任务结构体
+    int kswapd_max_order;          // kswapd 守护进程的最大分配阶数
+} pg_data_t;
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
 #define node_spanned_pages(nid)	(NODE_DATA(nid)->node_spanned_pages)
 #ifdef CONFIG_FLAT_NODE_MEM_MAP

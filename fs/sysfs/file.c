@@ -71,46 +71,57 @@ struct sysfs_buffer {
  *	This is called only once, on the file's first read unless an error
  *	is returned.
  */
-static int fill_read_buffer(struct dentry * dentry, struct sysfs_buffer * buffer)
+static int fill_read_buffer(struct dentry *dentry, struct sysfs_buffer *buffer)
 {
-	struct sysfs_dirent *attr_sd = dentry->d_fsdata;
-	struct kobject *kobj = attr_sd->s_parent->s_dir.kobj;
-	const struct sysfs_ops * ops = buffer->ops;
-	int ret = 0;
-	ssize_t count;
+    // 获取与 dentry 关联的 sysfs_dirent 结构体
+    struct sysfs_dirent *attr_sd = dentry->d_fsdata;
+    // 获取 sysfs_dirent 的父对象的 kobject
+    struct kobject *kobj = attr_sd->s_parent->s_dir.kobj;
+    // 获取 sysfs_ops 结构体，它定义了 sysfs 属性的操作函数
+    const struct sysfs_ops *ops = buffer->ops;
+    int ret = 0;  // 用于存储函数的返回值，初始化为 0（成功）
+    ssize_t count; // 存储读取的字节数
 
-	if (!buffer->page)
-		buffer->page = (char *) get_zeroed_page(GFP_KERNEL);
-	if (!buffer->page)
-		return -ENOMEM;
+    // 如果 buffer->page 为空，则分配一页大小的零初始化内存
+    if (!buffer->page)
+        buffer->page = (char *) get_zeroed_page(GFP_KERNEL);
+    // 如果内存分配失败，则返回 -ENOMEM（内存不足）
+    if (!buffer->page)
+        return -ENOMEM;
 
-	/* need attr_sd for attr and ops, its parent for kobj */
-	if (!sysfs_get_active(attr_sd))
-		return -ENODEV;
+    // 确保 sysfs_dirent 处于活动状态
+    if (!sysfs_get_active(attr_sd))
+        return -ENODEV; // 如果未激活，则返回 -ENODEV（设备不存在）
 
-	buffer->event = atomic_read(&attr_sd->s_attr.open->event);
-	count = ops->show(kobj, attr_sd->s_attr.attr, buffer->page);
+    // 读取事件值并存储在 buffer->event 中
+    buffer->event = atomic_read(&attr_sd->s_attr.open->event);
+    // 调用 ops->show 函数从 kobject 中读取数据到 buffer->page
+    count = ops->show(kobj, attr_sd->s_attr.attr, buffer->page);
 
-	sysfs_put_active(attr_sd);
+    // 释放 sysfs_dirent 的活动状态
+    sysfs_put_active(attr_sd);
 
-	/*
-	 * The code works fine with PAGE_SIZE return but it's likely to
-	 * indicate truncated result or overflow in normal use cases.
-	 */
-	if (count >= (ssize_t)PAGE_SIZE) {
-		print_symbol("fill_read_buffer: %s returned bad count\n",
-			(unsigned long)ops->show);
-		/* Try to struggle along */
-		count = PAGE_SIZE - 1;
-	}
-	if (count >= 0) {
-		buffer->needs_read_fill = 0;
-		buffer->count = count;
-	} else {
-		ret = count;
-	}
-	return ret;
+    /*
+     * 如果 ops->show 返回的字节数大于或等于 PAGE_SIZE，可能会导致数据截断或溢出
+     * 因此，限制 count 为 PAGE_SIZE - 1，并打印警告信息
+     */
+    if (count >= (ssize_t)PAGE_SIZE) {
+        print_symbol("fill_read_buffer: %s returned bad count\n",
+            (unsigned long)ops->show);
+        // 为了继续处理，将 count 设置为 PAGE_SIZE - 1
+        count = PAGE_SIZE - 1;
+    }
+    if (count >= 0) {
+        // 如果 count 非负，则更新 buffer 的字段
+        buffer->needs_read_fill = 0;
+        buffer->count = count;
+    } else {
+        // 如果 count 为负数，则返回错误码
+        ret = count;
+    }
+    return ret; // 返回结果
 }
+
 
 /**
  *	sysfs_read_file - read an attribute. 

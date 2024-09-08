@@ -1907,95 +1907,104 @@ int __init pcpu_embed_first_chunk(size_t reserved_size, ssize_t dyn_size,
 				  pcpu_fc_alloc_fn_t alloc_fn,
 				  pcpu_fc_free_fn_t free_fn)
 {
-	void *base = (void *)ULONG_MAX;
-	void **areas = NULL;
-	struct pcpu_alloc_info *ai;
+	void *base = (void *)ULONG_MAX;  // 初始化基地址为一个很大的值，用于确定最小基地址
+	void **areas = NULL;  // 用于存储每个 CPU 的内存块指针
+	struct pcpu_alloc_info *ai;  // 存储每 CPU 内存分配的信息
 	size_t size_sum, areas_size, max_distance;
 	int group, i, rc;
 
-	ai = pcpu_build_alloc_info(reserved_size, dyn_size, atom_size,
-				   cpu_distance_fn);
-	if (IS_ERR(ai))
+	// 构建内存分配信息，调用 `pcpu_build_alloc_info` 函数，计算每 CPU 的大小和分组信息
+	ai = pcpu_build_alloc_info(reserved_size, dyn_size, atom_size, cpu_distance_fn);
+	if (IS_ERR(ai))  // 检查返回值，判断是否构建失败
 		return PTR_ERR(ai);
 
+	// 计算静态、保留和动态分配的大小总和
 	size_sum = ai->static_size + ai->reserved_size + ai->dyn_size;
+
+	// 计算需要分配的区域大小，按页对齐
 	areas_size = PFN_ALIGN(ai->nr_groups * sizeof(void *));
 
+	// 分配内存用于保存每个 CPU 区域的指针
 	areas = alloc_bootmem_nopanic(areas_size);
-	if (!areas) {
+	if (!areas) {  // 如果分配失败，返回错误码
 		rc = -ENOMEM;
 		goto out_free;
 	}
 
-	/* allocate, copy and determine base address */
+	// 为每个 CPU 分配内存并确定基地址
 	for (group = 0; group < ai->nr_groups; group++) {
 		struct pcpu_group_info *gi = &ai->groups[group];
 		unsigned int cpu = NR_CPUS;
 		void *ptr;
 
+		// 查找当前组中的 CPU，确保至少有一个 CPU
 		for (i = 0; i < gi->nr_units && cpu == NR_CPUS; i++)
 			cpu = gi->cpu_map[i];
-		BUG_ON(cpu == NR_CPUS);
+		BUG_ON(cpu == NR_CPUS);  // 如果没有找到有效的 CPU，触发错误
 
-		/* allocate space for the whole group */
+		// 分配空间给整个组
 		ptr = alloc_fn(cpu, gi->nr_units * ai->unit_size, atom_size);
-		if (!ptr) {
+		if (!ptr) {  // 分配失败
 			rc = -ENOMEM;
 			goto out_free_areas;
 		}
-		areas[group] = ptr;
+		areas[group] = ptr;  // 存储分配的内存区域指针
 
+		// 确定基地址
 		base = min(ptr, base);
 
+		// 初始化每个单位的每 CPU 数据区域
 		for (i = 0; i < gi->nr_units; i++, ptr += ai->unit_size) {
 			if (gi->cpu_map[i] == NR_CPUS) {
-				/* unused unit, free whole */
+				// 如果是未使用的单位，则释放
 				free_fn(ptr, ai->unit_size);
 				continue;
 			}
-			/* copy and return the unused part */
+			// 复制静态数据到每 CPU 数据区域，并释放未使用的部分
 			memcpy(ptr, __per_cpu_load, ai->static_size);
 			free_fn(ptr + size_sum, ai->unit_size - size_sum);
 		}
 	}
 
-	/* base address is now known, determine group base offsets */
+	// 基地址已经确定，现在计算组的基地址偏移量
 	max_distance = 0;
 	for (group = 0; group < ai->nr_groups; group++) {
 		ai->groups[group].base_offset = areas[group] - base;
-		max_distance = max_t(size_t, max_distance,
-				     ai->groups[group].base_offset);
+		max_distance = max_t(size_t, max_distance, ai->groups[group].base_offset);
 	}
 	max_distance += ai->unit_size;
 
-	/* warn if maximum distance is further than 75% of vmalloc space */
+	// 如果最大距离超过 vmalloc 空间的 75%，给出警告
 	if (max_distance > (VMALLOC_END - VMALLOC_START) * 3 / 4) {
 		pr_warning("PERCPU: max_distance=0x%zx too large for vmalloc "
 			   "space 0x%lx\n",
 			   max_distance, VMALLOC_END - VMALLOC_START);
 #ifdef CONFIG_NEED_PER_CPU_PAGE_FIRST_CHUNK
-		/* and fail if we have fallback */
+		// 如果有 fallback，返回错误码
 		rc = -EINVAL;
 		goto out_free;
 #endif
 	}
 
+	// 输出每个 CPU 分配的页面数量、基地址和区域大小信息
 	pr_info("PERCPU: Embedded %zu pages/cpu @%p s%zu r%zu d%zu u%zu\n",
 		PFN_DOWN(size_sum), base, ai->static_size, ai->reserved_size,
 		ai->dyn_size, ai->unit_size);
 
+	// 调用 `pcpu_setup_first_chunk` 完成每 CPU 数据区域的初始化
 	rc = pcpu_setup_first_chunk(ai, base);
 	goto out_free;
 
 out_free_areas:
+	// 释放已经分配的内存区域
 	for (group = 0; group < ai->nr_groups; group++)
-		free_fn(areas[group],
-			ai->groups[group].nr_units * ai->unit_size);
+		free_fn(areas[group], ai->groups[group].nr_units * ai->unit_size);
 out_free:
+	// 释放内存分配信息
 	pcpu_free_alloc_info(ai);
 	if (areas)
 		free_bootmem(__pa(areas), areas_size);
-	return rc;
+	return rc;  // 返回结果码
 }
 #endif /* CONFIG_NEED_PER_CPU_EMBED_FIRST_CHUNK ||
 	  !CONFIG_HAVE_SETUP_PER_CPU_AREA */
@@ -2139,22 +2148,34 @@ static void __init pcpu_dfl_fc_free(void *ptr, size_t size)
 
 void __init setup_per_cpu_areas(void)
 {
-	unsigned long delta;
-	unsigned int cpu;
-	int rc;
+    unsigned long delta;
+    unsigned int cpu;
+    int rc;
 
-	/*
-	 * Always reserve area for module percpu variables.  That's
-	 * what the legacy allocator did.
-	 */
-	rc = pcpu_embed_first_chunk(PERCPU_MODULE_RESERVE,
-				    PERCPU_DYNAMIC_RESERVE, PAGE_SIZE, NULL,
-				    pcpu_dfl_fc_alloc, pcpu_dfl_fc_free);
-	if (rc < 0)
-		panic("Failed to initialized percpu areas.");
+    /*
+     * 始终为模块的 per-CPU 变量保留区域。这是遗留的分配器所做的。
+     * 即使模块没有显式声明 per-CPU 变量，内核仍为这些变量保留内存空间。
+     */
+    rc = pcpu_embed_first_chunk(PERCPU_MODULE_RESERVE,
+                                PERCPU_DYNAMIC_RESERVE, PAGE_SIZE, NULL,
+                                pcpu_dfl_fc_alloc, pcpu_dfl_fc_free);
+    if (rc < 0)
+        panic("Failed to initialize percpu areas.");
 
-	delta = (unsigned long)pcpu_base_addr - (unsigned long)__per_cpu_start;
-	for_each_possible_cpu(cpu)
-		__per_cpu_offset[cpu] = delta + pcpu_unit_offsets[cpu];
+    /*
+     * delta 计算的是全局 per-CPU 基址与最早的 per-CPU 区域起始地址之间的偏移量。
+     * pcpu_base_addr 是所有 CPU 的 per-CPU 区域的全局基地址，
+     * __per_cpu_start 是内核编译时确定的 per-CPU 区域的起始地址。
+     * 这个 delta 用于保证新分配的 per-CPU 内存区域能够正确对应到内核虚拟地址空间。
+     */
+    delta = (unsigned long)pcpu_base_addr - (unsigned long)__per_cpu_start;
+
+    /*
+     * 为每个可能的 CPU 设置偏移量 __per_cpu_offset[cpu]。
+     * 这个偏移量是用于访问每个 CPU 的 per-CPU 数据区域的。
+     * per-CPU 数据的访问通过这个偏移量和每个 CPU 的基地址实现独立。
+     */
+    for_each_possible_cpu(cpu)
+        __per_cpu_offset[cpu] = delta + pcpu_unit_offsets[cpu];
 }
-#endif /* CONFIG_HAVE_SETUP_PER_CPU_AREA */
+#endif /* CONFIG_HAVE_SETUP_PER_CPU_AREA 用于表示该架构支持在系统初始化过程中设置每个 CPU 的专用内存区域*/

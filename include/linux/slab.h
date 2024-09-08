@@ -149,16 +149,20 @@ int kern_ptr_validate(const void *ptr, unsigned long size);
 int kmem_ptr_validate(struct kmem_cache *cachep, const void *ptr);
 
 /*
- * Please use this macro to create slab caches. Simply specify the
- * name of the structure and maybe some flags that are listed above.
+ * 请使用这个宏来创建 slab 缓存。只需要指定结构体的名称以及一些可能需要的标志（标志列表在上面列出）。
  *
- * The alignment of the struct determines object alignment. If you
- * f.e. add ____cacheline_aligned_in_smp to the struct declaration
- * then the objects will be properly aligned in SMP configurations.
+ * 结构体的对齐方式将决定对象的对齐方式。例如，如果你在结构体声明中添加 `____cacheline_aligned_in_smp`，
+ * 那么在多处理器系统 (SMP) 中，缓存对象将会正确对齐，以避免 false sharing（伪共享）。
  */
-#define KMEM_CACHE(__struct, __flags) kmem_cache_create(#__struct,\
-		sizeof(struct __struct), __alignof__(struct __struct),\
-		(__flags), NULL)
+#define KMEM_CACHE(__struct, __flags) \
+	/* 使用 kmem_cache_create 函数创建 slab 缓存 */ \
+	kmem_cache_create( \
+		#__struct, /* 将结构体名称转换为字符串作为缓存的名称 */ \
+		sizeof(struct __struct), /* 获取结构体的大小，用于确定每个 slab 对象的大小 */ \
+		__alignof__(struct __struct), /* 获取结构体的对齐要求，确保对象在内存中正确对齐 */ \
+		(__flags), /* 传入指定的标志，控制缓存的行为（如是否使用调试功能等） */ \
+		NULL /* 此处传递 NULL，表示不使用自定义构造函数 */ \
+	)
 
 /*
  * The largest kmalloc size supported by the slab allocators is

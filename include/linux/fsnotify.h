@@ -146,12 +146,17 @@ static inline void fsnotify_inoderemove(struct inode *inode)
  */
 static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 {
+	// 1. 触发 inotify 事件，通知用户空间的 inotify 监听器该 inode 上的创建事件
 	inotify_inode_queue_event(inode, IN_CREATE, 0, dentry->d_name.name,
 				  dentry->d_inode);
+
+	// 2. 审计：记录创建操作的审计日志
 	audit_inode_child(dentry, inode);
 
+	// 3. 通知文件系统的监控系统关于创建事件
 	fsnotify(inode, FS_CREATE, dentry->d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
 }
+
 
 /*
  * fsnotify_link - new hardlink in 'inode' directory

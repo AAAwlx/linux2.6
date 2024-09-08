@@ -723,25 +723,26 @@ static int inic_port_start(struct ata_port *ap)
 }
 
 static struct ata_port_operations inic_port_ops = {
-	.inherits		= &sata_port_ops,
+    .inherits       = &sata_port_ops, // 继承自基本的 SATA 端口操作结构体，这使得 inic_port_ops 拥有基本的 SATA 操作功能
 
-	.check_atapi_dma	= inic_check_atapi_dma,
-	.qc_prep		= inic_qc_prep,
-	.qc_issue		= inic_qc_issue,
-	.qc_fill_rtf		= inic_qc_fill_rtf,
+    .check_atapi_dma = inic_check_atapi_dma, // 函数指针，用于检查 ATAPI DMA 支持。ATAPI 是用于 ATA 硬盘以外的设备（如 CD-ROM）的协议
+    .qc_prep        = inic_qc_prep,         // 函数指针，用于准备队列命令。这个函数用于设置 ATA 命令队列的必要参数
+    .qc_issue       = inic_qc_issue,        // 函数指针，用于发出队列命令。这个函数负责将准备好的 ATA 命令发送到设备
+    .qc_fill_rtf    = inic_qc_fill_rtf,     // 函数指针，用于填充请求完成（RTF）数据。这个函数处理完成的命令并更新相关数据
 
-	.freeze			= inic_freeze,
-	.thaw			= inic_thaw,
-	.hardreset		= inic_hardreset,
-	.error_handler		= inic_error_handler,
-	.post_internal_cmd	= inic_post_internal_cmd,
+    .freeze         = inic_freeze,          // 函数指针，用于冻结端口状态。用于在需要时冻结 ATA 端口以保护数据一致性
+    .thaw           = inic_thaw,            // 函数指针，用于解冻端口状态。与冻结操作配合，恢复 ATA 端口的正常操作
+    .hardreset      = inic_hardreset,       // 函数指针，用于硬重置 ATA 端口。执行端口的完全重置以解决设备错误
+    .error_handler   = inic_error_handler,  // 函数指针，用于处理 ATA 端口的错误。用于在出现错误时执行适当的错误处理逻辑
+    .post_internal_cmd = inic_post_internal_cmd, // 函数指针，用于处理内部命令。用于在 ATA 端口处理内部命令后执行额外操作
 
-	.scr_read		= inic_scr_read,
-	.scr_write		= inic_scr_write,
+    .scr_read       = inic_scr_read,         // 函数指针，用于读取 SCR（SATA 控制寄存器）。用于访问 SATA 设备的控制寄存器以获取状态
+    .scr_write      = inic_scr_write,        // 函数指针，用于写入 SCR（SATA 控制寄存器）。用于将数据写入 SATA 设备的控制寄存器
 
-	.port_resume		= inic_port_resume,
-	.port_start		= inic_port_start,
+    .port_resume    = inic_port_resume,      // 函数指针，用于恢复端口操作。用于在设备从休眠状态恢复后重新启用 ATA 端口
+    .port_start     = inic_port_start,       // 函数指针，用于启动 ATA 端口。初始化和启用 ATA 端口以进行数据传输
 };
+
 
 static struct ata_port_info inic_port_info = {
 	.flags			= ATA_FLAG_SATA | ATA_FLAG_PIO_DMA,
@@ -814,46 +815,60 @@ static int inic_pci_device_resume(struct pci_dev *pdev)
 }
 #endif
 
+/**
+ * inic_init_one - 初始化 PCI 设备
+ * @pdev: 指向 PCI 设备的指针
+ * @ent: 设备 ID 表
+ *
+ * 该函数初始化 PCI 设备，包括分配 ATA 主机结构，配置资源，
+ * 设置 DMA 掩码和最大段大小，并激活 ATA 主机。
+ *
+ * 返回值:
+ * - 成功时，返回 0。
+ * - 失败时，返回负的错误码。
+ */
 static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	static int printed_version;
-	const struct ata_port_info *ppi[] = { &inic_port_info, NULL };
-	struct ata_host *host;
-	struct inic_host_priv *hpriv;
-	void __iomem * const *iomap;
-	int mmio_bar;
-	int i, rc;
+	static int printed_version;  // 静态变量，用于打印驱动程序版本
+	const struct ata_port_info *ppi[] = { &inic_port_info, NULL };  // ATA 端口信息
+	struct ata_host *host;  // ATA 主机结构
+	struct inic_host_priv *hpriv;  // 主机私有数据结构
+	void __iomem * const *iomap;  // I/O 内存映射地址
+	int mmio_bar;  // MMIO 基地址寄存器
+	int i, rc;  // 循环变量和返回值
 
+	// 打印驱动程序版本信息，仅打印一次
 	if (!printed_version++)
 		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
 
-	/* alloc host */
+	// 分配 ATA 主机和主机私有数据结构
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, NR_PORTS);
 	hpriv = devm_kzalloc(&pdev->dev, sizeof(*hpriv), GFP_KERNEL);
 	if (!host || !hpriv)
-		return -ENOMEM;
+		return -ENOMEM;  // 内存分配失败
 
-	host->private_data = hpriv;
+	host->private_data = hpriv;  // 设置主机私有数据
 
-	/* Acquire resources and fill host.  Note that PCI and cardbus
-	 * use different BARs.
-	 */
+	// 启用 PCI 设备
 	rc = pcim_enable_device(pdev);
 	if (rc)
-		return rc;
+		return rc;  // 启用设备失败
 
+	// 判断使用的 BAR，PCI 或 CardBus
 	if (pci_resource_flags(pdev, MMIO_BAR_PCI) & IORESOURCE_MEM)
 		mmio_bar = MMIO_BAR_PCI;
 	else
 		mmio_bar = MMIO_BAR_CARDBUS;
 
+	// 映射 BAR 区域
 	rc = pcim_iomap_regions(pdev, 1 << mmio_bar, DRV_NAME);
 	if (rc)
-		return rc;
+		return rc;  // 映射失败
 	host->iomap = iomap = pcim_iomap_table(pdev);
 	hpriv->mmio_base = iomap[mmio_bar];
 	hpriv->cached_hctl = readw(hpriv->mmio_base + HOST_CTL);
 
+	// 设置 ATA 端口信息
 	for (i = 0; i < NR_PORTS; i++) {
 		struct ata_port *ap = host->ports[i];
 
@@ -861,44 +876,45 @@ static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		ata_port_pbar_desc(ap, mmio_bar, i * PORT_SIZE, "port");
 	}
 
-	/* Set dma_mask.  This devices doesn't support 64bit addressing. */
+	// 设置 DMA 掩码（此设备不支持 64 位寻址）
 	rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (rc) {
 		dev_printk(KERN_ERR, &pdev->dev,
 			   "32-bit DMA enable failed\n");
-		return rc;
+		return rc;  // 32 位 DMA 启用失败
 	}
 
 	rc = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (rc) {
 		dev_printk(KERN_ERR, &pdev->dev,
 			   "32-bit consistent DMA enable failed\n");
-		return rc;
+		return rc;  // 一致的 32 位 DMA 启用失败
 	}
 
-	/*
-	 * This controller is braindamaged.  dma_boundary is 0xffff
-	 * like others but it will lock up the whole machine HARD if
-	 * 65536 byte PRD entry is fed. Reduce maximum segment size.
-	 */
+	// 设置最大段大小（由于控制器问题，减少最大段大小）
 	rc = pci_set_dma_max_seg_size(pdev, 65536 - 512);
 	if (rc) {
 		dev_printk(KERN_ERR, &pdev->dev,
 			   "failed to set the maximum segment size.\n");
-		return rc;
+		return rc;  // 设置最大段大小失败
 	}
 
+	// 初始化控制器
 	rc = init_controller(hpriv->mmio_base, hpriv->cached_hctl);
 	if (rc) {
 		dev_printk(KERN_ERR, &pdev->dev,
 			   "failed to initialize controller\n");
-		return rc;
+		return rc;  // 初始化控制器失败
 	}
 
+	// 设置 PCI 设备为主设备
 	pci_set_master(pdev);
+	
+	// 激活 ATA 主机
 	return ata_host_activate(host, pdev->irq, inic_interrupt, IRQF_SHARED,
 				 &inic_sht);
 }
+
 
 static const struct pci_device_id inic_pci_tbl[] = {
 	{ PCI_VDEVICE(INIT, 0x1622), },

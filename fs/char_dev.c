@@ -238,25 +238,22 @@ int alloc_chrdev_region(dev_t *dev, unsigned baseminor, unsigned count,
 }
 
 /**
- * __register_chrdev() - create and register a cdev occupying a range of minors
- * @major: major device number or 0 for dynamic allocation
- * @baseminor: first of the requested range of minor numbers
- * @count: the number of minor numbers required
- * @name: name of this range of devices
- * @fops: file operations associated with this devices
+ * __register_chrdev() - 创建并注册一个字符设备，管理一系列次设备号
+ * @major: 主设备号，或为 0 以动态分配
+ * @baseminor: 请求的次设备号范围的起始次设备号
+ * @count: 所需的次设备号数量
+ * @name: 设备名称，用于标识这个设备范围
+ * @fops: 关联的文件操作结构体
  *
- * If @major == 0 this functions will dynamically allocate a major and return
- * its number.
+ * 如果 @major == 0，该函数将动态分配一个主设备号并返回该主设备号。
  *
- * If @major > 0 this function will attempt to reserve a device with the given
- * major number and will return zero on success.
+ * 如果 @major > 0，该函数将尝试保留具有指定主设备号的设备，
+ * 成功时返回 0。
  *
- * Returns a -ve errno on failure.
+ * 失败时返回负的错误码。
  *
- * The name of this device has nothing to do with the name of the device in
- * /dev. It only helps to keep track of the different owners of devices. If
- * your module name has only one type of devices it's ok to use e.g. the name
- * of the module here.
+ * 该设备的名称与 /dev 中的设备名称无关。它仅帮助跟踪设备的不同拥有者。
+ * 如果你的模块只有一种设备类型，可以在这里使用模块名称作为设备名称。
  */
 int __register_chrdev(unsigned int major, unsigned int baseminor,
 		      unsigned int count, const char *name,
@@ -266,29 +263,34 @@ int __register_chrdev(unsigned int major, unsigned int baseminor,
 	struct cdev *cdev;
 	int err = -ENOMEM;
 
+	// 注册字符设备区域，分配设备号
 	cd = __register_chrdev_region(major, baseminor, count, name);
 	if (IS_ERR(cd))
 		return PTR_ERR(cd);
 	
+	// 分配 cdev 结构体
 	cdev = cdev_alloc();
 	if (!cdev)
 		goto out2;
 
-	cdev->owner = fops->owner;
-	cdev->ops = fops;
-	kobject_set_name(&cdev->kobj, "%s", name);
-		
+	cdev->owner = fops->owner;  // 设置设备的拥有者
+	cdev->ops = fops;          // 设置设备的文件操作
+	kobject_set_name(&cdev->kobj, "%s", name);  // 设置设备名称
+	
+	// 将 cdev 添加到系统中
 	err = cdev_add(cdev, MKDEV(cd->major, baseminor), count);
 	if (err)
 		goto out;
 
 	cd->cdev = cdev;
 
+	// 如果请求主设备号为 0，返回分配的主设备号
 	return major ? 0 : cd->major;
+
 out:
-	kobject_put(&cdev->kobj);
+	kobject_put(&cdev->kobj);  // 释放 cdev 的 kobject
 out2:
-	kfree(__unregister_chrdev_region(cd->major, baseminor, count));
+	kfree(__unregister_chrdev_region(cd->major, baseminor, count));  // 释放字符设备区域
 	return err;
 }
 
@@ -369,40 +371,53 @@ static int chrdev_open(struct inode *inode, struct file *filp)
 	struct cdev *new = NULL;
 	int ret = 0;
 
+	// 1. 获取 cdev 锁
 	spin_lock(&cdev_lock);
 	p = inode->i_cdev;
+
+	// 2. 如果 inode 还没有关联的 cdev
 	if (!p) {
 		struct kobject *kobj;
 		int idx;
+
+		// 3. 解锁 cdev 锁，查找对应的 cdev 对象
 		spin_unlock(&cdev_lock);
 		kobj = kobj_lookup(cdev_map, inode->i_rdev, &idx);
 		if (!kobj)
-			return -ENXIO;
+			return -ENXIO;  // 设备未找到
+
+		// 4. 从 kobject 中获取 cdev 对象
 		new = container_of(kobj, struct cdev, kobj);
 		spin_lock(&cdev_lock);
-		/* Check i_cdev again in case somebody beat us to it while
-		   we dropped the lock. */
+
+		// 5. 再次检查 inode 的 i_cdev，确保在我们重新加锁期间没有其他线程修改
 		p = inode->i_cdev;
 		if (!p) {
 			inode->i_cdev = p = new;
-			list_add(&inode->i_devices, &p->list);
+			list_add(&inode->i_devices, &p->list);  // 将 cdev 添加到设备列表
 			new = NULL;
-		} else if (!cdev_get(p))
-			ret = -ENXIO;
-	} else if (!cdev_get(p))
-		ret = -ENXIO;
+		} else if (!cdev_get(p))  // 增加 cdev 的引用计数
+			ret = -ENXIO;  // 设备未找到
+	} else if (!cdev_get(p))  // 增加 cdev 的引用计数
+		ret = -ENXIO;  // 设备未找到
+
+	// 6. 释放 cdev 锁
 	spin_unlock(&cdev_lock);
-	cdev_put(new);
+	cdev_put(new);  // 释放对 new 的引用
+
+	// 7. 检查是否出错
 	if (ret)
 		return ret;
 
+	// 8. 获取文件操作结构体 f_op
 	ret = -ENXIO;
 	filp->f_op = fops_get(p->ops);
 	if (!filp->f_op)
 		goto out_cdev_put;
 
+	// 9. 如果文件操作结构体有 open 函数，则调用它
 	if (filp->f_op->open) {
-		ret = filp->f_op->open(inode,filp);
+		ret = filp->f_op->open(inode, filp);
 		if (ret)
 			goto out_cdev_put;
 	}
@@ -410,7 +425,7 @@ static int chrdev_open(struct inode *inode, struct file *filp)
 	return 0;
 
  out_cdev_put:
-	cdev_put(p);
+	cdev_put(p);  // 释放对 cdev 的引用
 	return ret;
 }
 

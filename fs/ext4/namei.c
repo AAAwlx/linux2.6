@@ -1788,39 +1788,52 @@ retry:
 static int ext4_mknod(struct inode *dir, struct dentry *dentry,
 		      int mode, dev_t rdev)
 {
-	handle_t *handle;
-	struct inode *inode;
-	int err, retries = 0;
+	handle_t *handle;       // 事务句柄
+	struct inode *inode;   // 新创建的 inode
+	int err, retries = 0;  // 错误码和重试次数
 
+	// 验证设备号是否有效
 	if (!new_valid_dev(rdev))
 		return -EINVAL;
 
+	// 初始化目录配额
 	dquot_initialize(dir);
 
 retry:
+	// 启动一个新的事务
 	handle = ext4_journal_start(dir, EXT4_DATA_TRANS_BLOCKS(dir->i_sb) +
 					EXT4_INDEX_EXTRA_TRANS_BLOCKS + 3 +
 					EXT4_MAXQUOTAS_INIT_BLOCKS(dir->i_sb));
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
+	// 如果目录是同步的，确保同步事务
 	if (IS_DIRSYNC(dir))
 		ext4_handle_sync(handle);
 
+	// 创建新的 inode
 	inode = ext4_new_inode(handle, dir, mode, &dentry->d_name, 0);
 	err = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
+		// 初始化特殊类型的 inode（如字符设备、块设备等）
 		init_special_inode(inode, inode->i_mode, rdev);
 #ifdef CONFIG_EXT4_FS_XATTR
+		// 设置 inode 操作指针
 		inode->i_op = &ext4_special_inode_operations;
 #endif
+		// 将新的 inode 添加到目录中
 		err = ext4_add_nondir(handle, dentry, inode);
 	}
+	// 结束事务
 	ext4_journal_stop(handle);
+	
+	// 如果没有空间且可以重试，则重试
 	if (err == -ENOSPC && ext4_should_retry_alloc(dir->i_sb, &retries))
 		goto retry;
-	return err;
+
+	return err; // 返回结果
 }
+
 
 static int ext4_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {

@@ -623,8 +623,8 @@ static inline unsigned long page_to_section(struct page *page)
 
 static inline void set_page_zone(struct page *page, enum zone_type zone)
 {
-	page->flags &= ~(ZONES_MASK << ZONES_PGSHIFT);
-	page->flags |= (zone & ZONES_MASK) << ZONES_PGSHIFT;
+	page->flags &= ~(ZONES_MASK << ZONES_PGSHIFT);  // 清除页面标志中的区域类型部分
+	page->flags |= (zone & ZONES_MASK) << ZONES_PGSHIFT;  // 设置新的区域类型
 }
 
 static inline void set_page_node(struct page *page, unsigned long node)

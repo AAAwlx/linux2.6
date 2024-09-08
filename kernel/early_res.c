@@ -479,23 +479,36 @@ void __init early_res_to_bootmem(u64 start, u64 end)
 }
 #endif
 
-/* Check for already reserved areas */
 static inline int __init bad_addr(u64 *addrp, u64 size, u64 align)
 {
 	int i;
-	u64 addr = *addrp;
-	int changed = 0;
-	struct early_res *r;
+	u64 addr = *addrp;  // 从传入的地址指针解引用出地址值
+	int changed = 0;    // 标志是否调整了地址
+	struct early_res *r;  // 指向早期资源结构体的指针
+
 again:
+	// 查找当前地址与早期已保留资源的重叠情况
 	i = find_overlapped_early(addr, addr + size);
+
+	// 获取早期资源的指针
 	r = &early_res[i];
+
+	// 检查是否存在重叠的早期资源
 	if (i < max_early_res && r->end) {
+		// 如果地址与早期资源重叠，调整地址到早期资源的末尾后进行对齐
 		*addrp = addr = round_up(r->end, align);
+
+		// 标记地址已更改
 		changed = 1;
+
+		// 重新检查调整后的地址是否仍然与其他早期资源重叠
 		goto again;
 	}
+
+	// 返回是否对地址进行了调整
 	return changed;
 }
+
 
 /* Check for already reserved areas */
 static inline int __init bad_addr_size(u64 *addrp, u64 *sizep, u64 align)
@@ -541,16 +554,24 @@ u64 __init find_early_area(u64 ei_start, u64 ei_last, u64 start, u64 end,
 {
 	u64 addr, last;
 
+	// 将起始地址对齐到指定的对齐边界
 	addr = round_up(ei_start, align);
 	if (addr < start)
 		addr = round_up(start, align);
 	if (addr >= ei_last)
 		goto out;
-	while (bad_addr(&addr, size, align) && addr+size <= ei_last)
+
+	// 试图找到一个满足条件的内存区域
+	while (bad_addr(&addr, size, align) && addr + size <= ei_last)
 		;
+	
 	last = addr + size;
+
+	// 检查找到的区域是否超出了早期内存的结束地址
 	if (last > ei_last)
 		goto out;
+
+	// 检查找到的区域是否超出了请求的最大结束地址
 	if (last > end)
 		goto out;
 
@@ -559,6 +580,7 @@ u64 __init find_early_area(u64 ei_start, u64 ei_last, u64 start, u64 end,
 out:
 	return -1ULL;
 }
+
 
 u64 __init find_early_area_size(u64 ei_start, u64 ei_last, u64 start,
 			 u64 *sizep, u64 align)

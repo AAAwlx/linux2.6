@@ -224,17 +224,21 @@ void __init e820_print_map(char *who)
  *	   ______________________4_
  */
 
-int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map,
-			     u32 *pnr_map)
+int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map, u32 *pnr_map)
 {
+	// 定义一个结构体，用于存储变更点信息
 	struct change_member {
-		struct e820entry *pbios; /* pointer to original bios entry */
-		unsigned long long addr; /* address for this change point */
+		struct e820entry *pbios; // 指向原始 BIOS 条目
+		unsigned long long addr;  // 变更点的地址
 	};
+	
+	// 用于存储变更点和重叠区域的静态数组
 	static struct change_member change_point_list[2*E820_X_MAX] __initdata;
 	static struct change_member *change_point[2*E820_X_MAX] __initdata;
 	static struct e820entry *overlap_list[E820_X_MAX] __initdata;
 	static struct e820entry new_bios[E820_X_MAX] __initdata;
+
+	// 临时变量和计数器
 	struct change_member *change_tmp;
 	unsigned long current_type, last_type;
 	unsigned long long last_addr;
@@ -244,37 +248,38 @@ int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map,
 	int old_nr, new_nr, chg_nr;
 	int i;
 
-	/* if there's only one memory region, don't bother */
+	// 如果 BIOS map 中的区域少于 2 个，则直接返回 -1
 	if (*pnr_map < 2)
 		return -1;
 
+	// 获取旧的 e820 表中条目的数量
 	old_nr = *pnr_map;
+
+	// 确保旧的 e820 表的条目数不会超过最大允许数量
 	BUG_ON(old_nr > max_nr_map);
 
-	/* bail out if we find any unreasonable addresses in bios map */
+	// 检查 BIOS map 中是否存在不合理的地址
 	for (i = 0; i < old_nr; i++)
 		if (biosmap[i].addr + biosmap[i].size < biosmap[i].addr)
 			return -1;
 
-	/* create pointers for initial change-point information (for sorting) */
+	// 初始化变更点列表的指针数组
 	for (i = 0; i < 2 * old_nr; i++)
 		change_point[i] = &change_point_list[i];
 
-	/* record all known change-points (starting and ending addresses),
-	   omitting those that are for empty memory regions */
+	// 记录所有的变更点，即内存区域的起始和结束地址，跳过大小为 0 的区域
 	chgidx = 0;
 	for (i = 0; i < old_nr; i++)	{
 		if (biosmap[i].size != 0) {
 			change_point[chgidx]->addr = biosmap[i].addr;
 			change_point[chgidx++]->pbios = &biosmap[i];
-			change_point[chgidx]->addr = biosmap[i].addr +
-				biosmap[i].size;
+			change_point[chgidx]->addr = biosmap[i].addr + biosmap[i].size;
 			change_point[chgidx++]->pbios = &biosmap[i];
 		}
 	}
 	chg_nr = chgidx;
 
-	/* sort change-point list by memory addresses (low -> high) */
+	// 按内存地址对变更点进行排序（从低到高）
 	still_changing = 1;
 	while (still_changing)	{
 		still_changing = 0;
@@ -287,13 +292,7 @@ int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map,
 			curpbaddr = change_point[i]->pbios->addr;
 			lastpbaddr = change_point[i - 1]->pbios->addr;
 
-			/*
-			 * swap entries, when:
-			 *
-			 * curaddr > lastaddr or
-			 * curaddr == lastaddr and curaddr == curpbaddr and
-			 * lastaddr != lastpbaddr
-			 */
+			// 按地址顺序交换变更点，确保排序正确
 			if (curaddr < lastaddr ||
 			    (curaddr == lastaddr && curaddr == curpbaddr &&
 			     lastaddr != lastpbaddr)) {
@@ -305,83 +304,61 @@ int __init sanitize_e820_map(struct e820entry *biosmap, int max_nr_map,
 		}
 	}
 
-	/* create a new bios memory map, removing overlaps */
-	overlap_entries = 0;	 /* number of entries in the overlap table */
-	new_bios_entry = 0;	 /* index for creating new bios map entries */
-	last_type = 0;		 /* start with undefined memory type */
-	last_addr = 0;		 /* start with 0 as last starting address */
+	// 创建一个新的 BIOS map，删除重叠区域
+	overlap_entries = 0;	 // 用于记录重叠区域的数量
+	new_bios_entry = 0;	 // 用于创建新 BIOS map 的条目索引
+	last_type = 0;		 // 初始化为未定义的内存类型
+	last_addr = 0;		 // 从地址 0 开始
 
-	/* loop through change-points, determining affect on the new bios map */
+	// 遍历所有变更点，生成新的 BIOS 内存映射表
 	for (chgidx = 0; chgidx < chg_nr; chgidx++) {
-		/* keep track of all overlapping bios entries */
-		if (change_point[chgidx]->addr ==
-		    change_point[chgidx]->pbios->addr) {
-			/*
-			 * add map entry to overlap list (> 1 entry
-			 * implies an overlap)
-			 */
-			overlap_list[overlap_entries++] =
-				change_point[chgidx]->pbios;
+		// 记录所有重叠的 BIOS 条目
+		if (change_point[chgidx]->addr == change_point[chgidx]->pbios->addr) {
+			// 添加到重叠列表中
+			overlap_list[overlap_entries++] = change_point[chgidx]->pbios;
 		} else {
-			/*
-			 * remove entry from list (order independent,
-			 * so swap with last)
-			 */
+			// 从重叠列表中删除相应条目
 			for (i = 0; i < overlap_entries; i++) {
-				if (overlap_list[i] ==
-				    change_point[chgidx]->pbios)
-					overlap_list[i] =
-						overlap_list[overlap_entries-1];
+				if (overlap_list[i] == change_point[chgidx]->pbios)
+					overlap_list[i] = overlap_list[overlap_entries-1];
 			}
 			overlap_entries--;
 		}
-		/*
-		 * if there are overlapping entries, decide which
-		 * "type" to use (larger value takes precedence --
-		 * 1=usable, 2,3,4,4+=unusable)
-		 */
+
+		// 确定重叠条目的最终类型（优先级由值决定）
 		current_type = 0;
 		for (i = 0; i < overlap_entries; i++)
 			if (overlap_list[i]->type > current_type)
 				current_type = overlap_list[i]->type;
-		/*
-		 * continue building up new bios map based on this
-		 * information
-		 */
-		if (current_type != last_type)	{
-			if (last_type != 0)	 {
-				new_bios[new_bios_entry].size =
-					change_point[chgidx]->addr - last_addr;
-				/*
-				 * move forward only if the new size
-				 * was non-zero
-				 */
+
+		// 更新 BIOS map，基于当前变更点的信息
+		if (current_type != last_type) {
+			if (last_type != 0) {
+				new_bios[new_bios_entry].size = change_point[chgidx]->addr - last_addr;
+				// 如果新条目大小非零，继续创建新条目
 				if (new_bios[new_bios_entry].size != 0)
-					/*
-					 * no more space left for new
-					 * bios entries ?
-					 */
 					if (++new_bios_entry >= max_nr_map)
 						break;
 			}
-			if (current_type != 0)	{
-				new_bios[new_bios_entry].addr =
-					change_point[chgidx]->addr;
+			if (current_type != 0) {
+				new_bios[new_bios_entry].addr = change_point[chgidx]->addr;
 				new_bios[new_bios_entry].type = current_type;
 				last_addr = change_point[chgidx]->addr;
 			}
 			last_type = current_type;
 		}
 	}
-	/* retain count for new bios entries */
+
+	// 保存新 BIOS map 的条目数量
 	new_nr = new_bios_entry;
 
-	/* copy new bios mapping into original location */
+	// 将新的 BIOS 映射复制到原始位置
 	memcpy(biosmap, new_bios, new_nr * sizeof(struct e820entry));
 	*pnr_map = new_nr;
 
 	return 0;
 }
+
 
 static int __init __append_e820_map(struct e820entry *biosmap, int nr_map)
 {
@@ -1170,41 +1147,45 @@ void __init e820_reserve_resources_late(void)
 	}
 }
 
+
+/*这个函数的主要目的是设置机器特定的内存布局，首先尝试使用 BIOS 提供的 E820 内存映射。如果这个映射无效，则生成一个默认的内存布局。最后，它返回一个指示内存来源的字符串。*/
 char *__init default_machine_specific_memory_setup(void)
 {
-	char *who = "BIOS-e820";
+	char *who = "BIOS-e820";   // 默认来源是 BIOS 提供的 E820 映射
 	u32 new_nr;
+
 	/*
-	 * Try to copy the BIOS-supplied E820-map.
+	 * 尝试复制 BIOS 提供的 E820 内存映射。
 	 *
-	 * Otherwise fake a memory map; one section from 0k->640k,
-	 * the next section from 1mb->appropriate_mem_k
+	 * 如果复制失败，则生成虚假的内存映射；一个区域从 0k 到 640k，
+	 * 下一个区域从 1MB 到适当的内存大小
 	 */
-	new_nr = boot_params.e820_entries;
+	new_nr = boot_params.e820_entries;  // 获取 BIOS 提供的 E820 条目数
 	sanitize_e820_map(boot_params.e820_map,
 			ARRAY_SIZE(boot_params.e820_map),
-			&new_nr);
-	boot_params.e820_entries = new_nr;
-	if (append_e820_map(boot_params.e820_map, boot_params.e820_entries)
-	  < 0) {
+			&new_nr);  // 对 E820 映射进行整理
+	boot_params.e820_entries = new_nr;  // 更新条目数
+
+	// 尝试追加 E820 内存映射
+	if (append_e820_map(boot_params.e820_map, boot_params.e820_entries) < 0) {
 		u64 mem_size;
 
-		/* compare results from other methods and take the greater */
-		if (boot_params.alt_mem_k
-		    < boot_params.screen_info.ext_mem_k) {
+		// 如果追加失败，则比较其他方法的结果并选择更大的值
+		if (boot_params.alt_mem_k < boot_params.screen_info.ext_mem_k) {
 			mem_size = boot_params.screen_info.ext_mem_k;
-			who = "BIOS-88";
+			who = "BIOS-88";  // 来源于 BIOS 88
 		} else {
 			mem_size = boot_params.alt_mem_k;
-			who = "BIOS-e801";
+			who = "BIOS-e801";  // 来源于 BIOS e801
 		}
 
+		// 清空 E820 映射并添加默认区域
 		e820.nr_map = 0;
-		e820_add_region(0, LOWMEMSIZE(), E820_RAM);
-		e820_add_region(HIGH_MEMORY, mem_size << 10, E820_RAM);
+		e820_add_region(0, LOWMEMSIZE(), E820_RAM);  // 添加低内存区域
+		e820_add_region(HIGH_MEMORY, mem_size << 10, E820_RAM);  // 添加高内存区域
 	}
 
-	/* In case someone cares... */
+	// 返回指示内存来源的字符串
 	return who;
 }
 

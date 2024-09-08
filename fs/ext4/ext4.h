@@ -105,23 +105,31 @@ typedef unsigned int ext4_group_t;
 
 
 struct ext4_allocation_request {
-	/* target inode for block we're allocating */
+	/* 我们要为其分配块的目标 inode */
 	struct inode *inode;
-	/* how many blocks we want to allocate */
+
+	/* 我们希望分配的块数 */
 	unsigned int len;
-	/* logical block in target inode */
+
+	/* 目标 inode 中的逻辑块号（正在分配的块） */
 	ext4_lblk_t logical;
-	/* the closest logical allocated block to the left */
+
+	/* 与目标块相邻的最近的已分配块的逻辑块号（左侧） */
 	ext4_lblk_t lleft;
-	/* the closest logical allocated block to the right */
+
+	/* 与目标块相邻的最近的已分配块的逻辑块号（右侧） */
 	ext4_lblk_t lright;
-	/* phys. target (a hint) */
+
+	/* 物理目标块号（一个提示，指向期望的块号位置） */
 	ext4_fsblk_t goal;
-	/* phys. block for the closest logical allocated block to the left */
+
+	/* 与目标块相邻的最近的已分配块的物理块号（左侧） */
 	ext4_fsblk_t pleft;
-	/* phys. block for the closest logical allocated block to the right */
+
+	/* 与目标块相邻的最近的已分配块的物理块号（右侧） */
 	ext4_fsblk_t pright;
-	/* flags. see above EXT4_MB_HINT_* */
+
+	/* 分配的标志，参见 EXT4_MB_HINT_* */
 	unsigned int flags;
 };
 
@@ -902,133 +910,134 @@ struct ext4_super_block {
  * fourth extended-fs super-block data in memory
  */
 struct ext4_sb_info {
-	unsigned long s_desc_size;	/* Size of a group descriptor in bytes */
-	unsigned long s_inodes_per_block;/* Number of inodes per block */
-	unsigned long s_blocks_per_group;/* Number of blocks in a group */
-	unsigned long s_inodes_per_group;/* Number of inodes in a group */
-	unsigned long s_itb_per_group;	/* Number of inode table blocks per group */
-	unsigned long s_gdb_count;	/* Number of group descriptor blocks */
-	unsigned long s_desc_per_block;	/* Number of group descriptors per block */
-	ext4_group_t s_groups_count;	/* Number of groups in the fs */
-	ext4_group_t s_blockfile_groups;/* Groups acceptable for non-extent files */
-	unsigned long s_overhead_last;  /* Last calculated overhead */
-	unsigned long s_blocks_last;    /* Last seen block count */
-	loff_t s_bitmap_maxbytes;	/* max bytes for bitmap files */
-	struct buffer_head * s_sbh;	/* Buffer containing the super block */
-	struct ext4_super_block *s_es;	/* Pointer to the super block in the buffer */
-	struct buffer_head **s_group_desc;
-	unsigned int s_mount_opt;
-	unsigned int s_mount_flags;
-	ext4_fsblk_t s_sb_block;
-	uid_t s_resuid;
-	gid_t s_resgid;
-	unsigned short s_mount_state;
-	unsigned short s_pad;
-	int s_addr_per_block_bits;
-	int s_desc_per_block_bits;
-	int s_inode_size;
-	int s_first_ino;
-	unsigned int s_inode_readahead_blks;
-	unsigned int s_inode_goal;
-	spinlock_t s_next_gen_lock;
-	u32 s_next_generation;
-	u32 s_hash_seed[4];
-	int s_def_hash_version;
-	int s_hash_unsigned;	/* 3 if hash should be signed, 0 if not */
-	struct percpu_counter s_freeblocks_counter;
-	struct percpu_counter s_freeinodes_counter;
-	struct percpu_counter s_dirs_counter;
-	struct percpu_counter s_dirtyblocks_counter;
-	struct blockgroup_lock *s_blockgroup_lock;
-	struct proc_dir_entry *s_proc;
-	struct kobject s_kobj;
-	struct completion s_kobj_unregister;
+	unsigned long s_desc_size;      /* 块组描述符的大小（以字节为单位） */
+	unsigned long s_inodes_per_block; /* 每个块中 inode 的数量 */
+	unsigned long s_blocks_per_group; /* 每个块组中的块数量 */
+	unsigned long s_inodes_per_group; /* 每个块组中的 inode 数量 */
+	unsigned long s_itb_per_group;    /* 每个块组中 inode 表的块数量 */
+	unsigned long s_gdb_count;        /* 块组描述符的块数量 */
+	unsigned long s_desc_per_block;   /* 每块中的块组描述符数量 */
+	ext4_group_t s_groups_count;      /* 文件系统中的块组数量 */
+	ext4_group_t s_blockfile_groups;  /* 适用于非扩展文件的块组 */
+	unsigned long s_overhead_last;    /* 上次计算的开销 */
+	unsigned long s_blocks_last;      /* 上次看到的块数量 */
+	loff_t s_bitmap_maxbytes;         /* 位图文件的最大字节数 */
+	struct buffer_head * s_sbh;       /* 包含超级块的缓冲区 */
+	struct ext4_super_block *s_es;    /* 指向缓冲区中的超级块的指针 */
+	struct buffer_head **s_group_desc; /* 指向块组描述符的指针数组 */
+	unsigned int s_mount_opt;         /* 挂载选项 */
+	unsigned int s_mount_flags;       /* 挂载标志 */
+	ext4_fsblk_t s_sb_block;          /* 超级块的块号 */
+	uid_t s_resuid;                   /* 预留用户 ID */
+	gid_t s_resgid;                   /* 预留组 ID */
+	unsigned short s_mount_state;    /* 挂载状态 */
+	unsigned short s_pad;            /* 填充以对齐 */
+	int s_addr_per_block_bits;       /* 每个块的地址位数 */
+	int s_desc_per_block_bits;       /* 每块的描述符位数 */
+	int s_inode_size;                /* inode 的大小 */
+	int s_first_ino;                 /* 第一个 inode 的编号 */
+	unsigned int s_inode_readahead_blks; /* inode 预读取的块数 */
+	unsigned int s_inode_goal;       /* inode 预读目标 */
+	spinlock_t s_next_gen_lock;      /* 用于生成锁的自旋锁 */
+	u32 s_next_generation;           /* 下一个生成 ID */
+	u32 s_hash_seed[4];              /* 哈希种子 */
+	int s_def_hash_version;          /* 默认哈希版本 */
+	int s_hash_unsigned;             /* 哈希是否无符号 (3 为有符号，0 为无符号) */
+	struct percpu_counter s_freeblocks_counter; /* 空闲块计数器 */
+	struct percpu_counter s_freeinodes_counter; /* 空闲 inode 计数器 */
+	struct percpu_counter s_dirs_counter;      /* 目录计数器 */
+	struct percpu_counter s_dirtyblocks_counter; /* 脏块计数器 */
+	struct blockgroup_lock *s_blockgroup_lock; /* 块组锁 */
+	struct proc_dir_entry *s_proc;   /* 进程目录条目 */
+	struct kobject s_kobj;           /* 内核对象 */
+	struct completion s_kobj_unregister; /* 内核对象注销完成 */
 
-	/* Journaling */
-	struct inode *s_journal_inode;
-	struct journal_s *s_journal;
-	struct list_head s_orphan;
-	struct mutex s_orphan_lock;
-	struct mutex s_resize_lock;
-	unsigned long s_commit_interval;
-	u32 s_max_batch_time;
-	u32 s_min_batch_time;
-	struct block_device *journal_bdev;
+	/* 日志相关 */
+	struct inode *s_journal_inode;   /* 日志 inode */
+	struct journal_s *s_journal;     /* 日志结构体 */
+	struct list_head s_orphan;       /* 孤儿列表 */
+	struct mutex s_orphan_lock;      /* 孤儿锁 */
+	struct mutex s_resize_lock;      /* 调整大小锁 */
+	unsigned long s_commit_interval; /* 提交间隔 */
+	u32 s_max_batch_time;            /* 最大批处理时间 */
+	u32 s_min_batch_time;            /* 最小批处理时间 */
+	struct block_device *journal_bdev; /* 日志块设备 */
+
 #ifdef CONFIG_JBD2_DEBUG
-	struct timer_list turn_ro_timer;	/* For turning read-only (crash simulation) */
-	wait_queue_head_t ro_wait_queue;	/* For people waiting for the fs to go read-only */
+	struct timer_list turn_ro_timer; /* 用于将文件系统切换为只读（模拟崩溃） */
+	wait_queue_head_t ro_wait_queue; /* 等待文件系统变为只读的等待队列 */
 #endif
 #ifdef CONFIG_QUOTA
-	char *s_qf_names[MAXQUOTAS];		/* Names of quota files with journalled quota */
-	int s_jquota_fmt;			/* Format of quota to use */
+	char *s_qf_names[MAXQUOTAS];     /* 配额文件的名称（支持日志记录的配额） */
+	int s_jquota_fmt;                /* 配额格式 */
 #endif
-	unsigned int s_want_extra_isize; /* New inodes should reserve # bytes */
-	struct rb_root system_blks;
+	unsigned int s_want_extra_isize; /* 新 inode 需要保留的字节数 */
+	struct rb_root system_blks;      /* 系统块根节点 */
 
 #ifdef EXTENTS_STATS
-	/* ext4 extents stats */
-	unsigned long s_ext_min;
-	unsigned long s_ext_max;
-	unsigned long s_depth_max;
-	spinlock_t s_ext_stats_lock;
-	unsigned long s_ext_blocks;
-	unsigned long s_ext_extents;
+	/* ext4 扩展统计信息 */
+	unsigned long s_ext_min;         /* 最小扩展长度 */
+	unsigned long s_ext_max;         /* 最大扩展长度 */
+	unsigned long s_depth_max;       /* 最大深度 */
+	spinlock_t s_ext_stats_lock;    /* 扩展统计自旋锁 */
+	unsigned long s_ext_blocks;      /* 扩展的块数 */
+	unsigned long s_ext_extents;     /* 扩展的扩展数 */
 #endif
 
-	/* for buddy allocator */
-	struct ext4_group_info ***s_group_info;
-	struct inode *s_buddy_cache;
-	long s_blocks_reserved;
-	spinlock_t s_reserve_lock;
-	spinlock_t s_md_lock;
-	tid_t s_last_transaction;
-	unsigned short *s_mb_offsets;
-	unsigned int *s_mb_maxs;
+	/* 伙伴分配器相关 */
+	struct ext4_group_info ***s_group_info; /* 块组信息 */
+	struct inode *s_buddy_cache;   /* 伙伴缓存的 inode */
+	long s_blocks_reserved;       /* 保留的块数 */
+	spinlock_t s_reserve_lock;    /* 保留锁 */
+	spinlock_t s_md_lock;         /* 元数据锁 */
+	tid_t s_last_transaction;     /* 上一次事务的 ID */
+	unsigned short *s_mb_offsets; /* 位图偏移量 */
+	unsigned int *s_mb_maxs;      /* 位图最大值 */
 
-	/* tunables */
-	unsigned long s_stripe;
-	unsigned int s_mb_stream_request;
-	unsigned int s_mb_max_to_scan;
-	unsigned int s_mb_min_to_scan;
-	unsigned int s_mb_stats;
-	unsigned int s_mb_order2_reqs;
-	unsigned int s_mb_group_prealloc;
-	unsigned int s_max_writeback_mb_bump;
-	/* where last allocation was done - for stream allocation */
-	unsigned long s_mb_last_group;
-	unsigned long s_mb_last_start;
+	/* 可调参数 */
+	unsigned long s_stripe;        /* 条带大小 */
+	unsigned int s_mb_stream_request; /* 位图流请求 */
+	unsigned int s_mb_max_to_scan; /* 扫描的最大块数 */
+	unsigned int s_mb_min_to_scan; /* 扫描的最小块数 */
+	unsigned int s_mb_stats;       /* 位图统计 */
+	unsigned int s_mb_order2_reqs; /* 2^order 请求数 */
+	unsigned int s_mb_group_prealloc; /* 块组预分配 */
+	unsigned int s_max_writeback_mb_bump; /* 最大写回 mb 增量 */
+	unsigned long s_mb_last_group; /* 上一次分配的块组 */
+	unsigned long s_mb_last_start; /* 上一次分配的起始位置 */
 
-	/* stats for buddy allocator */
-	spinlock_t s_mb_pa_lock;
-	atomic_t s_bal_reqs;	/* number of reqs with len > 1 */
-	atomic_t s_bal_success;	/* we found long enough chunks */
-	atomic_t s_bal_allocated;	/* in blocks */
-	atomic_t s_bal_ex_scanned;	/* total extents scanned */
-	atomic_t s_bal_goals;	/* goal hits */
-	atomic_t s_bal_breaks;	/* too long searches */
-	atomic_t s_bal_2orders;	/* 2^order hits */
-	spinlock_t s_bal_lock;
-	unsigned long s_mb_buddies_generated;
-	unsigned long long s_mb_generation_time;
-	atomic_t s_mb_lost_chunks;
-	atomic_t s_mb_preallocated;
-	atomic_t s_mb_discarded;
-	atomic_t s_lock_busy;
+	/* 伙伴分配器统计 */
+	spinlock_t s_mb_pa_lock;       /* 伙伴分配器锁 */
+	atomic_t s_bal_reqs;           /* 请求数（长度 > 1） */
+	atomic_t s_bal_success;        /* 找到足够长的块数 */
+	atomic_t s_bal_allocated;      /* 已分配的块数 */
+	atomic_t s_bal_ex_scanned;     /* 扫描的扩展数 */
+	atomic_t s_bal_goals;          /* 目标命中数 */
+	atomic_t s_bal_breaks;         /* 过长搜索次数 */
+	atomic_t s_bal_2orders;        /* 2^order 命中次数 */
+	spinlock_t s_bal_lock;         /* 伙伴分配器自旋锁 */
+	unsigned long s_mb_buddies_generated; /* 生成的伙伴数 */
+	unsigned long long s_mb_generation_time; /* 伙伴生成时间 */
+	atomic_t s_mb_lost_chunks;     /* 丢失的块数 */
+	atomic_t s_mb_preallocated;    /* 预分配的块数 */
+	atomic_t s_mb_discarded;       /* 丢弃的块数 */
+	atomic_t s_lock_busy;          /* 锁忙数 */
 
-	/* locality groups */
+	/* 局部性组 */
 	struct ext4_locality_group __percpu *s_locality_groups;
 
-	/* for write statistics */
-	unsigned long s_sectors_written_start;
-	u64 s_kbytes_written;
+	/* 写入统计信息 */
+	unsigned long s_sectors_written_start; /* 起始写入扇区数 */
+	u64 s_kbytes_written;                /* 写入的千字节数 */
 
-	unsigned int s_log_groups_per_flex;
-	struct flex_groups *s_flex_groups;
-
-	/* workqueue for dio unwritten */
+	unsigned int s_log_groups_per_flex; /* 每个 flex 组的日志组数 */
+	struct flex_groups *s_flex_groups;  /* flex 组 */
+	
+	/* 用于 DIO 未写入的工作队列 */
 	struct workqueue_struct *dio_unwritten_wq;
 };
 
+//将vfs中的sb结构转换为ext4原生的sb信息
 static inline struct ext4_sb_info *EXT4_SB(struct super_block *sb)
 {
 	return sb->s_fs_info;
