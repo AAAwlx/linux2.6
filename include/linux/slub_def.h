@@ -35,14 +35,15 @@ enum stat_item {
 	NR_SLUB_STAT_ITEMS };
 
 struct kmem_cache_cpu {
-	void **freelist;	/* Pointer to first free per cpu object */
-	struct page *page;	/* The slab from which we are allocating */
-	int node;		/* The node of the page (or -1 for debug) */
+	void **freelist;	/* 指向每个 CPU 可用对象的第一个空闲指针，用于快速分配空闲对象 */
+	struct page *page;	/* 当前 CPU 正在使用的 slab 页，即正在从其中分配内存的 slab */
+	int node;		/* 页所属的节点号（NUMA 节点编号），调试模式下该值为 -1 */
 #ifdef CONFIG_SLUB_STATS
-	unsigned stat[NR_SLUB_STAT_ITEMS];
+	unsigned stat[NR_SLUB_STAT_ITEMS];  /* 在启用 SLUB 统计信息时，用于记录分配相关的统计数据 */
 #endif
 };
 
+//该结构体用于描述 SLUB 分配器中每个 NUMA 节点的缓存管理信息，用于管理内存分配的局部缓存
 struct kmem_cache_node {
 	spinlock_t list_lock;	/* Protect partial list and nr_partial */
 	unsigned long nr_partial;

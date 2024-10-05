@@ -85,10 +85,7 @@
  */
 #define in_irq()		(hardirq_count())		// 只有在内核确实正在执行中断处理程序时才返回非0（不包括下半部分）
 #define in_softirq()		(softirq_count())
-<<<<<<< HEAD
-=======
 // 如果内核禁止了软中断也会返回非0
->>>>>>> ccc/main
 #define in_interrupt()		(irq_count())		// 如果内核处于任何类型中断中，返回非0，说明正在执行中断处理程序或正在执行下半部处理程序
 
 /*

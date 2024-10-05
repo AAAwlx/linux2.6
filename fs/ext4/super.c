@@ -287,25 +287,33 @@ int __ext4_journal_stop(const char *where, handle_t *handle)
 void ext4_journal_abort_handle(const char *caller, const char *err_fn,
 		struct buffer_head *bh, handle_t *handle, int err)
 {
-	char nbuf[16];
-	const char *errstr = ext4_decode_error(NULL, err, nbuf);
+	char nbuf[16]; // 存储错误字符串的缓冲区
+	const char *errstr = ext4_decode_error(NULL, err, nbuf); 
+    // 解码错误码，返回可读的错误信息
 
-	BUG_ON(!ext4_handle_valid(handle));
+	BUG_ON(!ext4_handle_valid(handle)); 
+    // 确保 handle 有效，如果无效，触发 BUG
 
 	if (bh)
 		BUFFER_TRACE(bh, "abort");
+    // 如果提供了缓冲区头（bh），记录缓冲区状态以便调试
 
 	if (!handle->h_err)
 		handle->h_err = err;
+    // 如果 handle 当前没有记录错误，将错误码写入 handle 的 h_err 字段
 
 	if (is_handle_aborted(handle))
 		return;
+    // 如果 handle 已经被中止，直接返回，不再处理
 
 	printk(KERN_ERR "%s: aborting transaction: %s in %s\n",
 	       caller, errstr, err_fn);
+    // 打印错误信息，说明哪个函数调用发起了事务中止，以及出错的具体原因
 
 	jbd2_journal_abort_handle(handle);
+    // 调用 jbd2 的事务中止函数，正式中止该事务
 }
+
 
 /* Deal with the reporting of failure conditions on a filesystem such as
  * inconsistencies detected or read IO failures.
@@ -3132,47 +3140,67 @@ static void ext4_init_journal_params(struct super_block *sb, journal_t *journal)
 	spin_unlock(&journal->j_state_lock);
 }
 
-static journal_t *ext4_get_journal(struct super_block *sb,
-				   unsigned int journal_inum)
+/*
+ * 获取并初始化文件系统的日志对象。
+ *
+ * @param sb: 超级块指针，表示当前文件系统的超级块。
+ * @param journal_inum: 日志 inode 号，表示存储日志的 inode 编号。
+ * 
+ * 返回值：
+ * - 返回指向日志结构体的指针，如果获取日志失败，则返回 NULL。
+ */
+static journal_t *ext4_get_journal(struct super_block *sb, unsigned int journal_inum)
 {
-	struct inode *journal_inode;
-	journal_t *journal;
+    struct inode *journal_inode; // 指向日志 inode 的指针
+    journal_t *journal;          // 指向日志结构体的指针
 
-	BUG_ON(!EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL));
+    // 保证文件系统启用了具有日志功能的兼容特性
+    BUG_ON(!EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL));
 
-	/* First, test for the existence of a valid inode on disk.  Bad
-	 * things happen if we iget() an unused inode, as the subsequent
-	 * iput() will try to delete it. */
+    /*
+     * 首先检查磁盘上是否存在有效的日志 inode。
+     * 如果获取到的是无效 inode（如未使用），在 iput() 过程中
+     * 将尝试删除该 inode，可能导致系统异常。
+     */
+    journal_inode = ext4_iget(sb, journal_inum); // 根据 inode 号获取 inode
+    if (IS_ERR(journal_inode)) { // 检查获取 inode 是否失败
+        ext4_msg(sb, KERN_ERR, "no journal found"); // 打印错误信息，未找到日志 inode
+        return NULL; // 返回 NULL 表示获取日志失败
+    }
 
-	journal_inode = ext4_iget(sb, journal_inum);
-	if (IS_ERR(journal_inode)) {
-		ext4_msg(sb, KERN_ERR, "no journal found");
-		return NULL;
-	}
-	if (!journal_inode->i_nlink) {
-		make_bad_inode(journal_inode);
-		iput(journal_inode);
-		ext4_msg(sb, KERN_ERR, "journal inode is deleted");
-		return NULL;
-	}
+    // 检查日志 inode 的链接计数是否为 0（已删除的 inode）
+    if (!journal_inode->i_nlink) {
+        make_bad_inode(journal_inode); // 标记该 inode 为坏 inode
+        iput(journal_inode); // 释放该 inode
+        ext4_msg(sb, KERN_ERR, "journal inode is deleted"); // 打印错误信息，日志 inode 已被删除
+        return NULL; // 返回 NULL 表示获取日志失败
+    }
 
-	jbd_debug(2, "Journal inode found at %p: %lld bytes\n",
-		  journal_inode, journal_inode->i_size);
-	if (!S_ISREG(journal_inode->i_mode)) {
-		ext4_msg(sb, KERN_ERR, "invalid journal inode");
-		iput(journal_inode);
-		return NULL;
-	}
+    // 打印调试信息，输出日志 inode 地址及其大小
+    jbd_debug(2, "Journal inode found at %p: %lld bytes\n", journal_inode, journal_inode->i_size);
 
-	journal = jbd2_journal_init_inode(journal_inode);
-	if (!journal) {
-		ext4_msg(sb, KERN_ERR, "Could not load journal inode");
-		iput(journal_inode);
-		return NULL;
-	}
-	journal->j_private = sb;
-	ext4_init_journal_params(sb, journal);
-	return journal;
+    // 检查日志 inode 的类型是否为常规文件（日志文件必须是常规文件）
+    if (!S_ISREG(journal_inode->i_mode)) {
+        ext4_msg(sb, KERN_ERR, "invalid journal inode"); // 打印错误信息，日志 inode 类型无效
+        iput(journal_inode); // 释放该 inode
+        return NULL; // 返回 NULL 表示获取日志失败
+    }
+
+    // 初始化 inode 作为日志并获取日志对象
+    journal = jbd2_journal_init_inode(journal_inode);
+    if (!journal) { // 如果日志初始化失败
+        ext4_msg(sb, KERN_ERR, "Could not load journal inode"); // 打印错误信息，无法加载日志 inode
+        iput(journal_inode); // 释放 inode
+        return NULL; // 返回 NULL 表示获取日志失败
+    }
+
+    // 设置日志对象的私有数据为超级块
+    journal->j_private = sb;
+
+    // 初始化日志参数
+    ext4_init_journal_params(sb, journal);
+
+    return journal; // 返回初始化后的日志对象
 }
 
 static journal_t *ext4_get_dev_journal(struct super_block *sb,
@@ -3272,92 +3300,104 @@ static int ext4_load_journal(struct super_block *sb,
 			     struct ext4_super_block *es,
 			     unsigned long journal_devnum)
 {
-	journal_t *journal;
-	unsigned int journal_inum = le32_to_cpu(es->s_journal_inum);
-	dev_t journal_dev;
-	int err = 0;
-	int really_read_only;
+	journal_t *journal; // 日志指针
+	unsigned int journal_inum = le32_to_cpu(es->s_journal_inum); // 从超级块中获取日志 inode 号，并转换为主机字节序
+	dev_t journal_dev; // 存储日志设备号
+	int err = 0; // 错误码，初始化为 0
+	int really_read_only; // 标识块设备是否为只读
 
-	BUG_ON(!EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL));
+	BUG_ON(!EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL)); 
+	// 如果文件系统不支持兼容的日志功能，则触发 BUG
 
 	if (journal_devnum &&
-	    journal_devnum != le32_to_cpu(es->s_journal_dev)) {
+	    journal_devnum != le32_to_cpu(es->s_journal_dev)) { 
+		// 如果传入的日志设备号和超级块中的日志设备号不同
 		ext4_msg(sb, KERN_INFO, "external journal device major/minor "
-			"numbers have changed");
-		journal_dev = new_decode_dev(journal_devnum);
+			"numbers have changed"); // 打印日志设备号变化的消息
+		journal_dev = new_decode_dev(journal_devnum); // 解码新的设备号
 	} else
-		journal_dev = new_decode_dev(le32_to_cpu(es->s_journal_dev));
+		journal_dev = new_decode_dev(le32_to_cpu(es->s_journal_dev)); // 否则使用超级块中的日志设备号
 
-	really_read_only = bdev_read_only(sb->s_bdev);
+	really_read_only = bdev_read_only(sb->s_bdev); // 检查块设备是否为只读
 
 	/*
-	 * Are we loading a blank journal or performing recovery after a
-	 * crash?  For recovery, we need to check in advance whether we
-	 * can get read-write access to the device.
+	 * 检查是加载一个空的日志还是从崩溃后恢复。
+	 * 如果需要恢复，我们需要提前检查设备是否可以获得读写权限。
 	 */
 	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER)) {
+		// 如果文件系统具有不可兼容的恢复特性
 		if (sb->s_flags & MS_RDONLY) {
+			// 如果文件系统是只读的
 			ext4_msg(sb, KERN_INFO, "INFO: recovery "
 					"required on readonly filesystem");
 			if (really_read_only) {
+				// 如果设备是只读的，无法继续恢复
 				ext4_msg(sb, KERN_ERR, "write access "
 					"unavailable, cannot proceed");
-				return -EROFS;
+				return -EROFS; // 返回只读文件系统错误
 			}
 			ext4_msg(sb, KERN_INFO, "write access will "
 			       "be enabled during recovery");
+			// 通知用户恢复期间将启用写访问权限
 		}
 	}
 
 	if (journal_inum && journal_dev) {
+		// 同时存在 inode 和设备日志，出现冲突
 		ext4_msg(sb, KERN_ERR, "filesystem has both journal "
 		       "and inode journals!");
-		return -EINVAL;
+		return -EINVAL; // 返回无效参数错误
 	}
 
 	if (journal_inum) {
+		// 使用 inode 号获取日志
 		if (!(journal = ext4_get_journal(sb, journal_inum)))
-			return -EINVAL;
+			return -EINVAL; // 如果获取失败，返回无效参数错误
 	} else {
+		// 使用设备号获取日志
 		if (!(journal = ext4_get_dev_journal(sb, journal_dev)))
-			return -EINVAL;
+			return -EINVAL; // 如果获取失败，返回无效参数错误
 	}
 
 	if (!(journal->j_flags & JBD2_BARRIER))
-		ext4_msg(sb, KERN_INFO, "barriers disabled");
+		ext4_msg(sb, KERN_INFO, "barriers disabled"); 
+	// 如果日志没有设置屏障，打印禁用屏障的消息
 
 	if (!really_read_only && test_opt(sb, UPDATE_JOURNAL)) {
-		err = jbd2_journal_update_format(journal);
+		// 如果设备不是只读并且文件系统选项中启用了日志更新
+		err = jbd2_journal_update_format(journal); // 更新日志格式
 		if (err)  {
-			ext4_msg(sb, KERN_ERR, "error updating journal");
-			jbd2_journal_destroy(journal);
-			return err;
+			ext4_msg(sb, KERN_ERR, "error updating journal"); // 更新日志失败，打印错误消息
+			jbd2_journal_destroy(journal); // 销毁日志
+			return err; // 返回错误码
 		}
 	}
 
 	if (!EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER))
-		err = jbd2_journal_wipe(journal, !really_read_only);
+		err = jbd2_journal_wipe(journal, !really_read_only); 
+	// 如果文件系统不需要恢复，擦除日志
 	if (!err)
-		err = jbd2_journal_load(journal);
+		err = jbd2_journal_load(journal); // 加载日志
 
 	if (err) {
-		ext4_msg(sb, KERN_ERR, "error loading journal");
-		jbd2_journal_destroy(journal);
-		return err;
+		ext4_msg(sb, KERN_ERR, "error loading journal"); // 加载日志失败，打印错误消息
+		jbd2_journal_destroy(journal); // 销毁日志
+		return err; // 返回错误码
 	}
 
-	EXT4_SB(sb)->s_journal = journal;
-	ext4_clear_journal_err(sb, es);
+	EXT4_SB(sb)->s_journal = journal; // 将日志对象存储到文件系统超级块中
+	ext4_clear_journal_err(sb, es); // 清除日志错误标志
 
 	if (journal_devnum &&
 	    journal_devnum != le32_to_cpu(es->s_journal_dev)) {
+		// 如果传入的日志设备号与超级块中的日志设备号不同，更新超级块中的设备号
 		es->s_journal_dev = cpu_to_le32(journal_devnum);
 
-		/* Make sure we flush the recovery flag to disk. */
+		/* 确保恢复标志已写入磁盘 */
 		ext4_commit_super(sb, 1);
 	}
 
-	return 0;
+	return 0; // 返回成功
 }
 
 static int ext4_commit_super(struct super_block *sb, int sync)

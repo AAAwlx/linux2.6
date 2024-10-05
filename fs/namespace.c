@@ -469,8 +469,8 @@ static void __touch_mnt_namespace(struct mnt_namespace *ns)
 
 static void detach_mnt(struct vfsmount *mnt, struct path *old_path)
 {
-	old_path->dentry = mnt->mnt_mountpoint;
-	old_path->mnt = mnt->mnt_parent;
+	old_path->dentry = mnt->mnt_mountpoint;//旧的path的路径为挂载点所在的目录
+	old_path->mnt = mnt->mnt_parent;//旧的path所挂载的
 	mnt->mnt_parent = mnt;
 	mnt->mnt_mountpoint = mnt->mnt_root;
 	list_del_init(&mnt->mnt_child);
@@ -2211,105 +2211,142 @@ out_type:
  *    first.
  */
 SYSCALL_DEFINE2(pivot_root, const char __user *, new_root,
-		const char __user *, put_old)
+                const char __user *, put_old)
 {
-	struct vfsmount *tmp;
-	struct path new, old, parent_path, root_parent, root;
-	int error;
+    struct vfsmount *tmp;
+    struct path new, old, parent_path, root_parent, root;
+    int error;
 
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
+    // 检查当前进程是否具有系统管理员权限
+    if (!capable(CAP_SYS_ADMIN))
+        return -EPERM;
 
-	error = user_path_dir(new_root, &new);
-	if (error)
-		goto out0;
-	error = -EINVAL;
-	if (!check_mnt(new.mnt))
-		goto out1;
+    // 获取新的根目录路径
+    error = user_path_dir(new_root, &new);
+    if (error)
+        goto out0;
 
-	error = user_path_dir(put_old, &old);
-	if (error)
-		goto out1;
+    // 检查新的挂载点是否合法
+    error = -EINVAL;
+    if (!check_mnt(new.mnt))
+        goto out1;
 
-	error = security_sb_pivotroot(&old, &new);
-	if (error) {
-		path_put(&old);
-		goto out1;
-	}
+    // 获取旧的根目录路径
+    error = user_path_dir(put_old, &old);
+    if (error)
+        goto out1;
 
-	read_lock(&current->fs->lock);
-	root = current->fs->root;
-	path_get(&current->fs->root);
-	read_unlock(&current->fs->lock);
-	down_write(&namespace_sem);
-	mutex_lock(&old.dentry->d_inode->i_mutex);
-	error = -EINVAL;
-	if (IS_MNT_SHARED(old.mnt) ||
-		IS_MNT_SHARED(new.mnt->mnt_parent) ||
-		IS_MNT_SHARED(root.mnt->mnt_parent))
-		goto out2;
-	if (!check_mnt(root.mnt))
-		goto out2;
-	error = -ENOENT;
-	if (cant_mount(old.dentry))
-		goto out2;
-	if (d_unlinked(new.dentry))
-		goto out2;
-	if (d_unlinked(old.dentry))
-		goto out2;
-	error = -EBUSY;
-	if (new.mnt == root.mnt ||
-	    old.mnt == root.mnt)
-		goto out2; /* loop, on the same file system  */
-	error = -EINVAL;
-	if (root.mnt->mnt_root != root.dentry)
-		goto out2; /* not a mountpoint */
-	if (root.mnt->mnt_parent == root.mnt)
-		goto out2; /* not attached */
-	if (new.mnt->mnt_root != new.dentry)
-		goto out2; /* not a mountpoint */
-	if (new.mnt->mnt_parent == new.mnt)
-		goto out2; /* not attached */
-	/* make sure we can reach put_old from new_root */
-	tmp = old.mnt;
-	spin_lock(&vfsmount_lock);
-	if (tmp != new.mnt) {
-		for (;;) {
-			if (tmp->mnt_parent == tmp)
-				goto out3; /* already mounted on put_old */
-			if (tmp->mnt_parent == new.mnt)
-				break;
-			tmp = tmp->mnt_parent;
-		}
-		if (!is_subdir(tmp->mnt_mountpoint, new.dentry))
-			goto out3;
-	} else if (!is_subdir(old.dentry, new.dentry))
-		goto out3;
-	detach_mnt(new.mnt, &parent_path);
-	detach_mnt(root.mnt, &root_parent);
-	/* mount old root on put_old */
-	attach_mnt(root.mnt, &old);
-	/* mount new_root on / */
-	attach_mnt(new.mnt, &root_parent);
-	touch_mnt_namespace(current->nsproxy->mnt_ns);
-	spin_unlock(&vfsmount_lock);
-	chroot_fs_refs(&root, &new);
-	security_sb_post_pivotroot(&root, &new);
-	error = 0;
-	path_put(&root_parent);
-	path_put(&parent_path);
+    // 检查安全性
+    error = security_sb_pivotroot(&old, &new);
+    if (error) {
+        path_put(&old);
+        goto out1;
+    }
+
+    // 获取当前进程的根目录
+    read_lock(&current->fs->lock);
+    root = current->fs->root;
+    path_get(&current->fs->root);
+    read_unlock(&current->fs->lock);
+
+    // 获取命名空间信号量
+    down_write(&namespace_sem);
+    mutex_lock(&old.dentry->d_inode->i_mutex);
+
+    error = -EINVAL;
+    // 检查挂载关系是否共享
+    if (IS_MNT_SHARED(old.mnt) ||
+        IS_MNT_SHARED(new.mnt->mnt_parent) ||
+        IS_MNT_SHARED(root.mnt->mnt_parent))
+        goto out2;
+
+    // 确保根目录是有效的挂载点
+    if (!check_mnt(root.mnt))
+        goto out2;
+
+    error = -ENOENT;
+    // 检查旧根目录是否可以挂载
+    if (cant_mount(old.dentry))
+        goto out2;
+
+    // 检查新旧目录是否被删除
+    if (d_unlinked(new.dentry))
+        goto out2;
+    if (d_unlinked(old.dentry))
+        goto out2;
+
+    error = -EBUSY;
+    // 检查是否存在循环挂载
+    if (new.mnt == root.mnt || old.mnt == root.mnt)
+        goto out2; // 在同一文件系统上循环
+
+    error = -EINVAL;
+    // 检查根目录是否为挂载点
+    if (root.mnt->mnt_root != root.dentry)
+        goto out2; // 不是挂载点
+
+    // 检查根目录是否附加
+    if (root.mnt->mnt_parent == root.mnt)
+        goto out2; // 不是附加
+
+    // 检查新根目录是否为挂载点
+    if (new.mnt->mnt_root != new.dentry)
+        goto out2; // 不是挂载点
+
+    // 检查新根目录是否附加
+    if (new.mnt->mnt_parent == new.mnt)
+        goto out2; // 不是附加
+
+    // 确保从 new_root 可以到达 put_old
+    tmp = old.mnt;
+    spin_lock(&vfsmount_lock);
+    if (tmp != new.mnt) {
+        for (;;) {
+            if (tmp->mnt_parent == tmp)
+                goto out3; // 已经挂载到 put_old
+            if (tmp->mnt_parent == new.mnt)
+                break;
+            tmp = tmp->mnt_parent;
+        }
+        // 检查是否是子目录
+        if (!is_subdir(tmp->mnt_mountpoint, new.dentry))
+            goto out3;
+    } else if (!is_subdir(old.dentry, new.dentry))
+        goto out3;
+
+    // 分离挂载点
+    detach_mnt(new.mnt, &parent_path);
+    detach_mnt(root.mnt, &root_parent);
+
+    // 在 put_old 上挂载旧根目录
+    attach_mnt(root.mnt, &old);
+    // 在根上挂载新根目录
+    attach_mnt(new.mnt, &root_parent);
+    
+    // 更新挂载命名空间
+    touch_mnt_namespace(current->nsproxy->mnt_ns);
+    spin_unlock(&vfsmount_lock);
+
+    // 更新文件系统引用
+    chroot_fs_refs(&root, &new);
+    // 安全性后处理
+    security_sb_post_pivotroot(&root, &new);
+
+    error = 0;
+    path_put(&root_parent);
+    path_put(&parent_path);
 out2:
-	mutex_unlock(&old.dentry->d_inode->i_mutex);
-	up_write(&namespace_sem);
-	path_put(&root);
-	path_put(&old);
+    mutex_unlock(&old.dentry->d_inode->i_mutex);
+    up_write(&namespace_sem);
+    path_put(&root);
+    path_put(&old);
 out1:
-	path_put(&new);
+    path_put(&new);
 out0:
-	return error;
+    return error;
 out3:
-	spin_unlock(&vfsmount_lock);
-	goto out2;
+    spin_unlock(&vfsmount_lock);
+    goto out2;
 }
 
 static void __init init_mount_tree(void)

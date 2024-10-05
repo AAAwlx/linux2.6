@@ -114,100 +114,101 @@ static void commit_timeout(unsigned long __data)
 
 static int kjournald(void *arg)
 {
-	journal_t *journal = arg;
-	transaction_t *transaction;
+	journal_t *journal = arg; // 获取传入的 journal 参数
+	transaction_t *transaction; // 事务指针
 
 	/*
-	 * Set up an interval timer which can be used to trigger a commit wakeup
-	 * after the commit interval expires
+	 * 设置一个间隔定时器，在提交间隔到期后触发提交唤醒事件
 	 */
 	setup_timer(&journal->j_commit_timer, commit_timeout,
 			(unsigned long)current);
 
-	/* Record that the journal thread is running */
-	journal->j_task = current;
-	wake_up(&journal->j_wait_done_commit);
+	/* 记录日志线程正在运行 */
+	journal->j_task = current; // 将当前线程设置为日志线程
+	wake_up(&journal->j_wait_done_commit); // 唤醒等待提交完成的线程
 
 	printk(KERN_INFO "kjournald starting.  Commit interval %ld seconds\n",
-			journal->j_commit_interval / HZ);
+			journal->j_commit_interval / HZ); // 打印日志线程启动信息
 
 	/*
-	 * And now, wait forever for commit wakeup events.
+	 * 现在，永远等待提交唤醒事件。
 	 */
-	spin_lock(&journal->j_state_lock);
+	spin_lock(&journal->j_state_lock); // 加锁以保护日志状态
 
 loop:
+	// 检查是否请求卸载日志
 	if (journal->j_flags & JFS_UNMOUNT)
-		goto end_loop;
+		goto end_loop; // 如果请求卸载，跳转到结束循环
 
 	jbd_debug(1, "commit_sequence=%d, commit_request=%d\n",
-		journal->j_commit_sequence, journal->j_commit_request);
+		journal->j_commit_sequence, journal->j_commit_request); // 打印当前提交序列和请求信息
 
+	// 检查是否有提交请求
 	if (journal->j_commit_sequence != journal->j_commit_request) {
-		jbd_debug(1, "OK, requests differ\n");
-		spin_unlock(&journal->j_state_lock);
-		del_timer_sync(&journal->j_commit_timer);
-		journal_commit_transaction(journal);
-		spin_lock(&journal->j_state_lock);
-		goto loop;
+		jbd_debug(1, "OK, requests differ\n"); // 打印调试信息
+		spin_unlock(&journal->j_state_lock); // 解锁
+		del_timer_sync(&journal->j_commit_timer); // 停止定时器
+		journal_commit_transaction(journal); // 提交当前事务
+		spin_lock(&journal->j_state_lock); // 重新加锁
+		goto loop; // 重新开始循环
 	}
 
-	wake_up(&journal->j_wait_done_commit);
-	if (freezing(current)) {
+	wake_up(&journal->j_wait_done_commit); // 唤醒等待提交完成的线程
+	if (freezing(current)) { // 检查当前线程是否被冻结
 		/*
-		 * The simpler the better. Flushing journal isn't a
-		 * good idea, because that depends on threads that may
-		 * be already stopped.
+		 * 简单点。刷新日志并不是一个好主意，
+		 * 因为这依赖于可能已经停止的线程。
 		 */
-		jbd_debug(1, "Now suspending kjournald\n");
-		spin_unlock(&journal->j_state_lock);
-		refrigerator();
-		spin_lock(&journal->j_state_lock);
+		jbd_debug(1, "Now suspending kjournald\n"); // 打印调试信息
+		spin_unlock(&journal->j_state_lock); // 解锁
+		refrigerator(); // 将线程置于休眠状态
+		spin_lock(&journal->j_state_lock); // 重新加锁
 	} else {
 		/*
-		 * We assume on resume that commits are already there,
-		 * so we don't sleep
+		 * 我们假设在恢复时，提交已经完成，
+		 * 因此我们不需要睡眠
 		 */
-		DEFINE_WAIT(wait);
-		int should_sleep = 1;
+		DEFINE_WAIT(wait); // 定义等待队列
+		int should_sleep = 1; // 设置是否应该睡眠的标志
 
+		// 准备等待
 		prepare_to_wait(&journal->j_wait_commit, &wait,
 				TASK_INTERRUPTIBLE);
-		if (journal->j_commit_sequence != journal->j_commit_request)
-			should_sleep = 0;
-		transaction = journal->j_running_transaction;
+		if (journal->j_commit_sequence != journal->j_commit_request) // 检查提交序列与请求是否一致
+			should_sleep = 0; // 如果不一致，则不需要睡眠
+		transaction = journal->j_running_transaction; // 获取当前运行的事务
 		if (transaction && time_after_eq(jiffies,
 						transaction->t_expires))
-			should_sleep = 0;
-		if (journal->j_flags & JFS_UNMOUNT)
-			should_sleep = 0;
-		if (should_sleep) {
-			spin_unlock(&journal->j_state_lock);
-			schedule();
-			spin_lock(&journal->j_state_lock);
+			should_sleep = 0; // 如果事务已超时，不需要睡眠
+		if (journal->j_flags & JFS_UNMOUNT) // 检查是否请求卸载日志
+			should_sleep = 0; // 如果请求卸载，则不需要睡眠
+		if (should_sleep) { // 如果决定需要睡眠
+			spin_unlock(&journal->j_state_lock); // 解锁
+			schedule(); // 调度其他线程
+			spin_lock(&journal->j_state_lock); // 重新加锁
 		}
-		finish_wait(&journal->j_wait_commit, &wait);
+		finish_wait(&journal->j_wait_commit, &wait); // 结束等待
 	}
 
-	jbd_debug(1, "kjournald wakes\n");
+	jbd_debug(1, "kjournald wakes\n"); // 打印唤醒调试信息
 
 	/*
-	 * Were we woken up by a commit wakeup event?
+	 * 我们是被提交唤醒事件唤醒的吗？
 	 */
-	transaction = journal->j_running_transaction;
+	transaction = journal->j_running_transaction; // 获取当前运行的事务
 	if (transaction && time_after_eq(jiffies, transaction->t_expires)) {
-		journal->j_commit_request = transaction->t_tid;
-		jbd_debug(1, "woke because of timeout\n");
+		journal->j_commit_request = transaction->t_tid; // 设置提交请求为当前事务的 ID
+		jbd_debug(1, "woke because of timeout\n"); // 打印超时唤醒调试信息
 	}
-	goto loop;
+	goto loop; // 重新开始循环
 
 end_loop:
-	spin_unlock(&journal->j_state_lock);
-	del_timer_sync(&journal->j_commit_timer);
-	journal->j_task = NULL;
-	wake_up(&journal->j_wait_done_commit);
-	jbd_debug(1, "Journal thread exiting.\n");
-	return 0;
+	spin_unlock(&journal->j_state_lock); // 解锁日志状态
+	del_timer_sync(&journal->j_commit_timer); // 停止定时器
+	journal->j_task = NULL; // 重置日志任务指针
+	wake_up(&journal->j_wait_done_commit); // 唤醒等待提交完成的线程
+	jbd_debug(1, "Journal thread exiting.\n"); // 打印日志线程退出信息
+	return 0; // 返回 0
 }
 
 static int journal_start_thread(journal_t *journal)

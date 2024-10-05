@@ -77,16 +77,20 @@ void chrdev_show(struct seq_file *f, off_t offset)
 
 #endif /* CONFIG_PROC_FS */
 
-/*
- * Register a single major with a specified minor range.
+/**
+ * __register_chrdev_region() - 注册一个字符设备号区域
+ * @major: 主要设备号。如果为 0，系统将动态分配一个未使用的主设备号。
+ * @baseminor: 设备的起始次设备号。
+ * @minorct: 要注册的连续次设备号的数量。
+ * @name: 设备的名称。
  *
- * If major == 0 this functions will dynamically allocate a major and return
- * its number.
+ * 该函数用于为字符设备分配并注册一个主设备号和次设备号范围。
+ * 如果成功，函数返回一个指向 `char_device_struct` 结构的指针；
+ * 否则返回错误指针（如 -ENOMEM 或 -EBUSY）。
  *
- * If major > 0 this function will attempt to reserve the passed range of
- * minors and will return zero on success.
- *
- * Returns a -ve errno on failure.
+ * 返回值:
+ * - 成功时返回 `char_device_struct` 结构指针。
+ * - 错误时返回错误指针，可能为 -ENOMEM（内存分配失败）或 -EBUSY（设备号冲突）。
  */
 static struct char_device_struct *
 __register_chrdev_region(unsigned int major, unsigned int baseminor,
@@ -96,34 +100,38 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 	int ret = 0;
 	int i;
 
+	// 为字符设备结构分配内存，并初始化为 0
 	cd = kzalloc(sizeof(struct char_device_struct), GFP_KERNEL);
 	if (cd == NULL)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(-ENOMEM); // 内存分配失败，返回错误指针
 
-	mutex_lock(&chrdevs_lock);
+	mutex_lock(&chrdevs_lock); // 获取字符设备全局表的锁
 
-	/* temporary */
+	/* 如果主设备号为 0，表示需要动态分配一个未使用的主设备号 */
 	if (major == 0) {
-		for (i = ARRAY_SIZE(chrdevs)-1; i > 0; i--) {
-			if (chrdevs[i] == NULL)
+		for (i = ARRAY_SIZE(chrdevs) - 1; i > 0; i--) {
+			if (chrdevs[i] == NULL) // 找到未使用的主设备号
 				break;
 		}
 
+		// 如果没有可用的主设备号，返回错误
 		if (i == 0) {
 			ret = -EBUSY;
 			goto out;
 		}
-		major = i;
-		ret = major;
+		major = i; // 使用找到的主设备号
+		ret = major; // 返回分配的主设备号
 	}
 
+	// 设置字符设备的属性
 	cd->major = major;
 	cd->baseminor = baseminor;
 	cd->minorct = minorct;
-	strlcpy(cd->name, name, sizeof(cd->name));
+	strlcpy(cd->name, name, sizeof(cd->name)); // 拷贝设备名称
 
-	i = major_to_index(major);
+	i = major_to_index(major); // 计算哈希索引
 
+	// 遍历字符设备表，找到适合的位置插入新的字符设备
 	for (cp = &chrdevs[i]; *cp; cp = &(*cp)->next)
 		if ((*cp)->major > major ||
 		    ((*cp)->major == major &&
@@ -131,34 +139,36 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 		      ((*cp)->baseminor + (*cp)->minorct > baseminor))))
 			break;
 
-	/* Check for overlapping minor ranges.  */
+	/* 检查次设备号范围是否重叠 */
 	if (*cp && (*cp)->major == major) {
 		int old_min = (*cp)->baseminor;
 		int old_max = (*cp)->baseminor + (*cp)->minorct - 1;
 		int new_min = baseminor;
 		int new_max = baseminor + minorct - 1;
 
-		/* New driver overlaps from the left.  */
+		// 新设备与已存在设备从左边重叠
 		if (new_max >= old_min && new_max <= old_max) {
 			ret = -EBUSY;
 			goto out;
 		}
 
-		/* New driver overlaps from the right.  */
+		// 新设备与已存在设备从右边重叠
 		if (new_min <= old_max && new_min >= old_min) {
 			ret = -EBUSY;
 			goto out;
 		}
 	}
 
+	// 将新设备插入字符设备链表
 	cd->next = *cp;
 	*cp = cd;
-	mutex_unlock(&chrdevs_lock);
-	return cd;
+	mutex_unlock(&chrdevs_lock); // 解锁
+	return cd; // 返回注册成功的字符设备结构指针
+
 out:
-	mutex_unlock(&chrdevs_lock);
-	kfree(cd);
-	return ERR_PTR(ret);
+	mutex_unlock(&chrdevs_lock); // 解锁
+	kfree(cd); // 释放已分配的内存
+	return ERR_PTR(ret); // 返回错误指针
 }
 
 static struct char_device_struct *
@@ -492,6 +502,19 @@ static int exact_lock(dev_t dev, void *data)
  * cdev_add() adds the device represented by @p to the system, making it
  * live immediately.  A negative error code is returned on failure.
  */
+/**
+ * cdev_add() - 向系统中添加字符设备
+ * @p: 该设备的 cdev 结构指针
+ * @dev: 该设备负责的第一个设备号（主设备号和次设备号组合）
+ * @count: 与该设备对应的连续次设备号数量
+ *
+ * cdev_add() 将由 @p 所表示的字符设备添加到系统中，使该设备立即生效并
+ * 可供用户空间访问。该函数在成功时返回 0，若失败则返回负的错误代码。
+ * 
+ * 主要作用是将字符设备注册到内核中，完成从内核视角的字符设备配置，
+ * 使其能够通过设备号（主设备号+次设备号）进行操作。
+ */
+
 int cdev_add(struct cdev *p, dev_t dev, unsigned count)
 {
 	p->dev = dev;

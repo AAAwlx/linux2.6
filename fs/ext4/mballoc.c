@@ -623,92 +623,102 @@ static int __mb_check_buddy(struct ext4_buddy *e4b, char *file,
 
 /* FIXME!! need more doc */
 static void ext4_mb_mark_free_simple(struct super_block *sb,
-				void *buddy, ext4_grpblk_t first, ext4_grpblk_t len,
-					struct ext4_group_info *grp)
+                                      void *buddy, ext4_grpblk_t first, ext4_grpblk_t len,
+                                      struct ext4_group_info *grp)
 {
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	ext4_grpblk_t min;
-	ext4_grpblk_t max;
-	ext4_grpblk_t chunk;
-	unsigned short border;
+    struct ext4_sb_info *sbi = EXT4_SB(sb); // 获取超级块信息
+    ext4_grpblk_t min; // 需要标记的最小块数
+    ext4_grpblk_t max; // 可覆盖的最大块数
+    ext4_grpblk_t chunk; // 当前标记的块数
+    unsigned short border; // 边界标识
 
-	BUG_ON(len > EXT4_BLOCKS_PER_GROUP(sb));
+    // 确保标记的块数不超过块组的最大块数
+    BUG_ON(len > EXT4_BLOCKS_PER_GROUP(sb));
 
-	border = 2 << sb->s_blocksize_bits;
+    border = 2 << sb->s_blocksize_bits; // 设置边界，边界是块大小的 4 倍
 
-	while (len > 0) {
-		/* find how many blocks can be covered since this position */
-		max = ffs(first | border) - 1;
+    while (len > 0) {
+        // 找出当前块位置可以覆盖的最大块数
+        max = ffs(first | border) - 1;
 
-		/* find how many blocks of power 2 we need to mark */
-		min = fls(len) - 1;
+        // 找出需要标记的块数的对数（以 2 为底）
+        min = fls(len) - 1;
 
-		if (max < min)
-			min = max;
-		chunk = 1 << min;
+        // 如果可覆盖的最大块数小于需要标记的块数，则取最大值
+        if (max < min)
+            min = max;
 
-		/* mark multiblock chunks only */
-		grp->bb_counters[min]++;
-		if (min > 0)
-			mb_clear_bit(first >> min,
-				     buddy + sbi->s_mb_offsets[min]);
+        chunk = 1 << min; // 计算当前要标记的块数
 
-		len -= chunk;
-		first += chunk;
-	}
+        // 仅标记多块的块数
+        grp->bb_counters[min]++; // 更新块计数器
+        if (min > 0)
+            mb_clear_bit(first >> min,
+                         buddy + sbi->s_mb_offsets[min]); // 清除位图中的相应位
+
+        len -= chunk; // 减少剩余需要标记的块数
+        first += chunk; // 更新当前标记的起始块
+    }
 }
 
 static noinline_for_stack
 void ext4_mb_generate_buddy(struct super_block *sb,
-				void *buddy, void *bitmap, ext4_group_t group)
+                             void *buddy, void *bitmap, ext4_group_t group)
 {
-	struct ext4_group_info *grp = ext4_get_group_info(sb, group);
-	ext4_grpblk_t max = EXT4_BLOCKS_PER_GROUP(sb);
-	ext4_grpblk_t i = 0;
-	ext4_grpblk_t first;
-	ext4_grpblk_t len;
-	unsigned free = 0;
-	unsigned fragments = 0;
-	unsigned long long period = get_cycles();
+    struct ext4_group_info *grp = ext4_get_group_info(sb, group);
+    ext4_grpblk_t max = EXT4_BLOCKS_PER_GROUP(sb); // 每个块组的最大块数
+    ext4_grpblk_t i = 0;  // 当前块索引
+    ext4_grpblk_t first;  // 连续空闲块的起始索引
+    ext4_grpblk_t len;    // 连续空闲块的长度
+    unsigned free = 0;    // 统计空闲块的总数
+    unsigned fragments = 0; // 统计空闲块的片段数
+    unsigned long long period = get_cycles(); // 获取当前周期数
 
-	/* initialize buddy from bitmap which is aggregation
-	 * of on-disk bitmap and preallocations */
-	i = mb_find_next_zero_bit(bitmap, max, 0);
-	grp->bb_first_free = i;
-	while (i < max) {
-		fragments++;
-		first = i;
-		i = mb_find_next_bit(bitmap, max, i);
-		len = i - first;
-		free += len;
-		if (len > 1)
-			ext4_mb_mark_free_simple(sb, buddy, first, len, grp);
-		else
-			grp->bb_counters[0]++;
-		if (i < max)
-			i = mb_find_next_zero_bit(bitmap, max, i);
-	}
-	grp->bb_fragments = fragments;
+    // 从位图中查找下一个空闲块
+    i = mb_find_next_zero_bit(bitmap, max, 0);
+    grp->bb_first_free = i; // 设置块组中的第一个空闲块
+    while (i < max) {
+        fragments++; // 增加片段计数
+        first = i;  // 记录当前连续空闲块的起始位置
+        i = mb_find_next_bit(bitmap, max, i); // 查找下一个已用块
+        len = i - first; // 计算当前连续空闲块的长度
+        free += len; // 更新空闲块总数
 
-	if (free != grp->bb_free) {
-		ext4_grp_locked_error(sb, group,  __func__,
-			"EXT4-fs: group %u: %u blocks in bitmap, %u in gd",
-			group, free, grp->bb_free);
-		/*
-		 * If we intent to continue, we consider group descritor
-		 * corrupt and update bb_free using bitmap value
-		 */
-		grp->bb_free = free;
-	}
+        // 如果有多个连续空闲块，标记为简单空闲块
+        if (len > 1)
+            ext4_mb_mark_free_simple(sb, buddy, first, len, grp);
+        else
+            grp->bb_counters[0]++; // 否则增加单个空闲块计数
 
-	clear_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &(grp->bb_state));
+        // 查找下一个空闲块
+        if (i < max)
+            i = mb_find_next_zero_bit(bitmap, max, i);
+    }
+    grp->bb_fragments = fragments; // 更新片段计数
 
-	period = get_cycles() - period;
-	spin_lock(&EXT4_SB(sb)->s_bal_lock);
-	EXT4_SB(sb)->s_mb_buddies_generated++;
-	EXT4_SB(sb)->s_mb_generation_time += period;
-	spin_unlock(&EXT4_SB(sb)->s_bal_lock);
+    // 检查空闲块数是否与组描述符中的值一致
+    if (free != grp->bb_free) {
+        ext4_grp_locked_error(sb, group, __func__,
+            "EXT4-fs: group %u: %u blocks in bitmap, %u in gd",
+            group, free, grp->bb_free);
+        /*
+         * 如果继续处理，认为组描述符损坏，
+         * 使用位图中的值更新 bb_free
+         */
+        grp->bb_free = free;
+    }
+
+    // 清除需要初始化的标志
+    clear_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &(grp->bb_state));
+
+    // 计算并更新生成 buddy 的周期时间
+    period = get_cycles() - period;
+    spin_lock(&EXT4_SB(sb)->s_bal_lock); // 加锁以更新全局统计信息
+    EXT4_SB(sb)->s_mb_buddies_generated++; // 增加生成计数
+    EXT4_SB(sb)->s_mb_generation_time += period; // 累加时间
+    spin_unlock(&EXT4_SB(sb)->s_bal_lock); // 解锁
 }
+
 
 /* The buddy information is attached the buddy cache inode
  * for convenience. The information regarding each group
@@ -729,139 +739,144 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 
 static int ext4_mb_init_cache(struct page *page, char *incore)
 {
-	ext4_group_t ngroups;
-	int blocksize;
-	int blocks_per_page;
-	int groups_per_page;
-	int err = 0;
-	int i;
-	ext4_group_t first_group;
-	int first_block;
-	struct super_block *sb;
-	struct buffer_head *bhs;
-	struct buffer_head **bh;
-	struct inode *inode;
-	char *data;
-	char *bitmap;
+    // 定义变量
+	ext4_group_t ngroups;           // 文件系统中的块组数量
+	int blocksize;                  // 块大小
+	int blocks_per_page;            // 每页包含的块数量
+	int groups_per_page;            // 每页可缓存的块组数量
+	int err = 0;                    // 错误代码
+	int i;                          // 循环变量
+	ext4_group_t first_group;       // 页中缓存的第一个块组
+	int first_block;                // 页中缓存的第一个块号
+	struct super_block *sb;         // 超级块结构指针
+	struct buffer_head *bhs;        // 用于单个组的缓存块指针
+	struct buffer_head **bh;        // 用于多个组的缓存块指针数组
+	struct inode *inode;            // 索引节点指针
+	char *data;                     // 用于临时存储块组信息的指针
+	char *bitmap;                   // 块组位图指针
 
+	// 调试信息：输出当前页面的索引
 	mb_debug(1, "init page %lu\n", page->index);
 
+	// 获取页面所属的 inode 和超级块信息
 	inode = page->mapping->host;
 	sb = inode->i_sb;
+
+	// 获取文件系统中的块组数量和块大小
 	ngroups = ext4_get_groups_count(sb);
 	blocksize = 1 << inode->i_blkbits;
+
+	// 计算每页的块数和每页可缓存的块组数量
 	blocks_per_page = PAGE_CACHE_SIZE / blocksize;
-
-	groups_per_page = blocks_per_page >> 1;
+	groups_per_page = blocks_per_page >> 1;  // 每组占用两个块
 	if (groups_per_page == 0)
-		groups_per_page = 1;
+		groups_per_page = 1;  // 确保至少有一个块组
 
-	/* allocate buffer_heads to read bitmaps */
+	// 为每个块组分配 buffer_heads
 	if (groups_per_page > 1) {
 		err = -ENOMEM;
 		i = sizeof(struct buffer_head *) * groups_per_page;
-		bh = kzalloc(i, GFP_NOFS);
+		bh = kzalloc(i, GFP_NOFS);  // 分配内存
 		if (bh == NULL)
-			goto out;
+			goto out;  // 如果分配失败，跳转到清理阶段
 	} else
-		bh = &bhs;
+		bh = &bhs;  // 单个组的情况使用 bhs
 
+	// 计算页中第一个块组的编号
 	first_group = page->index * blocks_per_page / 2;
 
-	/* read all groups the page covers into the cache */
+	// 读取该页面覆盖的所有块组到缓存中
 	for (i = 0; i < groups_per_page; i++) {
 		struct ext4_group_desc *desc;
 
+		// 如果块组编号超出文件系统范围，退出循环
 		if (first_group + i >= ngroups)
 			break;
 
+		// 获取块组描述符
 		err = -EIO;
 		desc = ext4_get_group_desc(sb, first_group + i, NULL);
 		if (desc == NULL)
 			goto out;
 
+		// 获取块组位图的 buffer_head
 		err = -ENOMEM;
 		bh[i] = sb_getblk(sb, ext4_block_bitmap(sb, desc));
 		if (bh[i] == NULL)
 			goto out;
 
+		// 如果位图已更新，跳过后续处理
 		if (bitmap_uptodate(bh[i]))
 			continue;
 
+		// 加锁 buffer，并检查是否需要更新
 		lock_buffer(bh[i]);
 		if (bitmap_uptodate(bh[i])) {
 			unlock_buffer(bh[i]);
 			continue;
 		}
+
+		// 加锁块组，处理未初始化的块组
 		ext4_lock_group(sb, first_group + i);
 		if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
-			ext4_init_block_bitmap(sb, bh[i],
-						first_group + i, desc);
+			// 初始化块组位图
+			ext4_init_block_bitmap(sb, bh[i], first_group + i, desc);
 			set_bitmap_uptodate(bh[i]);
 			set_buffer_uptodate(bh[i]);
 			ext4_unlock_group(sb, first_group + i);
 			unlock_buffer(bh[i]);
 			continue;
 		}
+
 		ext4_unlock_group(sb, first_group + i);
+
+		// 如果 buffer 已更新，标记位图已更新
 		if (buffer_uptodate(bh[i])) {
-			/*
-			 * if not uninit if bh is uptodate,
-			 * bitmap is also uptodate
-			 */
 			set_bitmap_uptodate(bh[i]);
 			unlock_buffer(bh[i]);
 			continue;
 		}
+
+		// 提交 buffer 进行读取
 		get_bh(bh[i]);
-		/*
-		 * submit the buffer_head for read. We can
-		 * safely mark the bitmap as uptodate now.
-		 * We do it here so the bitmap uptodate bit
-		 * get set with buffer lock held.
-		 */
 		set_bitmap_uptodate(bh[i]);
 		bh[i]->b_end_io = end_buffer_read_sync;
 		submit_bh(READ, bh[i]);
 		mb_debug(1, "read bitmap for group %u\n", first_group + i);
 	}
 
-	/* wait for I/O completion */
+	// 等待 I/O 完成
 	for (i = 0; i < groups_per_page && bh[i]; i++)
 		wait_on_buffer(bh[i]);
 
+	// 检查 I/O 是否成功
 	err = -EIO;
 	for (i = 0; i < groups_per_page && bh[i]; i++)
 		if (!buffer_uptodate(bh[i]))
 			goto out;
 
 	err = 0;
+
+	// 初始化页面内容，将整个页面设置为 0xff
 	first_block = page->index * blocks_per_page;
-	/* init the page  */
 	memset(page_address(page), 0xff, PAGE_CACHE_SIZE);
+
+	// 遍历页面中的每个块并初始化
 	for (i = 0; i < blocks_per_page; i++) {
 		int group;
 		struct ext4_group_info *grinfo;
 
+		// 计算块所属的块组
 		group = (first_block + i) >> 1;
 		if (group >= ngroups)
 			break;
 
-		/*
-		 * data carry information regarding this
-		 * particular group in the format specified
-		 * above
-		 *
-		 */
+		// 计算页面中的数据位置和位图指针
 		data = page_address(page) + (i * blocksize);
 		bitmap = bh[group - first_group]->b_data;
 
-		/*
-		 * We place the buddy block and bitmap block
-		 * close together
-		 */
+		// 处理 buddy 块
 		if ((first_block + i) & 1) {
-			/* this is block of buddy */
 			BUG_ON(incore == NULL);
 			mb_debug(1, "put buddy for group %u in page %lu/%x\n",
 				group, page->index, i * blocksize);
@@ -870,284 +885,259 @@ static int ext4_mb_init_cache(struct page *page, char *incore)
 			memset(grinfo->bb_counters, 0,
 			       sizeof(*grinfo->bb_counters) *
 				(sb->s_blocksize_bits+2));
-			/*
-			 * incore got set to the group block bitmap below
-			 */
 			ext4_lock_group(sb, group);
 			ext4_mb_generate_buddy(sb, data, incore, group);
 			ext4_unlock_group(sb, group);
 			incore = NULL;
 		} else {
-			/* this is block of bitmap */
+			// 处理位图块
 			BUG_ON(incore != NULL);
 			mb_debug(1, "put bitmap for group %u in page %lu/%x\n",
 				group, page->index, i * blocksize);
 
-			/* see comments in ext4_mb_put_pa() */
 			ext4_lock_group(sb, group);
 			memcpy(data, bitmap, blocksize);
-
-			/* mark all preallocated blks used in in-core bitmap */
 			ext4_mb_generate_from_pa(sb, data, group);
 			ext4_mb_generate_from_freelist(sb, data, group);
 			ext4_unlock_group(sb, group);
 
-			/* set incore so that the buddy information can be
-			 * generated using this
-			 */
+			// 设置 incore，供后续 buddy 块生成
 			incore = data;
 		}
 	}
+
+	// 标记页面已更新
 	SetPageUptodate(page);
 
 out:
+	// 释放 buffer_head
 	if (bh) {
 		for (i = 0; i < groups_per_page && bh[i]; i++)
 			brelse(bh[i]);
 		if (bh != &bhs)
 			kfree(bh);
 	}
+
 	return err;
 }
 
 static noinline_for_stack
 int ext4_mb_init_group(struct super_block *sb, ext4_group_t group)
 {
+    int ret = 0; // 返回值初始化为0
+    void *bitmap; // 位图指针
+    int blocks_per_page; // 每页块数
+    int block, pnum, poff; // 块号、页号、偏移
+    int num_grp_locked = 0; // 锁定的组数
+    struct ext4_group_info *this_grp; // 当前组信息
+    struct ext4_sb_info *sbi = EXT4_SB(sb); // 超级块信息
+    struct inode *inode = sbi->s_buddy_cache; // 伙伴缓存的inode
+    struct page *page = NULL, *bitmap_page = NULL; // 页指针
 
-	int ret = 0;
-	void *bitmap;
-	int blocks_per_page;
-	int block, pnum, poff;
-	int num_grp_locked = 0;
-	struct ext4_group_info *this_grp;
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct inode *inode = sbi->s_buddy_cache;
-	struct page *page = NULL, *bitmap_page = NULL;
+    mb_debug(1, "初始化组 %u\n", group); // 调试信息
+    blocks_per_page = PAGE_CACHE_SIZE / sb->s_blocksize; // 计算每页的块数
+    this_grp = ext4_get_group_info(sb, group); // 获取当前组的信息
+    
+    // 确保不会重新初始化已经锁定的组
+    num_grp_locked = ext4_mb_get_buddy_cache_lock(sb, group);
+    if (!EXT4_MB_GRP_NEED_INIT(this_grp)) {
+        // 如果组已初始化，直接返回
+        ret = 0;
+        goto err;
+    }
+    
+    // 计算当前组需要的块
+    block = group * 2;
+    pnum = block / blocks_per_page; // 页号
+    poff = block % blocks_per_page; // 偏移量
+    page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS); // 查找或创建页面
+    if (page) {
+        BUG_ON(page->mapping != inode->i_mapping); // 检查页面映射
+        ret = ext4_mb_init_cache(page, NULL); // 初始化缓存
+        if (ret) {
+            unlock_page(page); // 解锁页面
+            goto err;
+        }
+        unlock_page(page); // 解锁页面
+    }
+    if (page == NULL || !PageUptodate(page)) {
+        ret = -EIO; // 处理错误
+        goto err;
+    }
+    mark_page_accessed(page); // 标记页面已访问
+    bitmap_page = page; // 设置位图页面
+    bitmap = page_address(page) + (poff * sb->s_blocksize); // 获取位图地址
 
-	mb_debug(1, "init group %u\n", group);
-	blocks_per_page = PAGE_CACHE_SIZE / sb->s_blocksize;
-	this_grp = ext4_get_group_info(sb, group);
-	/*
-	 * This ensures that we don't reinit the buddy cache
-	 * page which map to the group from which we are already
-	 * allocating. If we are looking at the buddy cache we would
-	 * have taken a reference using ext4_mb_load_buddy and that
-	 * would have taken the alloc_sem lock.
-	 */
-	num_grp_locked =  ext4_mb_get_buddy_cache_lock(sb, group);
-	if (!EXT4_MB_GRP_NEED_INIT(this_grp)) {
-		/*
-		 * somebody initialized the group
-		 * return without doing anything
-		 */
-		ret = 0;
-		goto err;
-	}
-	/*
-	 * the buddy cache inode stores the block bitmap
-	 * and buddy information in consecutive blocks.
-	 * So for each group we need two blocks.
-	 */
-	block = group * 2;
-	pnum = block / blocks_per_page;
-	poff = block % blocks_per_page;
-	page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
-	if (page) {
-		BUG_ON(page->mapping != inode->i_mapping);
-		ret = ext4_mb_init_cache(page, NULL);
-		if (ret) {
-			unlock_page(page);
-			goto err;
-		}
-		unlock_page(page);
-	}
-	if (page == NULL || !PageUptodate(page)) {
-		ret = -EIO;
-		goto err;
-	}
-	mark_page_accessed(page);
-	bitmap_page = page;
-	bitmap = page_address(page) + (poff * sb->s_blocksize);
-
-	/* init buddy cache */
-	block++;
-	pnum = block / blocks_per_page;
-	poff = block % blocks_per_page;
-	page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
-	if (page == bitmap_page) {
-		/*
-		 * If both the bitmap and buddy are in
-		 * the same page we don't need to force
-		 * init the buddy
-		 */
-		unlock_page(page);
-	} else if (page) {
-		BUG_ON(page->mapping != inode->i_mapping);
-		ret = ext4_mb_init_cache(page, bitmap);
-		if (ret) {
-			unlock_page(page);
-			goto err;
-		}
-		unlock_page(page);
-	}
-	if (page == NULL || !PageUptodate(page)) {
-		ret = -EIO;
-		goto err;
-	}
-	mark_page_accessed(page);
+    // 初始化伙伴缓存
+    block++;
+    pnum = block / blocks_per_page; // 更新页号
+    poff = block % blocks_per_page; // 更新偏移量
+    page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS); // 查找或创建页面
+    if (page == bitmap_page) {
+        // 如果位图和伙伴在同一页面
+        unlock_page(page); // 解锁页面
+    } else if (page) {
+        BUG_ON(page->mapping != inode->i_mapping); // 检查页面映射
+        ret = ext4_mb_init_cache(page, bitmap); // 读取磁盘，并且初始化block bitmap
+        if (ret) {
+            unlock_page(page); // 解锁页面
+            goto err;
+        }
+        unlock_page(page); // 解锁页面
+    }
+    if (page == NULL || !PageUptodate(page)) {
+        ret = -EIO; // 处理错误
+        goto err;
+    }
+    mark_page_accessed(page); // 标记页面已访问
 err:
-	ext4_mb_put_buddy_cache_lock(sb, group, num_grp_locked);
-	if (bitmap_page)
-		page_cache_release(bitmap_page);
-	if (page)
-		page_cache_release(page);
-	return ret;
+    ext4_mb_put_buddy_cache_lock(sb, group, num_grp_locked); // 释放锁
+    if (bitmap_page)
+        page_cache_release(bitmap_page); // 释放位图页面
+    if (page)
+        page_cache_release(page); // 释放页面
+    return ret; // 返回结果
 }
 
+
+/**
+ * ext4_mb_load_buddy - 加载指定组的 buddy 缓存
+ * @sb: 超级块指针
+ * @group: 要加载的块组编号
+ * @e4b: ext4_buddy 结构体指针，用于存储加载后的 buddy 缓存
+ *
+ * 该函数用于加载指定组的 buddy 缓存以及位图缓存到内存中，供块分配器使用。
+ * 
+ * 主要步骤：
+ * 1. 确定 buddy 缓存的页面号与偏移。
+ * 2. 如果需要初始化组信息，则初始化块组。
+ * 3. 查找或创建页，将 buddy 和位图数据加载到内存中。
+ * 4. 成功加载后，将页地址和位图、buddy 信息存储在 e4b 结构中。
+ *
+ * 返回值：
+ * 成功返回 0，失败返回负数错误码。
+ */
 static noinline_for_stack int
 ext4_mb_load_buddy(struct super_block *sb, ext4_group_t group,
-					struct ext4_buddy *e4b)
+                   struct ext4_buddy *e4b)
 {
-	int blocks_per_page;
-	int block;
-	int pnum;
-	int poff;
-	struct page *page;
-	int ret;
-	struct ext4_group_info *grp;
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct inode *inode = sbi->s_buddy_cache;
+    int blocks_per_page;
+    int block;
+    int pnum;
+    int poff;
+    struct page *page;
+    int ret;
+    struct ext4_group_info *grp;
+    struct ext4_sb_info *sbi = EXT4_SB(sb);
+    struct inode *inode = sbi->s_buddy_cache;
 
-	mb_debug(1, "load group %u\n", group);
+    mb_debug(1, "load group %u\n", group);
 
-	blocks_per_page = PAGE_CACHE_SIZE / sb->s_blocksize;
-	grp = ext4_get_group_info(sb, group);
+    // 计算每页能容纳的块数
+    blocks_per_page = PAGE_CACHE_SIZE / sb->s_blocksize;
+    grp = ext4_get_group_info(sb, group);
 
-	e4b->bd_blkbits = sb->s_blocksize_bits;
-	e4b->bd_info = ext4_get_group_info(sb, group);
-	e4b->bd_sb = sb;
-	e4b->bd_group = group;
-	e4b->bd_buddy_page = NULL;
-	e4b->bd_bitmap_page = NULL;
-	e4b->alloc_semp = &grp->alloc_sem;
+    // 初始化 ext4_buddy 结构体
+    e4b->bd_blkbits = sb->s_blocksize_bits;
+    e4b->bd_info = ext4_get_group_info(sb, group);
+    e4b->bd_sb = sb;
+    e4b->bd_group = group;
+    e4b->bd_buddy_page = NULL;
+    e4b->bd_bitmap_page = NULL;
+    e4b->alloc_semp = &grp->alloc_sem;
 
-	/* Take the read lock on the group alloc
-	 * sem. This would make sure a parallel
-	 * ext4_mb_init_group happening on other
-	 * groups mapped by the page is blocked
-	 * till we are done with allocation
-	 */
 repeat_load_buddy:
-	down_read(e4b->alloc_semp);
+    down_read(e4b->alloc_semp);
 
-	if (unlikely(EXT4_MB_GRP_NEED_INIT(grp))) {
-		/* we need to check for group need init flag
-		 * with alloc_semp held so that we can be sure
-		 * that new blocks didn't get added to the group
-		 * when we are loading the buddy cache
-		 */
-		up_read(e4b->alloc_semp);
-		/*
-		 * we need full data about the group
-		 * to make a good selection
-		 */
-		ret = ext4_mb_init_group(sb, group);
-		if (ret)
-			return ret;
-		goto repeat_load_buddy;
-	}
+    // 如果需要初始化块组，调用 ext4_mb_init_group 进行初始化
+    if (unlikely(EXT4_MB_GRP_NEED_INIT(grp))) {
+        up_read(e4b->alloc_semp);
+        ret = ext4_mb_init_group(sb, group);
+        if (ret)
+            return ret;
+        goto repeat_load_buddy;
+    }
 
-	/*
-	 * the buddy cache inode stores the block bitmap
-	 * and buddy information in consecutive blocks.
-	 * So for each group we need two blocks.
-	 */
-	block = group * 2;
-	pnum = block / blocks_per_page;
-	poff = block % blocks_per_page;
+    // 计算存储 buddy 缓存的起始块号
+    block = group * 2;
+    pnum = block / blocks_per_page;
+    poff = block % blocks_per_page;
 
-	/* we could use find_or_create_page(), but it locks page
-	 * what we'd like to avoid in fast path ... */
-	page = find_get_page(inode->i_mapping, pnum);
-	if (page == NULL || !PageUptodate(page)) {
-		if (page)
-			/*
-			 * drop the page reference and try
-			 * to get the page with lock. If we
-			 * are not uptodate that implies
-			 * somebody just created the page but
-			 * is yet to initialize the same. So
-			 * wait for it to initialize.
-			 */
-			page_cache_release(page);
-		page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
-		if (page) {
-			BUG_ON(page->mapping != inode->i_mapping);
-			if (!PageUptodate(page)) {
-				ret = ext4_mb_init_cache(page, NULL);
-				if (ret) {
-					unlock_page(page);
-					goto err;
-				}
-				mb_cmp_bitmaps(e4b, page_address(page) +
-					       (poff * sb->s_blocksize));
-			}
-			unlock_page(page);
-		}
-	}
-	if (page == NULL || !PageUptodate(page)) {
-		ret = -EIO;
-		goto err;
-	}
-	e4b->bd_bitmap_page = page;
-	e4b->bd_bitmap = page_address(page) + (poff * sb->s_blocksize);
-	mark_page_accessed(page);
+    // 查找或创建 buddy 页
+    page = find_get_page(inode->i_mapping, pnum);
+    if (page == NULL || !PageUptodate(page)) {
+        if (page)
+            page_cache_release(page);
+        page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
+        if (page) {
+            BUG_ON(page->mapping != inode->i_mapping);
+            if (!PageUptodate(page)) {
+                ret = ext4_mb_init_cache(page, NULL);
+                if (ret) {
+                    unlock_page(page);
+                    goto err;
+                }
+                mb_cmp_bitmaps(e4b, page_address(page) +
+                               (poff * sb->s_blocksize));
+            }
+            unlock_page(page);
+        }
+    }
+    if (page == NULL || !PageUptodate(page)) {
+        ret = -EIO;
+        goto err;
+    }
+    e4b->bd_bitmap_page = page;
+    e4b->bd_bitmap = page_address(page) + (poff * sb->s_blocksize);
+    mark_page_accessed(page);
 
-	block++;
-	pnum = block / blocks_per_page;
-	poff = block % blocks_per_page;
+    // 处理 buddy 页
+    block++;
+    pnum = block / blocks_per_page;
+    poff = block % blocks_per_page;
 
-	page = find_get_page(inode->i_mapping, pnum);
-	if (page == NULL || !PageUptodate(page)) {
-		if (page)
-			page_cache_release(page);
-		page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
-		if (page) {
-			BUG_ON(page->mapping != inode->i_mapping);
-			if (!PageUptodate(page)) {
-				ret = ext4_mb_init_cache(page, e4b->bd_bitmap);
-				if (ret) {
-					unlock_page(page);
-					goto err;
-				}
-			}
-			unlock_page(page);
-		}
-	}
-	if (page == NULL || !PageUptodate(page)) {
-		ret = -EIO;
-		goto err;
-	}
-	e4b->bd_buddy_page = page;
-	e4b->bd_buddy = page_address(page) + (poff * sb->s_blocksize);
-	mark_page_accessed(page);
+    page = find_get_page(inode->i_mapping, pnum);
+    if (page == NULL || !PageUptodate(page)) {
+        if (page)
+            page_cache_release(page);
+        page = find_or_create_page(inode->i_mapping, pnum, GFP_NOFS);
+        if (page) {
+            BUG_ON(page->mapping != inode->i_mapping);
+            if (!PageUptodate(page)) {
+                ret = ext4_mb_init_cache(page, e4b->bd_bitmap);
+                if (ret) {
+                    unlock_page(page);
+                    goto err;
+                }
+            }
+            unlock_page(page);
+        }
+    }
+    if (page == NULL || !PageUptodate(page)) {
+        ret = -EIO;
+        goto err;
+    }
+    e4b->bd_buddy_page = page;
+    e4b->bd_buddy = page_address(page) + (poff * sb->s_blocksize);
+    mark_page_accessed(page);
 
-	BUG_ON(e4b->bd_bitmap_page == NULL);
-	BUG_ON(e4b->bd_buddy_page == NULL);
+    // 确保 buddy 和位图页已正确加载
+    BUG_ON(e4b->bd_bitmap_page == NULL);
+    BUG_ON(e4b->bd_buddy_page == NULL);
 
-	return 0;
+    return 0;
 
 err:
-	if (e4b->bd_bitmap_page)
-		page_cache_release(e4b->bd_bitmap_page);
-	if (e4b->bd_buddy_page)
-		page_cache_release(e4b->bd_buddy_page);
-	e4b->bd_buddy = NULL;
-	e4b->bd_bitmap = NULL;
+    if (e4b->bd_bitmap_page)
+        page_cache_release(e4b->bd_bitmap_page);
+    if (e4b->bd_buddy_page)
+        page_cache_release(e4b->bd_buddy_page);
+    e4b->bd_buddy = NULL;
+    e4b->bd_bitmap = NULL;
 
-	/* Done with the buddy cache */
-	up_read(e4b->alloc_semp);
-	return ret;
+    // 解锁组分配信号量
+    up_read(e4b->alloc_semp);
+    return ret;
 }
 
 static void ext4_mb_release_desc(struct ext4_buddy *e4b)
@@ -1305,60 +1295,65 @@ static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 static int mb_find_extent(struct ext4_buddy *e4b, int order, int block,
 				int needed, struct ext4_free_extent *ex)
 {
-	int next = block;
-	int max;
-	int ord;
-	void *buddy;
+	int next = block;    // 当前正在处理的块号
+	int max;             // 当前 buddy 系统中的最大块号
+	int ord;             // 当前块的阶数（表示块的大小，阶数越高，块越大）
+	void *buddy;         // 指向 buddy 位图的指针
 
-	assert_spin_locked(ext4_group_lock_ptr(e4b->bd_sb, e4b->bd_group));
-	BUG_ON(ex == NULL);
+	assert_spin_locked(ext4_group_lock_ptr(e4b->bd_sb, e4b->bd_group)); // 确保当前已锁定组的自旋锁
+	BUG_ON(ex == NULL); // 确保传入的结构体指针不为空
 
-	buddy = mb_find_buddy(e4b, order, &max);
-	BUG_ON(buddy == NULL);
-	BUG_ON(block >= max);
-	if (mb_test_bit(block, buddy)) {
+	buddy = mb_find_buddy(e4b, order, &max); // 根据阶数找到 buddy 位图和其最大块数
+	BUG_ON(buddy == NULL); // 确保 buddy 不为空
+	BUG_ON(block >= max);  // 确保块号在 buddy 系统的范围内
+	if (mb_test_bit(block, buddy)) { // 检查块是否已经被占用
+		// 如果块已被占用，设置空闲区间长度为 0 并返回
 		ex->fe_len = 0;
 		ex->fe_start = 0;
 		ex->fe_group = 0;
 		return 0;
 	}
 
-	/* FIXME dorp order completely ? */
+	/* FIXME: 是否完全舍弃 order? */
 	if (likely(order == 0)) {
-		/* find actual order */
+		/* 如果 order 为 0，则重新查找块对应的实际阶数 */
 		order = mb_find_order_for_block(e4b, block);
-		block = block >> order;
+		block = block >> order; // 将块号缩小为相应阶数的大小
 	}
 
-	ex->fe_len = 1 << order;
-	ex->fe_start = block << order;
-	ex->fe_group = e4b->bd_group;
+	// 设置初始空闲区间信息
+	ex->fe_len = 1 << order;          // 根据阶数设置区间长度
+	ex->fe_start = block << order;    // 根据阶数设置起始块号
+	ex->fe_group = e4b->bd_group;     // 设置区间所属的块组
 
-	/* calc difference from given start */
-	next = next - ex->fe_start;
-	ex->fe_len -= next;
-	ex->fe_start += next;
+	// 计算起始块到给定块之间的差值
+	next = next - ex->fe_start;       // 计算需要跳过的块数
+	ex->fe_len -= next;               // 减去跳过的块
+	ex->fe_start += next;             // 更新区间起始块号
 
+	// 循环查找连续的空闲块，直到满足所需长度或找不到更多空闲块
 	while (needed > ex->fe_len &&
 	       (buddy = mb_find_buddy(e4b, order, &max))) {
 
-		if (block + 1 >= max)
+		if (block + 1 >= max)  // 如果块号超出范围，结束查找
 			break;
 
-		next = (block + 1) * (1 << order);
-		if (mb_test_bit(next, EXT4_MB_BITMAP(e4b)))
+		next = (block + 1) * (1 << order);  // 计算下一个块号
+		if (mb_test_bit(next, EXT4_MB_BITMAP(e4b)))  // 如果下一个块已被占用，结束查找
 			break;
 
-		ord = mb_find_order_for_block(e4b, next);
+		ord = mb_find_order_for_block(e4b, next); // 查找下一个块的阶数
 
 		order = ord;
-		block = next >> order;
-		ex->fe_len += 1 << order;
+		block = next >> order; // 更新当前块号为下一个块号
+		ex->fe_len += 1 << order; // 增加找到的空闲区间长度
 	}
 
+	// 确保区间的起始和长度在合法范围内
 	BUG_ON(ex->fe_start + ex->fe_len > (1 << (e4b->bd_blkbits + 3)));
-	return ex->fe_len;
+	return ex->fe_len; // 返回找到的空闲区间长度
 }
+
 
 static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 {
@@ -1622,59 +1617,83 @@ int ext4_mb_try_best_found(struct ext4_allocation_context *ac,
 	return 0;
 }
 
+/*
+ * ext4_mb_find_by_goal - 根据目标块组和目标块范围查找空闲块
+ * @ac: 分配上下文，包含当前分配的参数和状态
+ * @e4b: buddy 分配系统的上下文结构，用于描述当前块组的 buddy 信息
+ *
+ * 该函数尝试在目标块组中找到满足目标块范围的空闲块，并进行分配。如果找到满足条件的块，
+ * 会将这些块返回给分配上下文，更新分配状态，并且调用函数完成分配操作。
+ *
+ * 返回 0 表示成功查找，返回错误码表示查找失败。
+ */
 static noinline_for_stack
 int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 				struct ext4_buddy *e4b)
 {
-	ext4_group_t group = ac->ac_g_ex.fe_group;
-	int max;
+	ext4_group_t group = ac->ac_g_ex.fe_group;  // 获取目标块组
+	int max;  // 记录找到的最大空闲块的数量
 	int err;
-	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);
-	struct ext4_free_extent ex;
+	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);  // 获取超级块信息
+	struct ext4_free_extent ex;  // 用于存储找到的空闲块信息
 
+	// 如果没有设置 EXT4_MB_HINT_TRY_GOAL 标志，则不进行查找
 	if (!(ac->ac_flags & EXT4_MB_HINT_TRY_GOAL))
 		return 0;
 
+	// 加载目标块组的 buddy 信息
 	err = ext4_mb_load_buddy(ac->ac_sb, group, e4b);
 	if (err)
-		return err;
+		return err;  // 加载失败则返回错误码
 
+	// 锁定目标块组，防止并发修改
 	ext4_lock_group(ac->ac_sb, group);
+
+	// 查找目标块范围内的空闲块，结果存储在 ex 中
 	max = mb_find_extent(e4b, 0, ac->ac_g_ex.fe_start,
 			     ac->ac_g_ex.fe_len, &ex);
 
+	// 如果找到的空闲块数量大于或等于需要分配的块数，并且符合条带化要求
 	if (max >= ac->ac_g_ex.fe_len && ac->ac_g_ex.fe_len == sbi->s_stripe) {
 		ext4_fsblk_t start;
 
+		// 计算块组的第一个块的物理块号，并检查是否符合条带化要求
 		start = ext4_group_first_block_no(ac->ac_sb, e4b->bd_group) +
 			ex.fe_start;
-		/* use do_div to get remainder (would be 64-bit modulo) */
+		/* 使用 do_div 进行 64 位除法，计算块号对条带大小的余数 */
 		if (do_div(start, sbi->s_stripe) == 0) {
-			ac->ac_found++;
-			ac->ac_b_ex = ex;
-			ext4_mb_use_best_found(ac, e4b);
+			ac->ac_found++;  // 记录已找到的块
+			ac->ac_b_ex = ex;  // 将找到的块信息存储到分配上下文
+			ext4_mb_use_best_found(ac, e4b);  // 使用找到的最佳块进行分配
 		}
-	} else if (max >= ac->ac_g_ex.fe_len) {
-		BUG_ON(ex.fe_len <= 0);
-		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
-		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
-		ac->ac_found++;
-		ac->ac_b_ex = ex;
-		ext4_mb_use_best_found(ac, e4b);
-	} else if (max > 0 && (ac->ac_flags & EXT4_MB_HINT_MERGE)) {
-		/* Sometimes, caller may want to merge even small
-		 * number of blocks to an existing extent */
-		BUG_ON(ex.fe_len <= 0);
-		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
-		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
-		ac->ac_found++;
-		ac->ac_b_ex = ex;
-		ext4_mb_use_best_found(ac, e4b);
 	}
+	// 如果找到的块数量大于或等于需要分配的块数
+	else if (max >= ac->ac_g_ex.fe_len) {
+		// 确保找到的块长度和范围有效
+		BUG_ON(ex.fe_len <= 0);
+		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
+		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
+		ac->ac_found++;  // 记录已找到的块
+		ac->ac_b_ex = ex;  // 将找到的块信息存储到分配上下文
+		ext4_mb_use_best_found(ac, e4b);  // 使用找到的最佳块进行分配
+	}
+	// 如果找到的块数量大于 0 且设置了合并标志
+	else if (max > 0 && (ac->ac_flags & EXT4_MB_HINT_MERGE)) {
+		// 确保找到的块长度和范围有效
+		BUG_ON(ex.fe_len <= 0);
+		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
+		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
+		ac->ac_found++;  // 记录已找到的块
+		ac->ac_b_ex = ex;  // 将找到的块信息存储到分配上下文
+		ext4_mb_use_best_found(ac, e4b);  // 使用找到的最佳块进行分配
+	}
+
+	// 解锁目标块组
 	ext4_unlock_group(ac->ac_sb, group);
+	// 释放 buddy 信息
 	ext4_mb_release_desc(e4b);
 
-	return 0;
+	return 0;  // 返回 0 表示成功查找
 }
 
 /*
@@ -1960,67 +1979,61 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 	struct super_block *sb;
 	struct ext4_buddy e4b;
 
-	sb = ac->ac_sb;
-	sbi = EXT4_SB(sb);
-	ngroups = ext4_get_groups_count(sb);
-	/* non-extent files are limited to low blocks/groups */
+	sb = ac->ac_sb;  // 获取超级块
+	sbi = EXT4_SB(sb);  // 获取 EXT4 超级块信息
+	ngroups = ext4_get_groups_count(sb);  // 获取文件系统块组数量
+
+	/* 如果文件没有使用 extent，则限制在较低的块组范围内 */
 	if (!(EXT4_I(ac->ac_inode)->i_flags & EXT4_EXTENTS_FL))
 		ngroups = sbi->s_blockfile_groups;
 
+	/* 确保当前状态不是 AC_STATUS_FOUND，如果是则终止执行（用于调试） */
 	BUG_ON(ac->ac_status == AC_STATUS_FOUND);
 
-	/* first, try the goal */
+	/* 首先尝试通过目标块进行分配 */
 	err = ext4_mb_find_by_goal(ac, &e4b);
 	if (err || ac->ac_status == AC_STATUS_FOUND)
-		goto out;
+		goto out;  // 如果找到目标块，跳转到结束处理
 
+	/* 如果只允许使用目标块，则退出 */
 	if (unlikely(ac->ac_flags & EXT4_MB_HINT_GOAL_ONLY))
 		goto out;
 
-	/*
-	 * ac->ac2_order is set only if the fe_len is a power of 2
-	 * if ac2_order is set we also set criteria to 0 so that we
-	 * try exact allocation using buddy.
+	/* 
+	 * 如果要分配的块数量是 2 的幂次方，则设置 ac->ac2_order 
+	 * 如果设置了 ac2_order，则分配时尝试使用 buddy 系统进行精确分配
 	 */
-	i = fls(ac->ac_g_ex.fe_len);
+	i = fls(ac->ac_g_ex.fe_len);  // 计算 fe_len 的最高有效位
 	ac->ac_2order = 0;
-	/*
-	 * We search using buddy data only if the order of the request
-	 * is greater than equal to the sbi_s_mb_order2_reqs
-	 * You can tune it via /sys/fs/ext4/<partition>/mb_order2_req
-	 */
+
+	/* 只有当请求的块数大于等于 sbi->s_mb_order2_reqs 时，才使用 buddy 系统 */
 	if (i >= sbi->s_mb_order2_reqs) {
-		/*
-		 * This should tell if fe_len is exactly power of 2
-		 */
+		/* 检查 fe_len 是否正好是 2 的幂次方 */
 		if ((ac->ac_g_ex.fe_len & (~(1 << (i - 1)))) == 0)
-			ac->ac_2order = i - 1;
+			ac->ac_2order = i - 1;  // 设置 ac2_order 表示块数为 2 的幂次方
 	}
 
-	bsbits = ac->ac_sb->s_blocksize_bits;
+	bsbits = ac->ac_sb->s_blocksize_bits;  // 获取块大小的位数
 
-	/* if stream allocation is enabled, use global goal */
+	/* 如果启用了流分配，则使用全局目标块 */
 	if (ac->ac_flags & EXT4_MB_STREAM_ALLOC) {
-		/* TBD: may be hot point */
-		spin_lock(&sbi->s_md_lock);
-		ac->ac_g_ex.fe_group = sbi->s_mb_last_group;
-		ac->ac_g_ex.fe_start = sbi->s_mb_last_start;
-		spin_unlock(&sbi->s_md_lock);
+		spin_lock(&sbi->s_md_lock);  // 锁定元数据
+		ac->ac_g_ex.fe_group = sbi->s_mb_last_group;  // 获取上次分配的块组
+		ac->ac_g_ex.fe_start = sbi->s_mb_last_start;  // 获取上次分配的起始块
+		spin_unlock(&sbi->s_md_lock);  // 解锁元数据
 	}
 
-	/* Let's just scan groups to find more-less suitable blocks */
-	cr = ac->ac_2order ? 0 : 1;
+	/* 开始扫描块组以找到大致合适的块 */
+	cr = ac->ac_2order ? 0 : 1;  // 如果块数是 2 的幂次方，从 0 开始，否则从 1 开始
 	/*
-	 * cr == 0 try to get exact allocation,
-	 * cr == 3  try to get anything
+	 * cr == 0 表示尝试精确分配，
+	 * cr == 3 表示尝试任何可用的块
 	 */
 repeat:
 	for (; cr < 4 && ac->ac_status == AC_STATUS_CONTINUE; cr++) {
-		ac->ac_criteria = cr;
-		/*
-		 * searching for the right group start
-		 * from the goal value specified
-		 */
+		ac->ac_criteria = cr;  // 设置当前的分配条件
+
+		/* 从目标块组开始搜索合适的块组 */
 		group = ac->ac_g_ex.fe_group;
 
 		for (i = 0; i < ngroups; group++, i++) {
@@ -2028,71 +2041,71 @@ repeat:
 			struct ext4_group_desc *desc;
 
 			if (group == ngroups)
-				group = 0;
+				group = 0;  // 如果超出块组范围，从头开始
 
-			/* quick check to skip empty groups */
+			/* 快速检查跳过空的块组 */
 			grp = ext4_get_group_info(sb, group);
 			if (grp->bb_free == 0)
-				continue;
+				continue;  // 跳过没有空闲块的块组
 
+			/* 加载 buddy 系统，用于后续的分配操作 */
 			err = ext4_mb_load_buddy(sb, group, &e4b);
 			if (err)
-				goto out;
+				goto out;  // 如果加载 buddy 失败，跳转到结束处理
 
-			ext4_lock_group(sb, group);
+			ext4_lock_group(sb, group);  // 锁定块组，防止并发修改
 			if (!ext4_mb_good_group(ac, group, cr)) {
-				/* someone did allocation from this group */
+				/* 如果块组不适合分配，解锁并释放资源 */
 				ext4_unlock_group(sb, group);
 				ext4_mb_release_desc(&e4b);
 				continue;
 			}
 
-			ac->ac_groups_scanned++;
-			desc = ext4_get_group_desc(sb, group, NULL);
+			ac->ac_groups_scanned++;  // 记录已扫描的块组数量
+			desc = ext4_get_group_desc(sb, group, NULL);  // 获取块组描述符
+
+			/* 根据不同条件选择分配方式 */
 			if (cr == 0)
-				ext4_mb_simple_scan_group(ac, &e4b);
+				ext4_mb_simple_scan_group(ac, &e4b);  // 简单扫描
 			else if (cr == 1 &&
 					ac->ac_g_ex.fe_len == sbi->s_stripe)
-				ext4_mb_scan_aligned(ac, &e4b);
+				ext4_mb_scan_aligned(ac, &e4b);  // 按照条带化分配
 			else
-				ext4_mb_complex_scan_group(ac, &e4b);
+				ext4_mb_complex_scan_group(ac, &e4b);  // 复杂扫描
 
-			ext4_unlock_group(sb, group);
-			ext4_mb_release_desc(&e4b);
+			ext4_unlock_group(sb, group);  // 解锁块组
+			ext4_mb_release_desc(&e4b);  // 释放 buddy 资源
 
 			if (ac->ac_status != AC_STATUS_CONTINUE)
-				break;
+				break;  // 如果分配成功，跳出循环
 		}
 	}
 
+	/* 如果找到的块长度大于 0 且状态不是已找到，则尝试分配最佳找到的块 */
 	if (ac->ac_b_ex.fe_len > 0 && ac->ac_status != AC_STATUS_FOUND &&
 	    !(ac->ac_flags & EXT4_MB_HINT_FIRST)) {
-		/*
-		 * We've been searching too long. Let's try to allocate
-		 * the best chunk we've found so far
-		 */
 
+		/* 尝试分配找到的最佳块 */
 		ext4_mb_try_best_found(ac, &e4b);
 		if (ac->ac_status != AC_STATUS_FOUND) {
 			/*
-			 * Someone more lucky has already allocated it.
-			 * The only thing we can do is just take first
-			 * found block(s)
-			printk(KERN_DEBUG "EXT4-fs: someone won our chunk\n");
+			 * 如果被其他进程抢先分配了，我们只能分配第一个找到的块
+			 * 并且标记状态为 CONTINUE，继续分配过程
 			 */
 			ac->ac_b_ex.fe_group = 0;
 			ac->ac_b_ex.fe_start = 0;
 			ac->ac_b_ex.fe_len = 0;
 			ac->ac_status = AC_STATUS_CONTINUE;
-			ac->ac_flags |= EXT4_MB_HINT_FIRST;
-			cr = 3;
-			atomic_inc(&sbi->s_mb_lost_chunks);
-			goto repeat;
+			ac->ac_flags |= EXT4_MB_HINT_FIRST;  // 标记已进行第一次分配
+			cr = 3;  // 将分配条件设置为 3，表示接受任何分配
+			atomic_inc(&sbi->s_mb_lost_chunks);  // 记录丢失的块数
+			goto repeat;  // 重新开始分配
 		}
 	}
 out:
-	return err;
+	return err;  // 返回错误代码
 }
+
 
 static void *ext4_mb_seq_groups_start(struct seq_file *seq, loff_t *pos)
 {
@@ -2194,55 +2207,65 @@ static const struct file_operations ext4_mb_seq_groups_fops = {
 };
 
 
-/* Create and initialize ext4_group_info data for the given group. */
+/* 
+ * 创建并初始化给定组的 ext4_group_info 数据结构。
+ * 该函数负责为每个组分配和初始化元数据，主要用于管理组中的空闲块信息。
+ */
 int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 			  struct ext4_group_desc *desc)
 {
-	int i, len;
-	int metalen = 0;
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct ext4_group_info **meta_group_info;
+	int i, len; // i: 索引变量, len: 需要分配的内存长度
+	int metalen = 0; // 用于元组组信息表的内存大小
+	struct ext4_sb_info *sbi = EXT4_SB(sb); // 获取超级块信息
+	struct ext4_group_info **meta_group_info; // 元组组信息指针
 
 	/*
-	 * First check if this group is the first of a reserved block.
-	 * If it's true, we have to allocate a new table of pointers
-	 * to ext4_group_info structures
+	 * 首先检查该组是否为保留块的第一个组。
+	 * 如果是，则需要为 ext4_group_info 结构体分配一个新的指针表。
 	 */
 	if (group % EXT4_DESC_PER_BLOCK(sb) == 0) {
+		// 计算为指针表分配的内存大小，EXT4_DESC_PER_BLOCK_BITS(sb) 是每块描述符的位数
 		metalen = sizeof(*meta_group_info) <<
 			EXT4_DESC_PER_BLOCK_BITS(sb);
-		meta_group_info = kmalloc(metalen, GFP_KERNEL);
-		if (meta_group_info == NULL) {
+		meta_group_info = kmalloc(metalen, GFP_KERNEL); // 分配内存
+		if (meta_group_info == NULL) { // 检查内存分配是否成功
 			printk(KERN_ERR "EXT4-fs: can't allocate mem for a "
 			       "buddy group\n");
-			goto exit_meta_group_info;
+			goto exit_meta_group_info; // 分配失败，跳转到错误处理
 		}
+		// 将新分配的指针表保存到超级块的信息中
 		sbi->s_group_info[group >> EXT4_DESC_PER_BLOCK_BITS(sb)] =
 			meta_group_info;
 	}
 
 	/*
-	 * calculate needed size. if change bb_counters size,
-	 * don't forget about ext4_mb_generate_buddy()
+	 * 计算需要分配的内存大小。如果更改 bb_counters 大小，
+	 * 需要确保 ext4_mb_generate_buddy() 函数中也进行相应修改。
 	 */
 	len = offsetof(typeof(**meta_group_info),
-		       bb_counters[sb->s_blocksize_bits + 2]);
+		       bb_counters[sb->s_blocksize_bits + 2]); // 计算偏移量大小
 
+	// 获取当前组的 meta_group_info 表
 	meta_group_info =
 		sbi->s_group_info[group >> EXT4_DESC_PER_BLOCK_BITS(sb)];
-	i = group & (EXT4_DESC_PER_BLOCK(sb) - 1);
+	i = group & (EXT4_DESC_PER_BLOCK(sb) - 1); // 计算组在表中的索引
 
-	meta_group_info[i] = kzalloc(len, GFP_KERNEL);
-	if (meta_group_info[i] == NULL) {
+	// 为当前组分配并初始化 ext4_group_info 结构体
+	meta_group_info[i] = kzalloc(len, GFP_KERNEL); // 分配内存并初始化为零
+	if (meta_group_info[i] == NULL) { // 检查分配是否成功
 		printk(KERN_ERR "EXT4-fs: can't allocate buddy mem\n");
-		goto exit_group_info;
+		goto exit_group_info; // 分配失败，跳转到错误处理
 	}
+
+	// 设置组状态位，表示该组需要初始化
 	set_bit(EXT4_GROUP_INFO_NEED_INIT_BIT,
 		&(meta_group_info[i]->bb_state));
 
 	/*
-	 * initialize bb_free to be able to skip
-	 * empty groups without initialization
+	 * 初始化 bb_free 以便能够跳过空组而无需初始化。
+	 * 如果块组的 bg_flags 标志包含 EXT4_BG_BLOCK_UNINIT（表示未初始化），
+	 * 则使用 ext4_free_blocks_after_init() 计算该组中的空闲块数；
+	 * 否则，直接从组描述符中读取空闲块数。
 	 */
 	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
 		meta_group_info[i]->bb_free =
@@ -2252,190 +2275,207 @@ int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 			ext4_free_blks_count(sb, desc);
 	}
 
+	// 初始化组的预分配列表、分配信号量和红黑树根节点
 	INIT_LIST_HEAD(&meta_group_info[i]->bb_prealloc_list);
 	init_rwsem(&meta_group_info[i]->alloc_sem);
 	meta_group_info[i]->bb_free_root = RB_ROOT;
 
 #ifdef DOUBLE_CHECK
 	{
+		// DEBUG 模式下，检查位图是否正确
 		struct buffer_head *bh;
 		meta_group_info[i]->bb_bitmap =
-			kmalloc(sb->s_blocksize, GFP_KERNEL);
-		BUG_ON(meta_group_info[i]->bb_bitmap == NULL);
-		bh = ext4_read_block_bitmap(sb, group);
-		BUG_ON(bh == NULL);
+			kmalloc(sb->s_blocksize, GFP_KERNEL); // 分配位图内存
+		BUG_ON(meta_group_info[i]->bb_bitmap == NULL); // 检查分配是否成功
+		bh = ext4_read_block_bitmap(sb, group); // 读取块组位图
+		BUG_ON(bh == NULL); // 确保读取成功
 		memcpy(meta_group_info[i]->bb_bitmap, bh->b_data,
-			sb->s_blocksize);
-		put_bh(bh);
+			sb->s_blocksize); // 复制位图数据
+		put_bh(bh); // 释放 buffer_head
 	}
 #endif
 
-	return 0;
+	return 0; // 成功返回
 
 exit_group_info:
-	/* If a meta_group_info table has been allocated, release it now */
+	/* 如果已经分配了 meta_group_info 表，则释放它 */
 	if (group % EXT4_DESC_PER_BLOCK(sb) == 0)
 		kfree(sbi->s_group_info[group >> EXT4_DESC_PER_BLOCK_BITS(sb)]);
+
 exit_meta_group_info:
-	return -ENOMEM;
-} /* ext4_mb_add_groupinfo */
+	return -ENOMEM; // 返回内存不足错误
+}
+
 
 static int ext4_mb_init_backend(struct super_block *sb)
 {
-	ext4_group_t ngroups = ext4_get_groups_count(sb);
+	ext4_group_t ngroups = ext4_get_groups_count(sb); // 获取文件系统中的组数量
 	ext4_group_t i;
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct ext4_super_block *es = sbi->s_es;
-	int num_meta_group_infos;
-	int num_meta_group_infos_max;
-	int array_size;
-	struct ext4_group_desc *desc;
+	struct ext4_sb_info *sbi = EXT4_SB(sb); // 获取超级块信息
+	struct ext4_super_block *es = sbi->s_es; // 获取扩展4超级块
+	int num_meta_group_infos; // 元组组信息数量
+	int num_meta_group_infos_max; // 最大元组组信息数量
+	int array_size; // 数组大小
+	struct ext4_group_desc *desc; // 组描述符
 
-	/* This is the number of blocks used by GDT */
+	/* 计算用于 GDT 的块数量 */
 	num_meta_group_infos = (ngroups + EXT4_DESC_PER_BLOCK(sb) -
 				1) >> EXT4_DESC_PER_BLOCK_BITS(sb);
 
 	/*
-	 * This is the total number of blocks used by GDT including
-	 * the number of reserved blocks for GDT.
-	 * The s_group_info array is allocated with this value
-	 * to allow a clean online resize without a complex
-	 * manipulation of pointer.
-	 * The drawback is the unused memory when no resize
-	 * occurs but it's very low in terms of pages
-	 * (see comments below)
-	 * Need to handle this properly when META_BG resizing is allowed
+	 * 计算 GDT 使用的总块数，包括 GDT 的保留块数。
+	 * s_group_info 数组根据此值分配，以便在不复杂操作指针的情况下进行干净的在线调整。
+	 * 缺点是在没有调整发生时会浪费内存，但这在页面级别上是非常低的
+	 * （见下面的注释）
+	 * 当允许 META_BG 调整时需要正确处理这个问题。
 	 */
 	num_meta_group_infos_max = num_meta_group_infos +
 				le16_to_cpu(es->s_reserved_gdt_blocks);
 
 	/*
-	 * array_size is the size of s_group_info array. We round it
-	 * to the next power of two because this approximation is done
-	 * internally by kmalloc so we can have some more memory
-	 * for free here (e.g. may be used for META_BG resize).
+	 * array_size 是 s_group_info 数组的大小。我们将其向上取整到下一个 2 的幂，
+	 * 因为 kmalloc 内部进行这个近似，因此我们可以在这里多分配一些内存
+	 * （例如，可能用于 META_BG 调整）。
 	 */
 	array_size = 1;
 	while (array_size < sizeof(*sbi->s_group_info) *
 	       num_meta_group_infos_max)
 		array_size = array_size << 1;
-	/* An 8TB filesystem with 64-bit pointers requires a 4096 byte
-	 * kmalloc. A 128kb malloc should suffice for a 256TB filesystem.
-	 * So a two level scheme suffices for now. */
-	sbi->s_group_info = kmalloc(array_size, GFP_KERNEL);
-	if (sbi->s_group_info == NULL) {
+
+	/* 
+	 * 一个 8TB 文件系统需要 4096 字节的 kmalloc 内存，
+	 * 一个 128KB 的分配应足以满足 256TB 文件系统的需求。
+	 * 因此，目前只需使用两级方案。
+	 */
+	sbi->s_group_info = kmalloc(array_size, GFP_KERNEL); // 分配 s_group_info 数组
+	if (sbi->s_group_info == NULL) { // 检查分配是否成功
 		printk(KERN_ERR "EXT4-fs: can't allocate buddy meta group\n");
-		return -ENOMEM;
+		return -ENOMEM; // 分配失败，返回内存不足错误
 	}
-	sbi->s_buddy_cache = new_inode(sb);
-	if (sbi->s_buddy_cache == NULL) {
+
+	sbi->s_buddy_cache = new_inode(sb); // 创建新的 inode 用于缓存
+	if (sbi->s_buddy_cache == NULL) { // 检查创建是否成功
 		printk(KERN_ERR "EXT4-fs: can't get new inode\n");
-		goto err_freesgi;
+		goto err_freesgi; // 创建失败，释放 s_group_info
 	}
-	EXT4_I(sbi->s_buddy_cache)->i_disksize = 0;
+	EXT4_I(sbi->s_buddy_cache)->i_disksize = 0; // 初始化磁盘大小为 0
+
+	// 遍历所有组，添加组信息
 	for (i = 0; i < ngroups; i++) {
-		desc = ext4_get_group_desc(sb, i, NULL);
-		if (desc == NULL) {
-			printk(KERN_ERR
-				"EXT4-fs: can't read descriptor %u\n", i);
-			goto err_freebuddy;
+		desc = ext4_get_group_desc(sb, i, NULL); // 获取组描述符
+		if (desc == NULL) { // 检查获取是否成功
+			printk(KERN_ERR "EXT4-fs: can't read descriptor %u\n", i);
+			goto err_freebuddy; // 读取失败，释放 buddy 缓存
 		}
-		if (ext4_mb_add_groupinfo(sb, i, desc) != 0)
-			goto err_freebuddy;
+		if (ext4_mb_add_groupinfo(sb, i, desc) != 0) // 添加组信息
+			goto err_freebuddy; // 添加失败，释放 buddy 缓存
 	}
 
-	return 0;
+	return 0; // 成功初始化
 
+// 错误处理：释放 buddy 缓存
 err_freebuddy:
 	while (i-- > 0)
-		kfree(ext4_get_group_info(sb, i));
-	i = num_meta_group_infos;
+		kfree(ext4_get_group_info(sb, i)); // 释放之前添加的组信息
+
+	i = num_meta_group_infos; // 释放 s_group_info 数组
 	while (i-- > 0)
 		kfree(sbi->s_group_info[i]);
-	iput(sbi->s_buddy_cache);
+	iput(sbi->s_buddy_cache); // 释放 buddy 缓存 inode
+
 err_freesgi:
-	kfree(sbi->s_group_info);
-	return -ENOMEM;
+	kfree(sbi->s_group_info); // 释放 s_group_info 数组
+	return -ENOMEM; // 返回内存不足错误
 }
+
 
 int ext4_mb_init(struct super_block *sb, int needs_recovery)
 {
-	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	unsigned i, j;
-	unsigned offset;
-	unsigned max;
-	int ret;
+	struct ext4_sb_info *sbi = EXT4_SB(sb); // 获取扩展4超级块信息
+	unsigned i, j; // 索引变量
+	unsigned offset; // 偏移量
+	unsigned max; // 最大值
+	int ret; // 返回值
 
+	// 计算 s_mb_offsets 数组的大小
 	i = (sb->s_blocksize_bits + 2) * sizeof(*sbi->s_mb_offsets);
-
-	sbi->s_mb_offsets = kmalloc(i, GFP_KERNEL);
-	if (sbi->s_mb_offsets == NULL) {
-		return -ENOMEM;
+	sbi->s_mb_offsets = kmalloc(i, GFP_KERNEL); // 分配内存
+	if (sbi->s_mb_offsets == NULL) { // 检查分配是否成功
+		return -ENOMEM; // 分配失败，返回内存不足错误
 	}
 
+	// 计算 s_mb_maxs 数组的大小
 	i = (sb->s_blocksize_bits + 2) * sizeof(*sbi->s_mb_maxs);
-	sbi->s_mb_maxs = kmalloc(i, GFP_KERNEL);
-	if (sbi->s_mb_maxs == NULL) {
-		kfree(sbi->s_mb_offsets);
-		return -ENOMEM;
+	sbi->s_mb_maxs = kmalloc(i, GFP_KERNEL); // 分配内存
+	if (sbi->s_mb_maxs == NULL) { // 检查分配是否成功
+		kfree(sbi->s_mb_offsets); // 释放之前分配的内存
+		return -ENOMEM; // 分配失败，返回内存不足错误
 	}
 
 	/* order 0 is regular bitmap */
-	sbi->s_mb_maxs[0] = sb->s_blocksize << 3;
-	sbi->s_mb_offsets[0] = 0;
+	sbi->s_mb_maxs[0] = sb->s_blocksize << 3; // 初始化第一个最大值
+	sbi->s_mb_offsets[0] = 0; // 初始化第一个偏移量
 
-	i = 1;
-	offset = 0;
-	max = sb->s_blocksize << 2;
+	i = 1; // 从 1 开始
+	offset = 0; // 初始化偏移量为 0
+	max = sb->s_blocksize << 2; // 初始化最大值为块大小的四倍
 	do {
-		sbi->s_mb_offsets[i] = offset;
-		sbi->s_mb_maxs[i] = max;
-		offset += 1 << (sb->s_blocksize_bits - i);
-		max = max >> 1;
+		sbi->s_mb_offsets[i] = offset; // 设置偏移量
+		sbi->s_mb_maxs[i] = max; // 设置最大值
+		offset += 1 << (sb->s_blocksize_bits - i); // 计算下一个偏移量
+		max = max >> 1; // 减小最大值
 		i++;
-	} while (i <= sb->s_blocksize_bits + 1);
+	} while (i <= sb->s_blocksize_bits + 1); // 循环直到填满
 
-	/* init file for buddy data */
-	ret = ext4_mb_init_backend(sb);
-	if (ret != 0) {
-		kfree(sbi->s_mb_offsets);
+	// 初始化 buddy 数据
+	ret = ext4_mb_init_backend(sb); // 调用初始化后端函数
+	if (ret != 0) { // 检查返回值
+		kfree(sbi->s_mb_offsets); // 释放已分配的内存
 		kfree(sbi->s_mb_maxs);
-		return ret;
+		return ret; // 返回错误
 	}
 
-	spin_lock_init(&sbi->s_md_lock);
-	spin_lock_init(&sbi->s_bal_lock);
+	spin_lock_init(&sbi->s_md_lock); // 初始化元数据锁
+	spin_lock_init(&sbi->s_bal_lock); // 初始化平衡锁
 
-	sbi->s_mb_max_to_scan = MB_DEFAULT_MAX_TO_SCAN;
-	sbi->s_mb_min_to_scan = MB_DEFAULT_MIN_TO_SCAN;
-	sbi->s_mb_stats = MB_DEFAULT_STATS;
-	sbi->s_mb_stream_request = MB_DEFAULT_STREAM_THRESHOLD;
-	sbi->s_mb_order2_reqs = MB_DEFAULT_ORDER2_REQS;
-	sbi->s_mb_group_prealloc = MB_DEFAULT_GROUP_PREALLOC;
+	// 初始化一些默认值
+	sbi->s_mb_max_to_scan = MB_DEFAULT_MAX_TO_SCAN; // 最大扫描量
+	sbi->s_mb_min_to_scan = MB_DEFAULT_MIN_TO_SCAN; // 最小扫描量
+	sbi->s_mb_stats = MB_DEFAULT_STATS; // 初始化统计信息
+	sbi->s_mb_stream_request = MB_DEFAULT_STREAM_THRESHOLD; // 流请求阈值
+	sbi->s_mb_order2_reqs = MB_DEFAULT_ORDER2_REQS; // order2 请求
+	sbi->s_mb_group_prealloc = MB_DEFAULT_GROUP_PREALLOC; // 组预分配
 
+	// 为局部性组分配每 CPU 的结构
 	sbi->s_locality_groups = alloc_percpu(struct ext4_locality_group);
-	if (sbi->s_locality_groups == NULL) {
-		kfree(sbi->s_mb_offsets);
+	if (sbi->s_locality_groups == NULL) { // 检查分配是否成功
+		kfree(sbi->s_mb_offsets); // 释放已分配的内存
 		kfree(sbi->s_mb_maxs);
-		return -ENOMEM;
+		return -ENOMEM; // 返回内存不足错误
 	}
+	
+	// 初始化每个 CPU 的局部性组
 	for_each_possible_cpu(i) {
 		struct ext4_locality_group *lg;
-		lg = per_cpu_ptr(sbi->s_locality_groups, i);
-		mutex_init(&lg->lg_mutex);
-		for (j = 0; j < PREALLOC_TB_SIZE; j++)
+		lg = per_cpu_ptr(sbi->s_locality_groups, i); // 获取当前 CPU 的局部性组
+		mutex_init(&lg->lg_mutex); // 初始化互斥锁
+		for (j = 0; j < PREALLOC_TB_SIZE; j++) // 初始化预分配列表
 			INIT_LIST_HEAD(&lg->lg_prealloc_list[j]);
-		spin_lock_init(&lg->lg_prealloc_lock);
+		spin_lock_init(&lg->lg_prealloc_lock); // 初始化预分配锁
 	}
 
+	// 如果有进程文件系统，则创建 mb_groups 的 proc 文件
 	if (sbi->s_proc)
 		proc_create_data("mb_groups", S_IRUGO, sbi->s_proc,
 				 &ext4_mb_seq_groups_fops, sb);
 
+	// 如果启用了日志，则设置提交回调函数
 	if (sbi->s_journal)
 		sbi->s_journal->j_commit_callback = release_blocks_on_commit;
-	return 0;
+
+	return 0; // 成功初始化
 }
+
 
 /* need to called with the ext4 group lock held */
 static void ext4_mb_cleanup_pa(struct ext4_group_info *grp)
@@ -4494,7 +4534,7 @@ void ext4_free_blocks(handle_t *handle, struct inode *inode,
 				tbh = sb_find_get_block(inode->i_sb,
 							block + i);
 			ext4_forget(handle, flags & EXT4_FREE_BLOCKS_METADATA, 
-				    inode, tbh, block + i);
+				    inode, tbh, block + i);// 调用 ext4_forget 函数来处理撤销逻辑，传入标志、inode、缓冲区和块号
 		}
 	}
 

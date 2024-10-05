@@ -500,40 +500,51 @@ void journal_switch_revoke_table(journal_t *journal)
  * Write revoke records to the journal for all entries in the current
  * revoke hash, deleting the entries as we go.
  */
-void journal_write_revoke_records(journal_t *journal,
-				  transaction_t *transaction, int write_op)
+void jbd2_journal_write_revoke_records(journal_t *journal,
+				       transaction_t *transaction,
+				       int write_op)
 {
-	struct journal_head *descriptor;
-	struct jbd_revoke_record_s *record;
-	struct jbd_revoke_table_s *revoke;
-	struct list_head *hash_list;
-	int i, offset, count;
+    struct journal_head *descriptor;               // 描述符指针，用于保存当前的描述信息
+    struct jbd2_revoke_record_s *record;           // 撤销记录指针
+    struct jbd2_revoke_table_s *revoke;            // 撤销表指针
+    struct list_head *hash_list;                   // 哈希表中的列表指针
+    int i, offset, count;                          // 循环索引、偏移量和计数器
 
-	descriptor = NULL;
-	offset = 0;
-	count = 0;
+    descriptor = NULL;                             // 初始化描述符为空
+    offset = 0;                                    // 初始化偏移量为0
+    count = 0;                                     // 初始化计数器为0
 
-	/* select revoke table for committing transaction */
-	revoke = journal->j_revoke == journal->j_revoke_table[0] ?
-		journal->j_revoke_table[1] : journal->j_revoke_table[0];
+    /* 选择用于提交事务的撤销表 */
+    revoke = journal->j_revoke == journal->j_revoke_table[0] ?
+        journal->j_revoke_table[1] : journal->j_revoke_table[0];
 
-	for (i = 0; i < revoke->hash_size; i++) {
-		hash_list = &revoke->hash_table[i];
+    // 遍历撤销表中的哈希表
+    for (i = 0; i < revoke->hash_size; i++) {
+        hash_list = &revoke->hash_table[i];       // 获取当前哈希表列表
 
-		while (!list_empty(hash_list)) {
-			record = (struct jbd_revoke_record_s *)
-				hash_list->next;
-			write_one_revoke_record(journal, transaction,
-						&descriptor, &offset,
-						record, write_op);
-			count++;
-			list_del(&record->hash);
-			kmem_cache_free(revoke_record_cache, record);
-		}
-	}
-	if (descriptor)
-		flush_descriptor(journal, descriptor, offset, write_op);
-	jbd_debug(1, "Wrote %d revoke records\n", count);
+        // 遍历当前哈希列表，直到列表为空
+        while (!list_empty(hash_list)) {
+            // 获取并类型转换当前哈希列表中的撤销记录
+            record = (struct jbd2_revoke_record_s *)
+                hash_list->next;
+
+            // 写入单个撤销记录到日志中
+            write_one_revoke_record(journal, transaction,
+                                    &descriptor, &offset,
+                                    record, write_op);
+
+            count++;                                 // 增加写入的撤销记录计数
+            list_del(&record->hash);                // 从哈希列表中删除该记录
+            kmem_cache_free(jbd2_revoke_record_cache, record); // 释放该撤销记录的内存
+        }
+    }
+    
+    // 如果描述符不为空，刷新描述符，将写入的记录持久化到日志中
+    if (descriptor)
+        flush_descriptor(journal, descriptor, offset, write_op);
+
+    // 调试输出，记录写入的撤销记录数量
+    jbd_debug(1, "Wrote %d revoke records\n", count);
 }
 
 /*

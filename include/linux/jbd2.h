@@ -491,160 +491,146 @@ struct transaction_chp_stats_s {
 
 struct transaction_s
 {
-	/* Pointer to the journal for this transaction. [no locking] */
+	/* 指向此事务对应的日志的指针。 [无需加锁] */
 	journal_t		*t_journal;
 
-	/* Sequence number for this transaction [no locking] */
+	/* 此事务的序列号。 [无需加锁] */
 	tid_t			t_tid;
 
 	/*
-	 * Transaction's current state
-	 * [no locking - only kjournald2 alters this]
-	 * [j_list_lock] guards transition of a transaction into T_FINISHED
-	 * state and subsequent call of __jbd2_journal_drop_transaction()
-	 * FIXME: needs barriers
-	 * KLUDGE: [use j_state_lock]
+	 * 事务的当前状态。
+	 * [无需加锁 - 只有 kjournald2 进程会修改此字段]
+	 * [j_list_lock] 保护事务进入 T_FINISHED 状态并随后调用
+	 * __jbd2_journal_drop_transaction() 的过程。
+	 * FIXME: 需要内存屏障。
+	 * 临时解决方案: [使用 j_state_lock]
 	 */
 	enum {
-		T_RUNNING,
-		T_LOCKED,
-		T_RUNDOWN,
-		T_FLUSH,
-		T_COMMIT,
-		T_FINISHED
-	}			t_state;
+		T_RUNNING,   // 事务正在运行
+		T_LOCKED,    // 事务已锁定
+		T_RUNDOWN,   // 事务正在关闭
+		T_FLUSH,     // 事务正在刷新数据
+		T_COMMIT,    // 事务已提交
+		T_FINISHED   // 事务已完成
+	} t_state;
 
 	/*
-	 * Where in the log does this transaction's commit start? [no locking]
+	 * 此事务提交开始的日志位置。 [无需加锁]
 	 */
 	unsigned long		t_log_start;
 
-	/* Number of buffers on the t_buffers list [j_list_lock] */
+	/* 事务的 t_buffers 列表中的缓冲区数量。 [j_list_lock] */
 	int			t_nr_buffers;
 
 	/*
-	 * Doubly-linked circular list of all buffers reserved but not yet
-	 * modified by this transaction [j_list_lock]
+	 * 双向链表，包含所有已保留但尚未被此事务修改的缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_reserved_list;
 
 	/*
-	 * Doubly-linked circular list of all metadata buffers owned by this
-	 * transaction [j_list_lock]
+	 * 双向链表，包含此事务拥有的所有元数据缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_buffers;
 
 	/*
-	 * Doubly-linked circular list of all forget buffers (superseded
-	 * buffers which we can un-checkpoint once this transaction commits)
-	 * [j_list_lock]
+	 * 双向链表，包含所有被遗忘的缓冲区（已被替代的缓冲区，
+	 * 这些缓冲区在事务提交后可以取消检查点）。 [j_list_lock]
 	 */
 	struct journal_head	*t_forget;
 
 	/*
-	 * Doubly-linked circular list of all buffers still to be flushed before
-	 * this transaction can be checkpointed. [j_list_lock]
+	 * 双向链表，包含所有仍需刷新才能使此事务进入检查点的缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_checkpoint_list;
 
 	/*
-	 * Doubly-linked circular list of all buffers submitted for IO while
-	 * checkpointing. [j_list_lock]
+	 * 双向链表，包含所有在检查点过程中已提交 I/O 的缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_checkpoint_io_list;
 
 	/*
-	 * Doubly-linked circular list of temporary buffers currently undergoing
-	 * IO in the log [j_list_lock]
+	 * 双向链表，包含日志中正在进行 I/O 操作的临时缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_iobuf_list;
 
 	/*
-	 * Doubly-linked circular list of metadata buffers being shadowed by log
-	 * IO.  The IO buffers on the iobuf list and the shadow buffers on this
-	 * list match each other one for one at all times. [j_list_lock]
+	 * 双向链表，包含日志 I/O 正在影射的元数据缓冲区。I/O 缓冲区在 t_iobuf_list
+	 * 列表中，与此列表中的影射缓冲区一一对应。 [j_list_lock]
 	 */
 	struct journal_head	*t_shadow_list;
 
 	/*
-	 * Doubly-linked circular list of control buffers being written to the
-	 * log. [j_list_lock]
+	 * 双向链表，包含正在写入日志的控制缓冲区。 [j_list_lock]
 	 */
 	struct journal_head	*t_log_list;
 
 	/*
-	 * List of inodes whose data we've modified in data=ordered mode.
-	 * [j_list_lock]
+	 * 列出数据被修改的 inode，适用于 data=ordered 模式。 [j_list_lock]
 	 */
 	struct list_head	t_inode_list;
 
 	/*
-	 * Protects info related to handles
+	 * 保护与 handle 相关的信息。
 	 */
 	spinlock_t		t_handle_lock;
 
 	/*
-	 * Longest time some handle had to wait for running transaction
+	 * 记录某个 handle 等待运行事务的最长时间。
 	 */
 	unsigned long		t_max_wait;
 
 	/*
-	 * When transaction started
+	 * 记录事务的启动时间。
 	 */
 	unsigned long		t_start;
 
 	/*
-	 * Checkpointing stats [j_checkpoint_sem]
+	 * 检查点统计信息 [j_checkpoint_sem]
 	 */
 	struct transaction_chp_stats_s t_chp_stats;
 
 	/*
-	 * Number of outstanding updates running on this transaction
-	 * [t_handle_lock]
+	 * 此事务正在运行的未完成更新的数量。 [t_handle_lock]
 	 */
 	int			t_updates;
 
 	/*
-	 * Number of buffers reserved for use by all handles in this transaction
-	 * handle but not yet modified. [t_handle_lock]
+	 * 为事务中所有 handle 保留但尚未修改的缓冲区数量。 [t_handle_lock]
 	 */
 	int			t_outstanding_credits;
 
 	/*
-	 * Forward and backward links for the circular list of all transactions
-	 * awaiting checkpoint. [j_list_lock]
+	 * 等待检查点的所有事务的前向和后向链接。 [j_list_lock]
 	 */
 	transaction_t		*t_cpnext, *t_cpprev;
 
 	/*
-	 * When will the transaction expire (become due for commit), in jiffies?
-	 * [no locking]
+	 * 事务的过期时间（以 jiffies 为单位）。 [无需加锁]
 	 */
 	unsigned long		t_expires;
 
 	/*
-	 * When this transaction started, in nanoseconds [no locking]
+	 * 记录此事务的启动时间（以纳秒为单位）。 [无需加锁]
 	 */
 	ktime_t			t_start_time;
 
 	/*
-	 * How many handles used this transaction? [t_handle_lock]
+	 * 使用此事务的 handle 数量。 [t_handle_lock]
 	 */
 	int t_handle_count;
 
 	/*
-	 * This transaction is being forced and some process is
-	 * waiting for it to finish.
+	 * 此事务正在被强制提交，某些进程正在等待其完成。
 	 */
 	unsigned int t_synchronous_commit:1;
 	unsigned int t_flushed_data_blocks:1;
 
 	/*
-	 * For use by the filesystem to store fs-specific data
-	 * structures associated with the transaction
+	 * 文件系统用于存储与事务相关的特定数据结构。
 	 */
 	struct list_head	t_private_list;
 };
+
 
 struct transaction_run_stats_s {
 	unsigned long		rs_wait;

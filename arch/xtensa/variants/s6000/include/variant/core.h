@@ -117,15 +117,15 @@
 				CACHE
   ----------------------------------------------------------------------*/
 
-#define XCHAL_ICACHE_LINESIZE		16	/* I-cache line size in bytes */
-#define XCHAL_DCACHE_LINESIZE		16	/* D-cache line size in bytes */
-#define XCHAL_ICACHE_LINEWIDTH		4	/* log2(I line size in bytes) */
-#define XCHAL_DCACHE_LINEWIDTH		4	/* log2(D line size in bytes) */
+#define XCHAL_ICACHE_LINESIZE        16   /* I-cache line size in bytes: 每个指令缓存行的大小为16字节 */
+#define XCHAL_DCACHE_LINESIZE        16   /* D-cache line size in bytes: 每个数据缓存行的大小为16字节 */
+#define XCHAL_ICACHE_LINEWIDTH       4    /* log2(I line size in bytes): 指令缓存行大小的对数（以2为底），即 log2(16) = 4 */
+#define XCHAL_DCACHE_LINEWIDTH       4    /* log2(D line size in bytes): 数据缓存行大小的对数（以2为底），即 log2(16) = 4 */
 
-#define XCHAL_ICACHE_SIZE		32768	/* I-cache size in bytes or 0 */
-#define XCHAL_DCACHE_SIZE		32768	/* D-cache size in bytes or 0 */
+#define XCHAL_ICACHE_SIZE            32768 /* I-cache size in bytes or 0: 指令缓存的总大小为32768字节（32KB），如果为0则表示没有缓存 */
+#define XCHAL_DCACHE_SIZE            32768 /* D-cache size in bytes or 0: 数据缓存的总大小为32768字节（32KB），如果为0则表示没有缓存 */
 
-#define XCHAL_DCACHE_IS_WRITEBACK	1	/* writeback feature */
+#define XCHAL_DCACHE_IS_WRITEBACK    1    /* writeback feature: 数据缓存是否具备写回特性。值为1表示启用写回特性 */
 
 
 

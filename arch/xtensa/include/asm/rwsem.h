@@ -23,7 +23,7 @@
 #include <asm/system.h>
 
 /*
- * the semaphore definition
+ * the semaphore definition //读写锁
  */
 struct rw_semaphore {
 	signed long		count;

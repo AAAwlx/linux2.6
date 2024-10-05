@@ -248,57 +248,68 @@ static struct sound_unit *__sound_remove_unit(struct sound_unit **list, int unit
 static DEFINE_SPINLOCK(sound_loader_lock);
 
 /*
- *	Allocate the controlling structure and add it to the sound driver
- *	list. Acquires locks as needed
+ *	分配控制结构体并将其添加到声音驱动程序的列表中。根据需要获取锁。
  */
 
-static int sound_insert_unit(struct sound_unit **list, const struct file_operations *fops, int index, int low, int top, const char *name, umode_t mode, struct device *dev)
+static int sound_insert_unit(struct sound_unit **list, const struct file_operations *fops, 
+                             int index, int low, int top, const char *name, umode_t mode, 
+                             struct device *dev)
 {
-	struct sound_unit *s = kmalloc(sizeof(*s), GFP_KERNEL);
-	int r;
+    // 为 sound_unit 结构体分配内存
+    struct sound_unit *s = kmalloc(sizeof(*s), GFP_KERNEL);
+    int r;
 
-	if (!s)
-		return -ENOMEM;
+    // 如果分配失败，返回内存不足错误代码
+    if (!s)
+        return -ENOMEM;
 
-	spin_lock(&sound_loader_lock);
+    // 加锁以保护对声音驱动列表的访问，防止竞争条件
+    spin_lock(&sound_loader_lock);
 retry:
-	r = __sound_insert_unit(s, list, fops, index, low, top);
-	spin_unlock(&sound_loader_lock);
-	
-	if (r < 0)
-		goto fail;
-	else if (r < SOUND_STEP)
-		sprintf(s->name, "sound/%s", name);
-	else
-		sprintf(s->name, "sound/%s%d", name, r / SOUND_STEP);
+    // 调用 __sound_insert_unit 函数尝试将设备插入列表中
+    r = __sound_insert_unit(s, list, fops, index, low, top);
+    spin_unlock(&sound_loader_lock);  // 解锁
+    
+    // 如果插入失败，跳转到 fail 处理失败
+    if (r < 0)
+        goto fail;
+    // 如果返回值小于 SOUND_STEP，格式化设备名称为 "sound/<name>"
+    else if (r < SOUND_STEP)
+        sprintf(s->name, "sound/%s", name);
+    // 否则，格式化设备名称为 "sound/<name><r/SOUND_STEP>"
+    else
+        sprintf(s->name, "sound/%s%d", name, r / SOUND_STEP);
 
-	if (!preclaim_oss) {
-		/*
-		 * Something else might have grabbed the minor.  If
-		 * first free slot is requested, rescan with @low set
-		 * to the next unit; otherwise, -EBUSY.
-		 */
-		r = __register_chrdev(SOUND_MAJOR, s->unit_minor, 1, s->name,
-				      &soundcore_fops);
-		if (r < 0) {
-			spin_lock(&sound_loader_lock);
-			__sound_remove_unit(list, s->unit_minor);
-			if (index < 0) {
-				low = s->unit_minor + SOUND_STEP;
-				goto retry;
-			}
-			spin_unlock(&sound_loader_lock);
-			return -EBUSY;
-		}
-	}
+    // 如果 OSS 模块没有被预先声明，尝试注册字符设备
+    if (!preclaim_oss) {
+        /*
+         * 其他设备可能已经抢占了此次设备号。如果请求的是第一个可用的次设备号，
+         * 则重新扫描并将 @low 设置为下一个单元；否则，返回 -EBUSY。
+         */
+        r = __register_chrdev(SOUND_MAJOR, s->unit_minor, 1, s->name, &soundcore_fops);
+        // 如果注册字符设备失败，重新锁住并从列表中删除该设备
+        if (r < 0) {
+            spin_lock(&sound_loader_lock);
+            __sound_remove_unit(list, s->unit_minor);
+            // 如果 index < 0，表示自动分配设备号，更新 low 并重试
+            if (index < 0) {
+                low = s->unit_minor + SOUND_STEP;
+                goto retry;  // 重新尝试插入
+            }
+            spin_unlock(&sound_loader_lock);
+            return -EBUSY;  // 返回设备忙的错误代码
+        }
+    }
 
-	device_create(sound_class, dev, MKDEV(SOUND_MAJOR, s->unit_minor),
-		      NULL, s->name+6);
-	return s->unit_minor;
+    // 创建设备节点，以便用户空间可以通过 /dev 访问设备
+    device_create(sound_class, dev, MKDEV(SOUND_MAJOR, s->unit_minor),
+                  NULL, s->name + 6);  // 跳过 "sound/" 前缀
+    return s->unit_minor;  // 返回设备次设备号
 
 fail:
-	kfree(s);
-	return r;
+    // 如果插入失败，释放分配的内存并返回错误代码
+    kfree(s);
+    return r;
 }
 
 /*

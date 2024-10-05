@@ -137,15 +137,16 @@ struct ext4_allocation_request {
  * For delayed allocation tracking
  */
 struct mpage_da_data {
-	struct inode *inode;
-	sector_t b_blocknr;		/* start block number of extent */
-	size_t b_size;			/* size of extent */
-	unsigned long b_state;		/* state of the extent */
-	unsigned long first_page, next_page;	/* extent of pages */
-	struct writeback_control *wbc;
-	int io_done;
-	int pages_written;
-	int retval;
+	struct inode *inode;              // 与该数据关联的 inode 结构
+	sector_t b_blocknr;               // 范围的起始块号
+	size_t b_size;                    // 范围的大小（以字节为单位）
+	unsigned long b_state;            // 该范围的状态
+	unsigned long first_page;         // 第一个页面的索引
+	unsigned long next_page;          // 下一个页面的索引
+	struct writeback_control *wbc;    // 写回控制结构
+	int io_done;                      // I/O 操作是否完成标志
+	int pages_written;                // 已写入的页面数量
+	int retval;                       // I/O 操作返回值
 };
 #define	EXT4_IO_UNWRITTEN	0x1
 typedef struct ext4_io_end {
@@ -615,10 +616,10 @@ do {									       \
  * storage for cached extent
  */
 struct ext4_ext_cache {
-	ext4_fsblk_t	ec_start;
-	ext4_lblk_t	ec_block;
-	__u32		ec_len; /* must be 32bit to return holes */
-	__u32		ec_type;
+	ext4_fsblk_t	ec_start;  // 区间在文件系统块中的起始位置
+	ext4_lblk_t	ec_block;  // 区间对应的逻辑块号
+	__u32		ec_len;    // 区间长度，必须为 32 位以支持表示空洞
+	__u32		ec_type;   // 区间类型，用于指示区间的性质
 };
 
 /*
@@ -685,7 +686,7 @@ struct ext4_inode_info {
 	struct inode vfs_inode;		// 一个vfs_inode节点
 	struct jbd2_inode jinode;
 
-	struct ext4_ext_cache i_cached_extent;
+	struct ext4_ext_cache i_cached_extent;// extent树的缓存
 	/*
 	 * File creation time. Its function is same as that of
 	 * struct timespec i_{a,c,m}time in the generic inode.

@@ -1914,19 +1914,18 @@ struct super_operations {
  *
  * Q: What is the difference between I_WILL_FREE and I_FREEING?
  */
-#define I_DIRTY_SYNC		1
-#define I_DIRTY_DATASYNC	2
-#define I_DIRTY_PAGES		4
-#define __I_NEW			3
-#define I_NEW			(1 << __I_NEW)
-#define I_WILL_FREE		16
-#define I_FREEING		32
-#define I_CLEAR			64
-#define __I_SYNC		7
-#define I_SYNC			(1 << __I_SYNC)
+#define I_DIRTY_SYNC		1  // 值: 1，表示 inode 在同步操作（sync）时需要被写回到磁盘
+#define I_DIRTY_DATASYNC	2  // 值: 2，表示 inode 在数据同步操作（datasync）时需要被写回到磁盘
+#define I_DIRTY_PAGES		4  // 值: 4，表示 inode 关联的页面存在脏页（dirty pages），需要被写回到磁盘
+#define __I_NEW			3  // 内部偏移量，用于标记 inode 是否为新分配的
+#define I_NEW			(1 << __I_NEW)  // 值: 8，表示 inode 是新分配的，还未完全初始化
+#define I_WILL_FREE		16  // 值: 16，表示 inode 将被释放
+#define I_FREEING		32  // 值: 32，表示 inode 正在被释放
+#define I_CLEAR			64  // 值: 64，表示 inode 需要被清除或清理
+#define __I_SYNC		7  // 内部偏移量，用于标记同步操作
+#define I_SYNC			(1 << __I_SYNC)  // 值: 128，表示 inode 需要在同步操作中处理
 
-#define I_DIRTY (I_DIRTY_SYNC | I_DIRTY_DATASYNC | I_DIRTY_PAGES)
-
+#define I_DIRTY (I_DIRTY_SYNC | I_DIRTY_DATASYNC | I_DIRTY_PAGES)  // 组合标志，表示 inode 在任何形式的同步操作中都需要被处理
 extern void __mark_inode_dirty(struct inode *, int);
 static inline void mark_inode_dirty(struct inode *inode)
 {

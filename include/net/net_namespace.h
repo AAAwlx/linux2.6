@@ -33,64 +33,60 @@ struct sock;
 #define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
 
 struct net {
-	atomic_t		count;		/* To decided when the network
-						 *  namespace should be freed.
-						 */
+	atomic_t count;                       // 原子计数器，管理命名空间引用计数
 #ifdef NETNS_REFCNT_DEBUG
-	atomic_t		use_count;	/* To track references we
-						 * destroy on demand
-						 */
+	atomic_t use_count;                   // 调试模式下，跟踪销毁引用
 #endif
-	struct list_head	list;		/* list of network namespaces */
-	struct list_head	cleanup_list;	/* namespaces on death row */
-	struct list_head	exit_list;	/* Use only net_mutex */
+	struct list_head list;                // 网络命名空间链表
+	struct list_head cleanup_list;        // 即将释放的命名空间
+	struct list_head exit_list;           // 仅在 net_mutex 下使用的链表
 
-	struct proc_dir_entry 	*proc_net;
-	struct proc_dir_entry 	*proc_net_stat;
+	struct proc_dir_entry *proc_net;      // proc 目录入口
+	struct proc_dir_entry *proc_net_stat; // proc 统计信息入口
 
 #ifdef CONFIG_SYSCTL
-	struct ctl_table_set	sysctls;
+	struct ctl_table_set sysctls;         // sysctl 表设置
 #endif
 
-	struct net_device       *loopback_dev;          /* The loopback */
+	struct net_device *loopback_dev;      // 环回设备
 
-	struct list_head 	dev_base_head;
-	struct hlist_head 	*dev_name_head;
-	struct hlist_head	*dev_index_head;
+	struct list_head dev_base_head;       // 设备基础链表
+	struct hlist_head *dev_name_head;     // 设备名称哈希链表
+	struct hlist_head *dev_index_head;    // 设备索引哈希链表
 
-	/* core fib_rules */
-	struct list_head	rules_ops;
-	spinlock_t		rules_mod_lock;
+	// 核心 FIB 规则
+	struct list_head rules_ops;            // FIB 规则操作链表
+	spinlock_t rules_mod_lock;            // FIB 规则修改锁
 
-	struct sock 		*rtnl;			/* rtnetlink socket */
-	struct sock		*genl_sock;
+	struct sock *rtnl;                    // rtnetlink 套接字
+	struct sock *genl_sock;               // 通用 netlink 套接字
 
-	struct netns_core	core;
-	struct netns_mib	mib;
-	struct netns_packet	packet;
-	struct netns_unix	unx;
-	struct netns_ipv4	ipv4;
+	struct netns_core core;               // 网络命名空间核心信息
+	struct netns_mib mib;                 // 网络命名空间管理信息库
+	struct netns_packet packet;            // 数据包信息
+	struct netns_unix unx;                // UNIX 域网络信息
+	struct netns_ipv4 ipv4;               // IPv4 网络信息
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	struct netns_ipv6	ipv6;
+	struct netns_ipv6 ipv6;               // IPv6 网络信息
 #endif
 #if defined(CONFIG_IP_DCCP) || defined(CONFIG_IP_DCCP_MODULE)
-	struct netns_dccp	dccp;
+	struct netns_dccp dccp;               // DCCP 网络信息
 #endif
 #ifdef CONFIG_NETFILTER
-	struct netns_xt		xt;
+	struct netns_xt xt;                   // netfilter 扩展信息
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
-	struct netns_ct		ct;
+	struct netns_ct ct;                   // 连接跟踪信息
 #endif
-	struct sock		*nfnl;
-	struct sock		*nfnl_stash;
+	struct sock *nfnl;                   // netfilter netlink 套接字
+	struct sock *nfnl_stash;             // netfilter netlink 套接字的临时存储
 #endif
 #ifdef CONFIG_XFRM
-	struct netns_xfrm	xfrm;
+	struct netns_xfrm xfrm;               // 变换网络信息
 #endif
 #ifdef CONFIG_WEXT_CORE
-	struct sk_buff_head	wext_nlevents;
+	struct sk_buff_head wext_nlevents;    // 无线扩展网络事件缓冲区
 #endif
-	struct net_generic	*gen;
+	struct net_generic *gen;              // 通用网络数据
 };
 
 

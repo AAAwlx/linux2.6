@@ -278,36 +278,36 @@ static handle_t *new_handle(int nblocks)
  *
  * Return a pointer to a newly allocated handle, or NULL on failure
  */
-/*
- * jbd2_journal_start/end 的包装函数。
- *
- * 我们需要确保所有 journal_end 调用都使超级块被标记为脏，
- * 以便 sync() 在适当的时候调用文件系统的 write_super 回调。
- */
-handle_t *ext4_journal_start_sb(struct super_block *sb, int nblocks)
+handle_t *jbd2_journal_start(journal_t *journal, int nblocks)
 {
-	journal_t *journal;
+	handle_t *handle = journal_current_handle();//获取当前线程的原子操作结构
+	int err;
 
-	/* 检查文件系统是否为只读，如果是则返回错误 */
-	if (sb->s_flags & MS_RDONLY)
+	if (!journal)
 		return ERR_PTR(-EROFS);
 
-	/* 特殊情况处理：如果日志在我们不知情的情况下中止（例如
-	 * 提交线程中的 EIO 错误），我们仍然需要干净地将文件系统设为只读。 */
-	journal = EXT4_SB(sb)->s_journal;  /* 获取 ext4 文件系统的日志 */
-	if (journal) {
-		/* 检查日志是否已中止 */
-		if (is_journal_aborted(journal)) {
-			ext4_abort(sb, __func__, "Detected aborted journal");  /* 处理日志中止错误 */
-			return ERR_PTR(-EROFS);  /* 返回只读错误 */
-		}
-		/* 启动日志，分配 nblocks 个日志块 */
-		return jbd2_journal_start(journal, nblocks);
+	if (handle) {
+		J_ASSERT(handle->h_transaction->t_journal == journal);
+		handle->h_ref++;//如果有则引用计数加1
+		return handle;
 	}
-	/* 如果没有日志，则返回无日志的处理句柄 */
-	return ext4_get_nojournal();
-}
 
+	handle = new_handle(nblocks);//创建 handle_t
+	if (!handle)
+		return ERR_PTR(-ENOMEM);
+
+	current->journal_info = handle;
+
+	err = start_this_handle(journal, handle);//初始化结构体
+	if (err < 0) {
+		jbd2_free_handle(handle);
+		current->journal_info = NULL;
+		handle = ERR_PTR(err);
+		goto out;
+	}
+out:
+	return handle;
+}
 
 /**
  * int jbd2_journal_extend() - extend buffer credits.
@@ -1006,72 +1006,65 @@ void jbd2_buffer_abort_trigger(struct journal_head *jh,
  */
 int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 {
-	transaction_t *transaction = handle->h_transaction;
-	journal_t *journal = transaction->t_journal;
-	struct journal_head *jh = bh2jh(bh);
+	transaction_t *transaction = handle->h_transaction; // 获取当前事务
+	journal_t *journal = transaction->t_journal; // 获取当前事务对应的日志
+	struct journal_head *jh = bh2jh(bh); // 将缓冲区转换为日志头结构
 
-	jbd_debug(5, "journal_head %p\n", jh);
-	JBUFFER_TRACE(jh, "entry");
-	if (is_handle_aborted(handle))
-		goto out;
+	jbd_debug(5, "journal_head %p\n", jh); // 调试信息，打印日志头指针
+	JBUFFER_TRACE(jh, "entry"); // 记录进入函数的跟踪信息
+	if (is_handle_aborted(handle)) // 检查当前句柄是否已被中止
+		goto out; // 如果是，跳到退出
 
-	jbd_lock_bh_state(bh);
+	jbd_lock_bh_state(bh); // 锁定缓冲区的状态以进行修改
 
-	if (jh->b_modified == 0) {
+	if (jh->b_modified == 0) { // 检查该缓冲区是否已修改
 		/*
-		 * This buffer's got modified and becoming part
-		 * of the transaction. This needs to be done
-		 * once a transaction -bzzz
+		 * 如果缓冲区未被修改，则将其标记为已修改，并成为
+		 * 该事务的一部分。每次事务只需进行一次。
 		 */
-		jh->b_modified = 1;
-		J_ASSERT_JH(jh, handle->h_buffer_credits > 0);
-		handle->h_buffer_credits--;
+		jh->b_modified = 1; // 将缓冲区标记为已修改
+		J_ASSERT_JH(jh, handle->h_buffer_credits > 0); // 确保还有可用的缓冲区信用
+		handle->h_buffer_credits--; // 消耗一个缓冲区信用
 	}
 
 	/*
-	 * fastpath, to avoid expensive locking.  If this buffer is already
-	 * on the running transaction's metadata list there is nothing to do.
-	 * Nobody can take it off again because there is a handle open.
-	 * I _think_ we're OK here with SMP barriers - a mistaken decision will
-	 * result in this test being false, so we go in and take the locks.
+	 * 快速路径，避免昂贵的锁定。如果该缓冲区已经在当前
+	 * 事务的元数据列表中，则无需再次处理。由于有句柄
+	 * 打开，因此没有人可以将其移除。
 	 */
 	if (jh->b_transaction == transaction && jh->b_jlist == BJ_Metadata) {
-		JBUFFER_TRACE(jh, "fastpath");
-		J_ASSERT_JH(jh, jh->b_transaction ==
-					journal->j_running_transaction);
-		goto out_unlock_bh;
+		JBUFFER_TRACE(jh, "fastpath"); // 记录快路径的跟踪信息
+		J_ASSERT_JH(jh, jh->b_transaction == journal->j_running_transaction); // 确保它在当前事务中
+		goto out_unlock_bh; // 跳到解锁缓冲区状态
 	}
 
-	set_buffer_jbddirty(bh);
+	set_buffer_jbddirty(bh); // 将缓冲区状态设置为“脏”
 
 	/*
-	 * Metadata already on the current transaction list doesn't
-	 * need to be filed.  Metadata on another transaction's list must
-	 * be committing, and will be refiled once the commit completes:
-	 * leave it alone for now.
+	 * 如果元数据已经在当前事务列表中，则无需重新登记。
+	 * 如果在其他事务列表中的元数据正在提交，一旦提交完成
+	 * 将重新登记：现在无需处理它。
 	 */
 	if (jh->b_transaction != transaction) {
-		JBUFFER_TRACE(jh, "already on other transaction");
-		J_ASSERT_JH(jh, jh->b_transaction ==
-					journal->j_committing_transaction);
-		J_ASSERT_JH(jh, jh->b_next_transaction == transaction);
-		/* And this case is illegal: we can't reuse another
-		 * transaction's data buffer, ever. */
-		goto out_unlock_bh;
+		JBUFFER_TRACE(jh, "already on other transaction"); // 记录缓冲区已经在其他事务中的跟踪信息
+		J_ASSERT_JH(jh, jh->b_transaction == journal->j_committing_transaction); // 确保它在正在提交的事务中
+		J_ASSERT_JH(jh, jh->b_next_transaction == transaction); // 确保下一个事务为当前事务
+		/* 不允许重用其他事务的数据缓冲区。 */
+		goto out_unlock_bh; // 跳到解锁缓冲区状态
 	}
 
-	/* That test should have eliminated the following case: */
-	J_ASSERT_JH(jh, jh->b_frozen_data == NULL);
+	/* 该测试应已消除以下情况： */
+	J_ASSERT_JH(jh, jh->b_frozen_data == NULL); // 确保没有冻结的数据
 
-	JBUFFER_TRACE(jh, "file as BJ_Metadata");
-	spin_lock(&journal->j_list_lock);
-	__jbd2_journal_file_buffer(jh, handle->h_transaction, BJ_Metadata);
-	spin_unlock(&journal->j_list_lock);
+	JBUFFER_TRACE(jh, "file as BJ_Metadata"); // 记录将其标记为元数据的跟踪信息
+	spin_lock(&journal->j_list_lock); // 锁定日志列表
+	__jbd2_journal_file_buffer(jh, handle->h_transaction, BJ_Metadata); // 将缓冲区登记到日志中
+	spin_unlock(&journal->j_list_lock); // 解锁日志列表
 out_unlock_bh:
-	jbd_unlock_bh_state(bh);
+	jbd_unlock_bh_state(bh); // 解锁缓冲区状态
 out:
-	JBUFFER_TRACE(jh, "exit");
-	return 0;
+	JBUFFER_TRACE(jh, "exit"); // 记录退出函数的跟踪信息
+	return 0; // 返回成功
 }
 
 /*
@@ -1890,76 +1883,78 @@ void jbd2_journal_invalidatepage(journal_t *journal,
 
 /*
  * File a buffer on the given transaction list.
+ * 将日志缓冲区添加到一个事务的缓冲区队列中
  */
 void __jbd2_journal_file_buffer(struct journal_head *jh,
 			transaction_t *transaction, int jlist)
 {
-	struct journal_head **list = NULL;
-	int was_dirty = 0;
-	struct buffer_head *bh = jh2bh(jh);
+	struct journal_head **list = NULL; // 用于指向事务中相应的缓冲区列表
+	int was_dirty = 0; // 标志，指示缓冲区是否之前是脏的
+	struct buffer_head *bh = jh2bh(jh); // 将日志头转换为缓冲区头
 
-	J_ASSERT_JH(jh, jbd_is_locked_bh_state(bh));
-	assert_spin_locked(&transaction->t_journal->j_list_lock);
+	J_ASSERT_JH(jh, jbd_is_locked_bh_state(bh)); // 确保缓冲区状态已锁定
+	assert_spin_locked(&transaction->t_journal->j_list_lock); // 确保事务列表锁定
 
-	J_ASSERT_JH(jh, jh->b_jlist < BJ_Types);
-	J_ASSERT_JH(jh, jh->b_transaction == transaction ||
+	J_ASSERT_JH(jh, jh->b_jlist < BJ_Types); // 确保当前列表类型有效
+	J_ASSERT_JH(jh, jh->b_transaction == transaction || // 确保缓冲区在正确的事务中
 				jh->b_transaction == NULL);
 
-	if (jh->b_transaction && jh->b_jlist == jlist)
+	if (jh->b_transaction && jh->b_jlist == jlist) // 如果已在相同事务和列表中，则返回
 		return;
 
+	// 处理元数据缓冲区的情况
 	if (jlist == BJ_Metadata || jlist == BJ_Reserved ||
 	    jlist == BJ_Shadow || jlist == BJ_Forget) {
 		/*
-		 * For metadata buffers, we track dirty bit in buffer_jbddirty
-		 * instead of buffer_dirty. We should not see a dirty bit set
-		 * here because we clear it in do_get_write_access but e.g.
-		 * tune2fs can modify the sb and set the dirty bit at any time
-		 * so we try to gracefully handle that.
+		 * 对于元数据缓冲区，我们通过 buffer_jbddirty 跟踪脏位，而不是
+		 * buffer_dirty。这里不应该看到脏位被设置，因为我们在 do_get_write_access
+		 * 中清除了它，但例如 tune2fs 可以修改 sb，并随时设置脏位，所以
+		 * 我们尝试优雅地处理这种情况。
 		 */
-		if (buffer_dirty(bh))
-			warn_dirty_buffer(bh);
-		if (test_clear_buffer_dirty(bh) ||
-		    test_clear_buffer_jbddirty(bh))
-			was_dirty = 1;
+		if (buffer_dirty(bh)) // 检查缓冲区是否脏
+			warn_dirty_buffer(bh); // 发出警告，表示缓冲区脏
+		if (test_clear_buffer_dirty(bh) || // 尝试清除脏位
+		    test_clear_buffer_jbddirty(bh)) // 尝试清除 JBD 脏位
+			was_dirty = 1; // 如果清除成功，设置标志
 	}
 
-	if (jh->b_transaction)
-		__jbd2_journal_temp_unlink_buffer(jh);
-	jh->b_transaction = transaction;
+	if (jh->b_transaction) // 如果缓冲区已经在某个事务中
+		__jbd2_journal_temp_unlink_buffer(jh); // 从之前的事务中临时解除链接
+	jh->b_transaction = transaction; // 设置为当前事务
 
 	switch (jlist) {
-	case BJ_None:
-		J_ASSERT_JH(jh, !jh->b_committed_data);
-		J_ASSERT_JH(jh, !jh->b_frozen_data);
-		return;
-	case BJ_Metadata:
-		transaction->t_nr_buffers++;
-		list = &transaction->t_buffers;
+	case BJ_None: // 没有列表
+		J_ASSERT_JH(jh, !jh->b_committed_data); // 确保没有提交的数据
+		J_ASSERT_JH(jh, !jh->b_frozen_data); // 确保没有冻结的数据
+		return; // 直接返回
+	case BJ_Metadata: // 元数据列表
+		transaction->t_nr_buffers++; // 增加事务中的缓冲区计数
+		list = &transaction->t_buffers; // 设置列表指向事务的缓冲区列表
 		break;
-	case BJ_Forget:
-		list = &transaction->t_forget;
+	case BJ_Forget: // 忘记列表
+		list = &transaction->t_forget; // 设置列表指向事务的遗忘列表
 		break;
-	case BJ_IO:
-		list = &transaction->t_iobuf_list;
+	case BJ_IO: // IO 列表
+		list = &transaction->t_iobuf_list; // 设置列表指向 IO 列表
 		break;
-	case BJ_Shadow:
-		list = &transaction->t_shadow_list;
+	case BJ_Shadow: // 阴影列表
+		list = &transaction->t_shadow_list; // 设置列表指向阴影列表
 		break;
-	case BJ_LogCtl:
-		list = &transaction->t_log_list;
+	case BJ_LogCtl: // 日志控制列表
+		list = &transaction->t_log_list; // 设置列表指向日志控制列表
 		break;
-	case BJ_Reserved:
-		list = &transaction->t_reserved_list;
+	case BJ_Reserved: // 保留列表
+		list = &transaction->t_reserved_list; // 设置列表指向保留列表
 		break;
 	}
 
-	__blist_add_buffer(list, jh);
-	jh->b_jlist = jlist;
+	__blist_add_buffer(list, jh); // 将缓冲区添加到指定列表
+	jh->b_jlist = jlist; // 更新日志头的列表类型
 
-	if (was_dirty)
-		set_buffer_jbddirty(bh);
+	if (was_dirty) // 如果之前是脏的
+		set_buffer_jbddirty(bh); // 设置缓冲区为 JBD 脏
 }
+
 
 void jbd2_journal_file_buffer(struct journal_head *jh,
 				transaction_t *transaction, int jlist)

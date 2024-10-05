@@ -843,6 +843,34 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 
 
 /*
+ * 这个数组定义了当期望的迁移类型的空闲列表用尽时，
+ * 系统应当回退到的迁移类型的顺序。
+ * 
+ * `fallbacks` 是一个二维数组，其行表示当前的迁移类型，
+ * 列表示当该迁移类型的空闲页面不足时应回退的迁移类型顺序。
+ * 每种迁移类型的空闲列表都包含不同类型的页面块，
+ * 这些页面块的特性决定了它们能否被移动、回收或被保留。
+ * 
+ * MIGRATE_UNMOVABLE:
+ * 当无法移动的页面（MIGRATE_UNMOVABLE）用尽时，回退到 MIGRATE_RECLAIMABLE
+ *（可以回收的页面），然后是 MIGRATE_MOVABLE（可移动页面），
+ * 最后是 MIGRATE_RESERVE（保留的页面块）。
+ * 
+ * MIGRATE_RECLAIMABLE:
+ * 当可回收的页面（MIGRATE_RECLAIMABLE）用尽时，回退顺序为
+ * MIGRATE_UNMOVABLE（不可移动页面），然后是 MIGRATE_MOVABLE（可移动页面），
+ * 最后是 MIGRATE_RESERVE（保留的页面块）。
+ * 
+ * MIGRATE_MOVABLE:
+ * 当可移动页面（MIGRATE_MOVABLE）用尽时，回退顺序为 MIGRATE_RECLAIMABLE
+ *（可回收页面），然后是 MIGRATE_UNMOVABLE（不可移动页面），
+ * 最后是 MIGRATE_RESERVE（保留的页面块）。
+ * 
+ * MIGRATE_RESERVE:
+ * 这个类型的页面块永远不会用作回退，因为它仅用于特殊情况，
+ * 因此数组中的每个元素都指向 MIGRATE_RESERVE 本身。
+ */
+/*
  * This array describes the order lists are fallen back to when
  * the free lists for the desirable migrate type are depleted
  */
@@ -935,6 +963,9 @@ static void change_pageblock_range(struct page *pageblock_page,
 }
 
 /* Remove an element from the buddy allocator from the fallback list */
+/*
+ * 从伙伴系统的回退列表中分配一个页面块。
+ */
 static inline struct page *
 __rmqueue_fallback(struct zone *zone, int order, int start_migratetype)
 {
@@ -943,70 +974,102 @@ __rmqueue_fallback(struct zone *zone, int order, int start_migratetype)
 	struct page *page;
 	int migratetype, i;
 
-	/* Find the largest possible block of pages in the other list */
+	/*
+	 * 在其他迁移类型的列表中寻找最大的可用页面块，
+	 * 从最高的 `current_order` 开始，直到找到符合 `order` 的页面块。
+	 */
 	for (current_order = MAX_ORDER-1; current_order >= order;
 						--current_order) {
+		/*
+		 * 遍历每种可能的回退迁移类型，尝试分配页面块。
+		 * `start_migratetype` 表示当前的首选迁移类型，
+		 * `fallbacks` 是回退迁移类型的优先级列表。
+		 */
 		for (i = 0; i < MIGRATE_TYPES - 1; i++) {
 			migratetype = fallbacks[start_migratetype][i];
 
-			/* MIGRATE_RESERVE handled later if necessary */
+			/*
+			 * 跳过 MIGRATE_RESERVE，因为它将在后续操作中单独处理。
+			 */
 			if (migratetype == MIGRATE_RESERVE)
 				continue;
 
 			area = &(zone->free_area[current_order]);
+			/*
+			 * 检查该迁移类型的空闲列表中是否存在页面块。
+			 * 如果为空，则继续检查下一个迁移类型。
+			 */
 			if (list_empty(&area->free_list[migratetype]))
 				continue;
 
+			/*
+			 * 如果找到非空列表，则获取该迁移类型的第一个页面块，
+			 * 并从空闲计数中减去一。
+			 */
 			page = list_entry(area->free_list[migratetype].next,
 					struct page, lru);
 			area->nr_free--;
 
 			/*
-			 * If breaking a large block of pages, move all free
-			 * pages to the preferred allocation list. If falling
-			 * back for a reclaimable kernel allocation, be more
-			 * agressive about taking ownership of free pages
+			 * 如果分配的页面块较大（至少是半个 `pageblock_order`），
+			 * 或者当前迁移类型是 MIGRATE_RECLAIMABLE，
+			 * 则尝试将整个页面块移到首选迁移类型的列表中。
+			 * 如果页面块超过一半是空闲的，则将其归属于首选迁移类型。
 			 */
 			if (unlikely(current_order >= (pageblock_order >> 1)) ||
 					start_migratetype == MIGRATE_RECLAIMABLE ||
 					page_group_by_mobility_disabled) {
 				unsigned long pages;
+				// 将整个页面块移到首选迁移类型的列表中
 				pages = move_freepages_block(zone, page,
 								start_migratetype);
 
-				/* Claim the whole block if over half of it is free */
+				// 如果页面块的一半以上是空闲的，则将其归属于首选迁移类型
 				if (pages >= (1 << (pageblock_order-1)) ||
 						page_group_by_mobility_disabled)
 					set_pageblock_migratetype(page,
 								start_migratetype);
 
+				// 更新迁移类型为首选迁移类型
 				migratetype = start_migratetype;
 			}
 
-			/* Remove the page from the freelists */
+			/*
+			 * 将页面块从空闲列表中移除并清除页面块的 order 信息。
+			 */
 			list_del(&page->lru);
 			rmv_page_order(page);
 
-			/* Take ownership for orders >= pageblock_order */
+			/*
+			 * 对于大于或等于 `pageblock_order` 的页面块，
+			 * 更新其页面块范围的迁移类型。
+			 */
 			if (current_order >= pageblock_order)
 				change_pageblock_range(page, current_order,
 							start_migratetype);
 
+			/*
+			 * 调用 `expand` 函数将页面块按照请求的 order 拆分成更小的块。
+			 */
 			expand(zone, page, order, current_order, area, migratetype);
 
+			// 记录页面块分配的外部碎片信息，帮助进行碎片化追踪
 			trace_mm_page_alloc_extfrag(page, order, current_order,
 				start_migratetype, migratetype);
 
+			// 返回成功分配的页面块
 			return page;
 		}
 	}
 
+	// 如果所有迁移类型都没有可用的页面块，则返回 NULL 表示分配失败
 	return NULL;
 }
 
+
 /*
- * Do the hard work of removing an element from the buddy allocator.
- * Call me with the zone->lock already held.
+ * 执行从伙伴分配器中移除页面的工作。
+ * 调用该函数时，`zone->lock` 应该已经被持有。
  */
 static struct page *__rmqueue(struct zone *zone, unsigned int order,
 						int migratetype)
@@ -1014,25 +1077,33 @@ static struct page *__rmqueue(struct zone *zone, unsigned int order,
 	struct page *page;
 
 retry_reserve:
+	// 尝试从该 zone 中根据指定的 order 和迁移类型分配最小页面块
 	page = __rmqueue_smallest(zone, order, migratetype);
 
+	/*
+	 * 如果没有成功分配页面并且迁移类型不是 MIGRATE_RESERVE，
+	 * 则尝试从备用迁移类型的页面块中分配。
+	 */
 	if (unlikely(!page) && migratetype != MIGRATE_RESERVE) {
 		page = __rmqueue_fallback(zone, order, migratetype);
 
 		/*
-		 * Use MIGRATE_RESERVE rather than fail an allocation. goto
-		 * is used because __rmqueue_smallest is an inline function
-		 * and we want just one call site
+		 * 如果仍然没有可用页面块，则使用 MIGRATE_RESERVE 类型的页面块，
+		 * 而不是直接返回分配失败。
+		 * 使用 `goto` 是因为 `__rmqueue_smallest` 是内联函数，
+		 * 通过 `goto` 可以确保只有一个调用站点。
 		 */
 		if (!page) {
 			migratetype = MIGRATE_RESERVE;
-			goto retry_reserve;
+			goto retry_reserve;  // 重试使用 MIGRATE_RESERVE 类型的页面块
 		}
 	}
 
+	// 记录内存分配事件（用于追踪/调试）
 	trace_mm_page_alloc_zone_locked(page, order, migratetype);
-	return page;
+	return page;  // 返回分配的页面块指针
 }
+
 
 /* 
  * Obtain a specified number of elements from the buddy allocator, all under
@@ -1618,8 +1689,24 @@ static void zlc_mark_zone_full(struct zonelist *zonelist, struct zoneref *z)
 #endif	/* CONFIG_NUMA */
 
 /*
- * get_page_from_freelist goes through the zonelist trying to allocate
- * a page.
+ * get_page_from_freelist - 从空闲列表中获取页框
+ * 
+ * @gfp_mask: 分配标志，指示如何进行页框分配（例如等待策略、分配限制等）
+ * @nodemask: 节点掩码，指定在哪些NUMA节点中查找空闲页框
+ * @order: 分配的页框顺序，2^order 表示所需的连续页框数
+ * @zonelist: 当前的区域列表，按优先级列出可用的内存区域
+ * @high_zoneidx: 允许的最高区域索引，只能从该索引及以下的区域中分配内存
+ * @alloc_flags: 分配标志，用于调整水线和CPUSets等条件
+ * @preferred_zone: 优选区域，分配的统计信息将记录在此
+ * @migratetype: 分配的迁移类型，用于确定页框的迁移策略
+ * 
+ * 该函数用于扫描 `zonelist` 列表，并从合适的内存区域中分配所需的页框。它考虑了
+ * NUMA节点、内存分配限制和区域的水印。首先尝试从优选区域中分配页框，如果失败，
+ * 则继续在其他区域中查找。如果某个区域无法满足分配条件，则函数会尝试调用区域回收
+ * （zone reclaim）。在NUMA构建中，函数还会根据 `zlc_cache` 缓存节点访问的
+ * 结果来调整策略。
+ * 
+ * 返回值: 成功时返回指向分配的页框的指针，否则返回 NULL。
  */
 static struct page *
 get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
@@ -1630,21 +1717,22 @@ get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
 	struct page *page = NULL;
 	int classzone_idx;
 	struct zone *zone;
-	nodemask_t *allowednodes = NULL;/* zonelist_cache approximation */
-	int zlc_active = 0;		/* set if using zonelist_cache */
-	int did_zlc_setup = 0;		/* just call zlc_setup() one time */
+	nodemask_t *allowednodes = NULL; /* zonelist_cache 近似 */
+	int zlc_active = 0;		/* 如果使用 zonelist_cache 则设置 */
+	int did_zlc_setup = 0;		/* 只调用一次 zlc_setup() */
 
 	classzone_idx = zone_idx(preferred_zone);
 zonelist_scan:
 	/*
-	 * Scan zonelist, looking for a zone with enough free.
-	 * See also cpuset_zone_allowed() comment in kernel/cpuset.c.
+	 * 扫描 zonelist，寻找具有足够空闲页框的区域。
+	 * 参见 kernel/cpuset.c 中 cpuset_zone_allowed() 的注释。
 	 */
 	for_each_zone_zonelist_nodemask(zone, z, zonelist,
 						high_zoneidx, nodemask) {
 		if (NUMA_BUILD && zlc_active &&
 			!zlc_zone_worth_trying(zonelist, z, allowednodes))
 				continue;
+
 		if ((alloc_flags & ALLOC_CPUSET) &&
 			!cpuset_zone_allowed_softwall(zone, gfp_mask))
 				goto try_next_zone;
@@ -1654,24 +1742,27 @@ zonelist_scan:
 			unsigned long mark;
 			int ret;
 
+			/* 检查该区域的水印，确保有足够的空闲页框 */
 			mark = zone->watermark[alloc_flags & ALLOC_WMARK_MASK];
 			if (zone_watermark_ok(zone, order, mark,
 				    classzone_idx, alloc_flags))
 				goto try_this_zone;
 
+			/* 如果区域回收模式关闭，跳过该区域 */
 			if (zone_reclaim_mode == 0)
 				goto this_zone_full;
 
+			/* 尝试区域回收 */
 			ret = zone_reclaim(zone, gfp_mask, order);
 			switch (ret) {
 			case ZONE_RECLAIM_NOSCAN:
-				/* did not scan */
+				/* 未进行扫描 */
 				goto try_next_zone;
 			case ZONE_RECLAIM_FULL:
-				/* scanned but unreclaimable */
+				/* 扫描但无法回收内存 */
 				goto this_zone_full;
 			default:
-				/* did we reclaim enough */
+				/* 检查回收后是否满足水印要求 */
 				if (!zone_watermark_ok(zone, order, mark,
 						classzone_idx, alloc_flags))
 					goto this_zone_full;
@@ -1679,30 +1770,34 @@ zonelist_scan:
 		}
 
 try_this_zone:
+		/* 从缓冲队列中分配页框 */
 		page = buffered_rmqueue(preferred_zone, zone, order,
 						gfp_mask, migratetype);
 		if (page)
 			break;
+
 this_zone_full:
+		/* 在 NUMA 环境中，标记该区域为已满 */
 		if (NUMA_BUILD)
 			zlc_mark_zone_full(zonelist, z);
+
 try_next_zone:
+		/* 只在第一次遍历时设置 zlc_cache，并且仅在多个 NUMA 节点时启用 */
 		if (NUMA_BUILD && !did_zlc_setup && nr_online_nodes > 1) {
-			/*
-			 * we do zlc_setup after the first zone is tried but only
-			 * if there are multiple nodes make it worthwhile
-			 */
+			/* 在尝试第一个区域后调用 zlc_setup */
 			allowednodes = zlc_setup(zonelist, alloc_flags);
 			zlc_active = 1;
 			did_zlc_setup = 1;
 		}
 	}
 
+	/* 如果未分配到页框，并且 zlc_cache 激活，进行第二次扫描 */
 	if (unlikely(NUMA_BUILD && page == NULL && zlc_active)) {
-		/* Disable zlc cache for second zonelist scan */
+		/* 禁用 zlc_cache 进行第二次扫描 */
 		zlc_active = 0;
 		goto zonelist_scan;
 	}
+
 	return page;
 }
 
@@ -2038,50 +2133,69 @@ got_pg:
 
 }
 
-/*
- * This is the 'heart' of the zoned buddy allocator.
+/**
+ * __alloc_pages_nodemask - 在给定节点掩码下分配页面
+ *
+ * @gfp_mask: 分配标志，用于指定分配页面时的行为（如是否等待、从哪个区域分配等）
+ * @order: 分配的页面阶数，`order = 0` 表示分配 1 个页面，`order = 1` 表示分配 2 个页面，以此类推
+ * @zonelist: 要使用的区域列表，该列表包含不同内存区域（ZONE_NORMAL, ZONE_HIGHMEM 等）
+ * @nodemask: 节点掩码，用于限制页面分配的节点范围
+ *
+ * 此函数用于根据提供的 GFP 标志和页面数量（由 order 指定）从特定的节点掩码中分配内存页面。
+ * 它首先尝试从空闲列表中分配页面，如果分配失败，则进入慢路径重新分配。
+ *
+ * 返回: 成功时返回分配的 `struct page`，失败时返回 NULL。
  */
 struct page *
 __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 			struct zonelist *zonelist, nodemask_t *nodemask)
 {
+	// 获取 GFP 标志对应的高区域索引（即从哪个内存区域分配页面，例如 ZONE_NORMAL, ZONE_HIGHMEM）
 	enum zone_type high_zoneidx = gfp_zone(gfp_mask);
-	struct zone *preferred_zone;
+	struct zone *preferred_zone;  // 优选区域
 	struct page *page;
-	int migratetype = allocflags_to_migratetype(gfp_mask);
+	int migratetype = allocflags_to_migratetype(gfp_mask);  // 获取分配的迁移类型
 
+	// 掩码校正，确保 GFP 标志只包含允许的位
 	gfp_mask &= gfp_allowed_mask;
 
+	// 锁定分配跟踪
 	lockdep_trace_alloc(gfp_mask);
 
+	// 如果 GFP 标志要求等待，则可能需要睡眠
 	might_sleep_if(gfp_mask & __GFP_WAIT);
 
+	// 根据 GFP 标志模拟分配失败（用于测试目的）
 	if (should_fail_alloc_page(gfp_mask, order))
 		return NULL;
 
 	/*
-	 * Check the zones suitable for the gfp_mask contain at least one
-	 * valid zone. It's possible to have an empty zonelist as a result
-	 * of GFP_THISNODE and a memoryless node
+	 * 检查满足 gfp_mask 要求的内存区域是否至少包含一个有效的区域。
+	 * 如果使用了 GFP_THISNODE 或者当前节点没有内存，则可能出现空的区域列表。
 	 */
 	if (unlikely(!zonelist->_zonerefs->zone))
 		return NULL;
 
-	/* The preferred zone is used for statistics later */
+	// 获取优选的区域，并在之后用于统计
 	first_zones_zonelist(zonelist, high_zoneidx, nodemask, &preferred_zone);
 	if (!preferred_zone)
 		return NULL;
 
-	/* First allocation attempt */
+	// 第一次尝试分配页面，从空闲列表中获取页面
 	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
 			zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
 			preferred_zone, migratetype);
+
+	// 如果第一次尝试失败，进入慢路径重新尝试分配
 	if (unlikely(!page))
 		page = __alloc_pages_slowpath(gfp_mask, order,
 				zonelist, high_zoneidx, nodemask,
 				preferred_zone, migratetype);
 
+	// 记录页面分配的跟踪信息
 	trace_mm_page_alloc(page, order, gfp_mask, migratetype);
+
+	// 返回分配的页面
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_nodemask);

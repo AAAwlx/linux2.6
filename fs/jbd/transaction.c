@@ -83,158 +83,145 @@ get_transaction(journal_t *journal, transaction_t *transaction)
 
 static int start_this_handle(journal_t *journal, handle_t *handle)
 {
-	transaction_t *transaction;
-	int needed;
-	int nblocks = handle->h_buffer_credits;
-	transaction_t *new_transaction = NULL;
-	int ret = 0;
+	transaction_t *transaction;  // 当前事务指针
+	int needed;                  // 需要的缓冲区数量
+	int nblocks = handle->h_buffer_credits;  // 从 handle 获取剩余的缓冲区配额
+	transaction_t *new_transaction = NULL;   // 新事务指针
+	int ret = 0;                  // 返回值
 
+	// 检查请求的缓冲区数量是否超过最大限制
 	if (nblocks > journal->j_max_transaction_buffers) {
 		printk(KERN_ERR "JBD: %s wants too many credits (%d > %d)\n",
 		       current->comm, nblocks,
 		       journal->j_max_transaction_buffers);
-		ret = -ENOSPC;
-		goto out;
+		ret = -ENOSPC; // 设置返回值为无空间错误
+		goto out; // 跳转到退出处理
 	}
 
 alloc_transaction:
+	// 如果当前没有正在运行的事务，分配一个新的事务
 	if (!journal->j_running_transaction) {
 		new_transaction = kzalloc(sizeof(*new_transaction),
 						GFP_NOFS|__GFP_NOFAIL);
-		if (!new_transaction) {
-			ret = -ENOMEM;
-			goto out;
+		if (!new_transaction) { // 检查分配是否成功
+			ret = -ENOMEM; // 设置返回值为内存不足错误
+			goto out; // 跳转到退出处理
 		}
 	}
 
-	jbd_debug(3, "New handle %p going live.\n", handle);
+	jbd_debug(3, "New handle %p going live.\n", handle); // 打印调试信息
 
 repeat:
-
 	/*
-	 * We need to hold j_state_lock until t_updates has been incremented,
-	 * for proper journal barrier handling
+	 * 在 t_updates 递增之前，需要保持 j_state_lock
+	 * 以确保日志屏障处理的正确性
 	 */
-	spin_lock(&journal->j_state_lock);
+	spin_lock(&journal->j_state_lock); // 加锁以保护对日志状态的访问
 repeat_locked:
+	// 检查日志是否已中止或存在错误
 	if (is_journal_aborted(journal) ||
 	    (journal->j_errno != 0 && !(journal->j_flags & JFS_ACK_ERR))) {
-		spin_unlock(&journal->j_state_lock);
-		ret = -EROFS;
-		goto out;
+		spin_unlock(&journal->j_state_lock); // 解锁
+		ret = -EROFS; // 设置返回值为只读文件系统错误
+		goto out; // 跳转到退出处理
 	}
 
-	/* Wait on the journal's transaction barrier if necessary */
+	// 如果需要，等待事务的屏障
 	if (journal->j_barrier_count) {
-		spin_unlock(&journal->j_state_lock);
+		spin_unlock(&journal->j_state_lock); // 解锁
 		wait_event(journal->j_wait_transaction_locked,
-				journal->j_barrier_count == 0);
-		goto repeat;
+				journal->j_barrier_count == 0); // 等待直到屏障计数为0
+		goto repeat; // 重新开始循环
 	}
 
 	if (!journal->j_running_transaction) {
+		// 如果没有正在运行的事务，获取新事务
 		if (!new_transaction) {
-			spin_unlock(&journal->j_state_lock);
-			goto alloc_transaction;
+			spin_unlock(&journal->j_state_lock); // 解锁
+			goto alloc_transaction; // 重新分配事务
 		}
-		get_transaction(journal, new_transaction);
-		new_transaction = NULL;
+		get_transaction(journal, new_transaction); // 获取新事务
+		new_transaction = NULL; // 重置新事务指针
 	}
 
-	transaction = journal->j_running_transaction;
+	transaction = journal->j_running_transaction; // 获取当前事务
 
-	/*
-	 * If the current transaction is locked down for commit, wait for the
-	 * lock to be released.
-	 */
+	// 检查当前事务是否处于锁定状态
 	if (transaction->t_state == T_LOCKED) {
-		DEFINE_WAIT(wait);
+		DEFINE_WAIT(wait); // 定义等待队列
 
+		// 准备等待
 		prepare_to_wait(&journal->j_wait_transaction_locked,
 					&wait, TASK_UNINTERRUPTIBLE);
-		spin_unlock(&journal->j_state_lock);
-		schedule();
-		finish_wait(&journal->j_wait_transaction_locked, &wait);
-		goto repeat;
+		spin_unlock(&journal->j_state_lock); // 解锁
+		schedule(); // 调度
+		finish_wait(&journal->j_wait_transaction_locked, &wait); // 结束等待
+		goto repeat; // 重新开始循环
 	}
 
-	/*
-	 * If there is not enough space left in the log to write all potential
-	 * buffers requested by this operation, we need to stall pending a log
-	 * checkpoint to free some more log space.
-	 */
-	spin_lock(&transaction->t_handle_lock);
-	needed = transaction->t_outstanding_credits + nblocks;
+	// 检查日志中是否有足够空间来写入所需的缓冲区
+	spin_lock(&transaction->t_handle_lock); // 加锁当前事务的处理锁
+	needed = transaction->t_outstanding_credits + nblocks; // 计算所需的缓冲区
 
+	// 如果需要的缓冲区超过最大限制，则开始提交当前事务
 	if (needed > journal->j_max_transaction_buffers) {
-		/*
-		 * If the current transaction is already too large, then start
-		 * to commit it: we can then go back and attach this handle to
-		 * a new transaction.
-		 */
-		DEFINE_WAIT(wait);
+		DEFINE_WAIT(wait); // 定义等待队列
 
-		jbd_debug(2, "Handle %p starting new commit...\n", handle);
-		spin_unlock(&transaction->t_handle_lock);
+		jbd_debug(2, "Handle %p starting new commit...\n", handle); // 打印调试信息
+		spin_unlock(&transaction->t_handle_lock); // 解锁
 		prepare_to_wait(&journal->j_wait_transaction_locked, &wait,
-				TASK_UNINTERRUPTIBLE);
-		__log_start_commit(journal, transaction->t_tid);
-		spin_unlock(&journal->j_state_lock);
-		schedule();
-		finish_wait(&journal->j_wait_transaction_locked, &wait);
-		goto repeat;
+				TASK_UNINTERRUPTIBLE); // 准备等待
+		__log_start_commit(journal, transaction->t_tid); // 开始提交日志
+		spin_unlock(&journal->j_state_lock); // 解锁
+		schedule(); // 调度
+		finish_wait(&journal->j_wait_transaction_locked, &wait); // 结束等待
+		goto repeat; // 重新开始循环
 	}
 
 	/*
-	 * The commit code assumes that it can get enough log space
-	 * without forcing a checkpoint.  This is *critical* for
-	 * correctness: a checkpoint of a buffer which is also
-	 * associated with a committing transaction creates a deadlock,
-	 * so commit simply cannot force through checkpoints.
+	 * 提交代码假定可以在不强制进行检查点的情况下
+	 * 获得足够的日志空间。这对正确性是 *至关重要* 的：
+	 * 如果正在提交的事务的缓冲区强制进行检查点，会导致死锁，
+	 * 因此提交操作不能强制进行检查点。
 	 *
-	 * We must therefore ensure the necessary space in the journal
-	 * *before* starting to dirty potentially checkpointed buffers
-	 * in the new transaction.
+	 * 因此，在开始新的事务之前，我们必须确保
+	 * 日志中有必要的空间，以避免潜在的检查点缓冲区被脏化。
 	 *
-	 * The worst part is, any transaction currently committing can
-	 * reduce the free space arbitrarily.  Be careful to account for
-	 * those buffers when checkpointing.
+	 * 当前正在提交的事务可能会任意减少可用空间，
+	 * 在检查点时要小心计算这些缓冲区。
 	 */
 
 	/*
-	 * @@@ AKPM: This seems rather over-defensive.  We're giving commit
-	 * a _lot_ of headroom: 1/4 of the journal plus the size of
-	 * the committing transaction.  Really, we only need to give it
-	 * committing_transaction->t_outstanding_credits plus "enough" for
-	 * the log control blocks.
-	 * Also, this test is inconsitent with the matching one in
-	 * journal_extend().
+	 * @@@ AKPM: 这个检查似乎过于防御性了。
+	 * 我们给提交操作留了很大的空间：日志的 1/4 加上
+	 * 正在提交事务的大小。实际上，我们只需给它
+	 * committing_transaction->t_outstanding_credits 加上
+	 * “足够的”日志控制块的空间。
+	 * 此外，这个检查与 journal_extend() 中的匹配检查不一致。
 	 */
 	if (__log_space_left(journal) < jbd_space_needed(journal)) {
-		jbd_debug(2, "Handle %p waiting for checkpoint...\n", handle);
-		spin_unlock(&transaction->t_handle_lock);
-		__log_wait_for_space(journal);
-		goto repeat_locked;
+		jbd_debug(2, "Handle %p waiting for checkpoint...\n", handle); // 打印调试信息
+		spin_unlock(&transaction->t_handle_lock); // 解锁
+		__log_wait_for_space(journal); // 等待日志空间
+		goto repeat_locked; // 重新开始锁定循环
 	}
 
-	/* OK, account for the buffers that this operation expects to
-	 * use and add the handle to the running transaction. */
-
-	handle->h_transaction = transaction;
-	transaction->t_outstanding_credits += nblocks;
-	transaction->t_updates++;
-	transaction->t_handle_count++;
+	// 记录处理所需的缓冲区并将处理添加到当前事务
+	handle->h_transaction = transaction; // 将当前事务与句柄关联
+	transaction->t_outstanding_credits += nblocks; // 更新未完成的缓冲区数量
+	transaction->t_updates++; // 更新事务的更新计数
+	transaction->t_handle_count++; // 更新处理计数
 	jbd_debug(4, "Handle %p given %d credits (total %d, free %d)\n",
 		  handle, nblocks, transaction->t_outstanding_credits,
-		  __log_space_left(journal));
-	spin_unlock(&transaction->t_handle_lock);
-	spin_unlock(&journal->j_state_lock);
+		  __log_space_left(journal)); // 打印调试信息
+	spin_unlock(&transaction->t_handle_lock); // 解锁事务处理锁
+	spin_unlock(&journal->j_state_lock); // 解锁日志状态锁
 
-	lock_map_acquire(&handle->h_lockdep_map);
+	lock_map_acquire(&handle->h_lockdep_map); // 处理锁定图的获取
 out:
-	if (unlikely(new_transaction))		/* It's usually NULL */
-		kfree(new_transaction);
-	return ret;
+	if (unlikely(new_transaction)) // 检查新事务指针
+		kfree(new_transaction); // 释放内存
+	return ret; // 返回结果
 }
 
 static struct lock_class_key jbd_handle_key;

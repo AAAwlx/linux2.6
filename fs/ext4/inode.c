@@ -1983,61 +1983,69 @@ static void ext4_da_page_release_reservation(struct page *page,
  *
  * As pages are already locked by write_cache_pages(), we can't use it
  */
+/*
+ * mpage_da_submit_io: 提交数据写入的函数
+ *
+ * @mpd: 指向 mpage_da_data 结构体的指针，包含要处理的写入数据的信息。
+ *
+ * 返回: 函数执行结果，0 表示成功，负值表示错误代码。
+ */
 static int mpage_da_submit_io(struct mpage_da_data *mpd)
 {
-	long pages_skipped;
-	struct pagevec pvec;
-	unsigned long index, end;
-	int ret = 0, err, nr_pages, i;
-	struct inode *inode = mpd->inode;
-	struct address_space *mapping = inode->i_mapping;
+	long pages_skipped; // 跳过的页面数量
+	struct pagevec pvec; // 用于存储一组页面
+	unsigned long index, end; // 当前页面索引和结束页面索引
+	int ret = 0, err, nr_pages, i; // 返回值、错误代码、页面数量、循环计数器
+	struct inode *inode = mpd->inode; // 获取 inode
+	struct address_space *mapping = inode->i_mapping; // 获取地址空间映射
 
-	BUG_ON(mpd->next_page <= mpd->first_page);
+	BUG_ON(mpd->next_page <= mpd->first_page); // 确保 next_page 大于 first_page
+
 	/*
-	 * We need to start from the first_page to the next_page - 1
-	 * to make sure we also write the mapped dirty buffer_heads.
-	 * If we look at mpd->b_blocknr we would only be looking
-	 * at the currently mapped buffer_heads.
+	 * 从 first_page 开始到 next_page - 1 进行写入，以确保也写入
+	 * 映射的脏 buffer_heads。如果只查看 mpd->b_blocknr，只会
+	 * 查看当前映射的 buffer_heads。
 	 */
 	index = mpd->first_page;
-	end = mpd->next_page - 1;
+	end = mpd->next_page - 1; // 设置结束索引
 
-	pagevec_init(&pvec, 0);
+	pagevec_init(&pvec, 0); // 初始化 pagevec 结构
 	while (index <= end) {
-		nr_pages = pagevec_lookup(&pvec, mapping, index, PAGEVEC_SIZE);
-		if (nr_pages == 0)
+		nr_pages = pagevec_lookup(&pvec, mapping, index, PAGEVEC_SIZE); // 查找页面
+		if (nr_pages == 0) // 如果没有找到页面，退出循环
 			break;
 		for (i = 0; i < nr_pages; i++) {
-			struct page *page = pvec.pages[i];
+			struct page *page = pvec.pages[i]; // 获取当前页面
 
-			index = page->index;
-			if (index > end)
+			index = page->index; // 更新索引
+			if (index > end) // 如果超过结束索引，退出循环
 				break;
-			index++;
+			index++; // 移动到下一个页面
 
-			BUG_ON(!PageLocked(page));
-			BUG_ON(PageWriteback(page));
+			BUG_ON(!PageLocked(page)); // 确保页面已锁定
+			BUG_ON(PageWriteback(page)); // 确保页面不是在写回状态
 
-			pages_skipped = mpd->wbc->pages_skipped;
-			err = mapping->a_ops->writepage(page, mpd->wbc);
+			pages_skipped = mpd->wbc->pages_skipped; // 获取跳过的页面数量
+			err = mapping->a_ops->writepage(page, mpd->wbc); // 写入页面
 			if (!err && (pages_skipped == mpd->wbc->pages_skipped))
 				/*
-				 * have successfully written the page
-				 * without skipping the same
+				 * 成功写入页面，且没有跳过页面
+				 * 增加已写入页面计数
 				 */
 				mpd->pages_written++;
 			/*
-			 * In error case, we have to continue because
-			 * remaining pages are still locked
-			 * XXX: unlock and re-dirty them?
+			 * 在错误情况下，继续处理其余页面，因为
+			 * 其他页面仍然被锁定
+			 * XXX: 需要解锁并重新标记为脏吗？
 			 */
-			if (ret == 0)
-				ret = err;
+			if (ret == 0) // 如果尚未发生错误
+				ret = err; // 记录错误代码
 		}
-		pagevec_release(&pvec);
+		pagevec_release(&pvec); // 释放 pagevec
 	}
-	return ret;
+	return ret; // 返回执行结果
 }
+
 
 /*
  * mpage_put_bnr_to_bhs - walk blocks and assign them actual numbers
@@ -2203,201 +2211,188 @@ static void ext4_print_free_blocks(struct inode *inode)
  * The function skips space we know is already mapped to disk blocks.
  *
  */
+/*
+ * mpage_da_map_blocks - 遍历给定的空间进行块的映射
+ *
+ * @mpd - 描述空间的缓冲头
+ *
+ * 该函数跳过已经映射到磁盘块的空间，主要用于处理延迟分配的块。
+ */
 static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 {
-	int err, blks, get_blocks_flags;
-	struct buffer_head new;
-	sector_t next = mpd->b_blocknr;
-	unsigned max_blocks = mpd->b_size >> mpd->inode->i_blkbits;
-	loff_t disksize = EXT4_I(mpd->inode)->i_disksize;
-	handle_t *handle = NULL;
+	int err, blks, get_blocks_flags;   // err: 错误码, blks: 获取的块数, get_blocks_flags: 用于获取块的标志
+	struct buffer_head new;            // 用于存储新的缓冲头
+	sector_t next = mpd->b_blocknr;    // 当前块号
+	unsigned max_blocks = mpd->b_size >> mpd->inode->i_blkbits;  // 需要分配的最大块数，计算方法为页面大小除以块大小
+	loff_t disksize = EXT4_I(mpd->inode)->i_disksize;  // 获取inode的磁盘大小
+	handle_t *handle = NULL;           // 处理日志操作的句柄
 
 	/*
-	 * We consider only non-mapped and non-allocated blocks
+	 * 我们只考虑未映射和未分配的块
 	 */
-	if ((mpd->b_state  & (1 << BH_Mapped)) &&
-		!(mpd->b_state & (1 << BH_Delay)) &&
-		!(mpd->b_state & (1 << BH_Unwritten)))
-		return 0;
+	if ((mpd->b_state  & (1 << BH_Mapped)) &&  // 如果当前块已经映射
+		!(mpd->b_state & (1 << BH_Delay)) &&  // 并且既不是延迟分配块
+		!(mpd->b_state & (1 << BH_Unwritten))) // 也不是未写入的预分配块
+		return 0;  // 直接返回，不需要分配新的块
 
 	/*
-	 * If we didn't accumulate anything to write simply return
+	 * 如果没有积累到需要写入的内容则直接返回
 	 */
-	if (!mpd->b_size)
-		return 0;
+	if (!mpd->b_size)  // 如果没有要写的块
+		return 0;      // 直接返回
 
-	handle = ext4_journal_current_handle();
-	BUG_ON(!handle);
+	handle = ext4_journal_current_handle();  // 获取当前的日志句柄
+	BUG_ON(!handle);  // 如果没有句柄，报错并停止
 
 	/*
-	 * Call ext4_get_blocks() to allocate any delayed allocation
-	 * blocks, or to convert an uninitialized extent to be
-	 * initialized (in the case where we have written into
-	 * one or more preallocated blocks).
-	 *
-	 * We pass in the magic EXT4_GET_BLOCKS_DELALLOC_RESERVE to
-	 * indicate that we are on the delayed allocation path.  This
-	 * affects functions in many different parts of the allocation
-	 * call path.  This flag exists primarily because we don't
-	 * want to change *many* call functions, so ext4_get_blocks()
-	 * will set the magic i_delalloc_reserved_flag once the
-	 * inode's allocation semaphore is taken.
-	 *
-	 * If the blocks in questions were delalloc blocks, set
-	 * EXT4_GET_BLOCKS_DELALLOC_RESERVE so the delalloc accounting
-	 * variables are updated after the blocks have been allocated.
+	 * 调用 ext4_get_blocks() 来分配任何延迟分配的块，或者将未初始化的块转换为已初始化。
+	 * 
+	 * 我们传递 EXT4_GET_BLOCKS_DELALLOC_RESERVE 标志来表明这是延迟分配的路径。
+	 * 该标志会影响分配路径中的多个函数。
 	 */
 	new.b_state = 0;
-	get_blocks_flags = EXT4_GET_BLOCKS_CREATE;
-	if (ext4_should_dioread_nolock(mpd->inode))
-		get_blocks_flags |= EXT4_GET_BLOCKS_IO_CREATE_EXT;
-	if (mpd->b_state & (1 << BH_Delay))
-		get_blocks_flags |= EXT4_GET_BLOCKS_DELALLOC_RESERVE;
+	get_blocks_flags = EXT4_GET_BLOCKS_CREATE;  // 标志设置为创建新块
+	if (ext4_should_dioread_nolock(mpd->inode))  // 如果需要无锁直接I/O读取
+		get_blocks_flags |= EXT4_GET_BLOCKS_IO_CREATE_EXT;  // 设置IO扩展标志
+	if (mpd->b_state & (1 << BH_Delay))  // 如果块是延迟分配的
+		get_blocks_flags |= EXT4_GET_BLOCKS_DELALLOC_RESERVE;  // 设置延迟分配的标志
 
-	blks = ext4_get_blocks(handle, mpd->inode, next, max_blocks,
-			       &new, get_blocks_flags);
-	if (blks < 0) {
-		err = blks;
+	blks = ext4_get_blocks(handle, mpd->inode, next, max_blocks,  // 调用 ext4_get_blocks 进行块分配
+			       &new, get_blocks_flags);  // 返回成功分配的块数
+	if (blks < 0) {  // 如果分配失败
+		err = blks;  // 将错误码存储在err
 		/*
-		 * If get block returns with error we simply
-		 * return. Later writepage will redirty the page and
-		 * writepages will find the dirty page again
+		 * 如果获取块时出错，稍后 writepage 会重新标记页面为脏页，重新尝试写入
 		 */
-		if (err == -EAGAIN)
+		if (err == -EAGAIN)  // 如果错误是EAGAIN，则返回0，表示可以重试
 			return 0;
 
-		if (err == -ENOSPC &&
+		if (err == -ENOSPC &&  // 如果没有可用空间但统计显示仍有空闲块
 		    ext4_count_free_blocks(mpd->inode->i_sb)) {
-			mpd->retval = err;
+			mpd->retval = err;  // 设置返回值为错误码并返回
 			return 0;
 		}
 
 		/*
-		 * get block failure will cause us to loop in
-		 * writepages, because a_ops->writepage won't be able
-		 * to make progress. The page will be redirtied by
-		 * writepage and writepages will again try to write
-		 * the same.
+		 * 块获取失败会导致 writepages 函数循环重试，因为 a_ops->writepage 无法继续。
 		 */
-		ext4_msg(mpd->inode->i_sb, KERN_CRIT,
+		ext4_msg(mpd->inode->i_sb, KERN_CRIT,  // 打印错误消息
 			 "delayed block allocation failed for inode %lu at "
 			 "logical offset %llu with max blocks %zd with "
-			 "error %d\n", mpd->inode->i_ino,
+			 "error %d\n", mpd->inode->i_ino,  // 错误信息包含inode号、逻辑偏移和块数
 			 (unsigned long long) next,
 			 mpd->b_size >> mpd->inode->i_blkbits, err);
 		printk(KERN_CRIT "This should not happen!!  "
 		       "Data will be lost\n");
-		if (err == -ENOSPC) {
+		if (err == -ENOSPC) {  // 如果错误是ENOSPC，打印可用块信息
 			ext4_print_free_blocks(mpd->inode);
 		}
-		/* invalidate all the pages */
-		ext4_da_block_invalidatepages(mpd, next,
+		/* 使所有页面失效 */
+		ext4_da_block_invalidatepages(mpd, next,  // 使这些页面失效以避免无效的数据写回
 				mpd->b_size >> mpd->inode->i_blkbits);
-		return err;
+		return err;  // 返回错误码
 	}
-	BUG_ON(blks == 0);
+	BUG_ON(blks == 0);  // 检查是否成功分配了块
 
-	new.b_size = (blks << mpd->inode->i_blkbits);
+	new.b_size = (blks << mpd->inode->i_blkbits);  // 设置缓冲区大小为分配的块数 * 每块大小
 
-	if (buffer_new(&new))
-		__unmap_underlying_blocks(mpd->inode, &new);
+	if (buffer_new(&new))  // 如果是新分配的块
+		__unmap_underlying_blocks(mpd->inode, &new);  // 取消底层块的映射
 
 	/*
-	 * If blocks are delayed marked, we need to
-	 * put actual blocknr and drop delayed bit
+	 * 如果块是延迟分配或未写入的块，则更新其物理块号并清除延迟位
 	 */
 	if ((mpd->b_state & (1 << BH_Delay)) ||
 	    (mpd->b_state & (1 << BH_Unwritten)))
-		mpage_put_bnr_to_bhs(mpd, next, &new);
+		mpage_put_bnr_to_bhs(mpd, next, &new);  // 更新缓冲头的块号
 
-	if (ext4_should_order_data(mpd->inode)) {
-		err = ext4_jbd2_file_inode(handle, mpd->inode);
+	if (ext4_should_order_data(mpd->inode)) {  // 如果需要有序写入数据
+		err = ext4_jbd2_file_inode(handle, mpd->inode);  // 将数据同步到日志
 		if (err)
 			return err;
 	}
 
 	/*
-	 * Update on-disk size along with block allocation.
+	 * 块分配后，更新磁盘上的文件大小
 	 */
-	disksize = ((loff_t) next + blks) << mpd->inode->i_blkbits;
-	if (disksize > i_size_read(mpd->inode))
+	disksize = ((loff_t) next + blks) << mpd->inode->i_blkbits;  // 计算新的磁盘大小
+	if (disksize > i_size_read(mpd->inode))  // 确保磁盘大小不超过文件的实际大小
 		disksize = i_size_read(mpd->inode);
-	if (disksize > EXT4_I(mpd->inode)->i_disksize) {
-		ext4_update_i_disksize(mpd->inode, disksize);
-		return ext4_mark_inode_dirty(handle, mpd->inode);
+	if (disksize > EXT4_I(mpd->inode)->i_disksize) {  // 如果更新后的磁盘大小超过已记录的大小
+		ext4_update_i_disksize(mpd->inode, disksize);  // 更新磁盘大小
+		return ext4_mark_inode_dirty(handle, mpd->inode);  // 将inode标记为脏
 	}
 
-	return 0;
+	return 0;  // 成功返回
 }
 
 #define BH_FLAGS ((1 << BH_Uptodate) | (1 << BH_Mapped) | \
 		(1 << BH_Delay) | (1 << BH_Unwritten))
 
 /*
- * mpage_add_bh_to_extent - try to add one more block to extent of blocks
+ * mpage_add_bh_to_extent - 尝试将一个块添加到块的扩展范围中
  *
- * @mpd->lbh - extent of blocks
- * @logical - logical number of the block in the file
- * @bh - bh of the block (used to access block's state)
+ * @mpd->lbh - 块的扩展范围
+ * @logical - 文件中块的逻辑编号
+ * @bh - 块的缓冲头（用于访问块的状态）
  *
- * the function is used to collect contig. blocks in same state
+ * 该函数用于收集相同状态的连续块。
  */
 static void mpage_add_bh_to_extent(struct mpage_da_data *mpd,
 				   sector_t logical, size_t b_size,
 				   unsigned long b_state)
 {
-	sector_t next;
-	int nrblocks = mpd->b_size >> mpd->inode->i_blkbits;
+	sector_t next;  // 下一个逻辑块号
+	int nrblocks = mpd->b_size >> mpd->inode->i_blkbits;  // 计算当前扩展中的块数
 
-	/* check if thereserved journal credits might overflow */
-	if (!(EXT4_I(mpd->inode)->i_flags & EXT4_EXTENTS_FL)) {
+	/* 检查保留的日志凭证是否可能溢出 */
+	if (!(EXT4_I(mpd->inode)->i_flags & EXT4_EXTENTS_FL)) {  // 如果 inode 不使用扩展格式
+		// 如果当前块数超过最大可支持的事务数据量
 		if (nrblocks >= EXT4_MAX_TRANS_DATA) {
 			/*
-			 * With non-extent format we are limited by the journal
-			 * credit available.  Total credit needed to insert
-			 * nrblocks contiguous blocks is dependent on the
-			 * nrblocks.  So limit nrblocks.
+			 * 对于非扩展格式，受限于可用的日志凭证。
+			 * 插入 nrblocks 个连续块所需的总凭证取决于块数。
+			 * 因此，限制块数。
 			 */
-			goto flush_it;
+			goto flush_it;  // 无法继续合并，进入刷新流程
 		} else if ((nrblocks + (b_size >> mpd->inode->i_blkbits)) >
 				EXT4_MAX_TRANS_DATA) {
 			/*
-			 * Adding the new buffer_head would make it cross the
-			 * allowed limit for which we have journal credit
-			 * reserved. So limit the new bh->b_size
+			 * 添加新的缓冲头会超出为其保留的日志凭证上限。
+			 * 因此，限制新缓冲头的大小。
 			 */
 			b_size = (EXT4_MAX_TRANS_DATA - nrblocks) <<
-						mpd->inode->i_blkbits;
-			/* we will do mpage_da_submit_io in the next loop */
+						mpd->inode->i_blkbits;  // 限制缓冲头大小
+			/* 在下一轮循环中调用 mpage_da_submit_io 提交 I/O */
 		}
 	}
+
 	/*
-	 * First block in the extent
+	 * 扩展的第一个块
 	 */
-	if (mpd->b_size == 0) {
-		mpd->b_blocknr = logical;
-		mpd->b_size = b_size;
-		mpd->b_state = b_state & BH_FLAGS;
+	if (mpd->b_size == 0) {  // 如果这是扩展中的第一个块
+		mpd->b_blocknr = logical;  // 设置扩展的起始块号
+		mpd->b_size = b_size;  // 设置扩展的大小
+		mpd->b_state = b_state & BH_FLAGS;  // 设置扩展的状态
 		return;
 	}
 
-	next = mpd->b_blocknr + nrblocks;
+	next = mpd->b_blocknr + nrblocks;  // 计算下一个逻辑块号
 	/*
-	 * Can we merge the block to our big extent?
+	 * 我们能将这个块合并到当前的扩展中吗？
 	 */
-	if (logical == next && (b_state & BH_FLAGS) == mpd->b_state) {
-		mpd->b_size += b_size;
+	if (logical == next && (b_state & BH_FLAGS) == mpd->b_state) {  // 如果该块可以合并
+		mpd->b_size += b_size;  // 增加扩展的大小
 		return;
 	}
 
 flush_it:
 	/*
-	 * We couldn't merge the block to our extent, so we
-	 * need to flush current  extent and start new one
+	 * 无法将该块合并到扩展中，因此需要刷新当前扩展并开始新的扩展。
 	 */
-	if (mpage_da_map_blocks(mpd) == 0)
-		mpage_da_submit_io(mpd);
-	mpd->io_done = 1;
+	if (mpage_da_map_blocks(mpd) == 0)  // 将块映射到扩展中
+		mpage_da_submit_io(mpd);  // 提交 I/O 操作
+	mpd->io_done = 1;  // 标记 I/O 操作完成
 	return;
 }
 
@@ -2405,177 +2400,190 @@ static int ext4_bh_delay_or_unwritten(handle_t *handle, struct buffer_head *bh)
 {
 	return (buffer_delay(bh) || buffer_unwritten(bh)) && buffer_dirty(bh);
 }
-
 /*
- * __mpage_da_writepage - finds extent of pages and blocks
+ * __mpage_da_writepage - 查找页面和块的范围
  *
- * @page: page to consider
- * @wbc: not used, we just follow rules
- * @data: context
+ * @page: 需要处理的页面
+ * @wbc: 写回控制结构（未使用，我们只需遵循规则）
+ * @data: 上下文信息
  *
- * The function finds extents of pages and scan them for all blocks.
+ * 该函数用于查找页面的范围，并扫描其中的所有块。
  */
 static int __mpage_da_writepage(struct page *page,
 				struct writeback_control *wbc, void *data)
 {
-	struct mpage_da_data *mpd = data;
-	struct inode *inode = mpd->inode;
-	struct buffer_head *bh, *head;
-	sector_t logical;
+	struct mpage_da_data *mpd = data;  // 从 data 中获取 mpage_da_data 结构
+	struct inode *inode = mpd->inode;  // 获取与该数据相关联的 inode
+	struct buffer_head *bh, *head;  // 定义缓冲头指针
+	sector_t logical;  // 逻辑块号
 
+	// 如果已完成 I/O 操作
 	if (mpd->io_done) {
 		/*
-		 * Rest of the page in the page_vec
-		 * redirty then and skip then. We will
-		 * try to write them again after
-		 * starting a new transaction
+		 * 对于 page_vec 中剩余的页面，将它们重新标记为脏页，并跳过。
+		 * 在启动新事务后，我们会再次尝试写入它们。
 		 */
-		redirty_page_for_writepage(wbc, page);
-		unlock_page(page);
-		return MPAGE_DA_EXTENT_TAIL;
+		redirty_page_for_writepage(wbc, page);  // 重新标记页面为脏页
+		unlock_page(page);  // 解锁页面
+		return MPAGE_DA_EXTENT_TAIL;  // 返回处理完成的状态
 	}
+
 	/*
-	 * Can we merge this page to current extent?
+	 * 我们是否可以将此页面合并到当前扩展中？
 	 */
-	if (mpd->next_page != page->index) {
+	if (mpd->next_page != page->index) {  // 如果当前页面不能合并到扩展
 		/*
-		 * Nope, we can't. So, we map non-allocated blocks
-		 * and start IO on them using writepage()
+		 * 不能合并。我们将映射未分配的块，并通过 writepage() 启动它们的 I/O。
 		 */
 		if (mpd->next_page != mpd->first_page) {
+			// 映射数据块并提交 I/O
 			if (mpage_da_map_blocks(mpd) == 0)
 				mpage_da_submit_io(mpd);
 			/*
-			 * skip rest of the page in the page_vec
+			 * 跳过 page_vec 中剩余的页面
 			 */
-			mpd->io_done = 1;
-			redirty_page_for_writepage(wbc, page);
-			unlock_page(page);
-			return MPAGE_DA_EXTENT_TAIL;
+			mpd->io_done = 1;  // 标记 I/O 操作完成
+			redirty_page_for_writepage(wbc, page);  // 重新标记页面为脏页
+			unlock_page(page);  // 解锁页面
+			return MPAGE_DA_EXTENT_TAIL;  // 返回处理完成状态
 		}
 
 		/*
-		 * Start next extent of pages ...
+		 * 开始新的页面扩展...
 		 */
-		mpd->first_page = page->index;
+		mpd->first_page = page->index;  // 更新 first_page 为当前页面的索引
 
 		/*
-		 * ... and blocks
+		 * ...以及块的扩展
 		 */
-		mpd->b_size = 0;
-		mpd->b_state = 0;
-		mpd->b_blocknr = 0;
+		mpd->b_size = 0;  // 重置块大小
+		mpd->b_state = 0;  // 重置块状态
+		mpd->b_blocknr = 0;  // 重置块号
 	}
 
+	// 更新下一个页面的索引
 	mpd->next_page = page->index + 1;
-	logical = (sector_t) page->index <<
-		  (PAGE_CACHE_SHIFT - inode->i_blkbits);
+	// 计算逻辑块号
+	logical = (sector_t) page->index << (PAGE_CACHE_SHIFT - inode->i_blkbits);
 
-	if (!page_has_buffers(page)) {
+	// 如果页面没有 buffer
+	if (!page_has_buffers(page)) {//针对这种情况 mpage_add_bh_to_extent 函数中仍然需要对比块是否连续
+		// 将当前页面添加到扩展中
 		mpage_add_bh_to_extent(mpd, logical, PAGE_CACHE_SIZE,
 				       (1 << BH_Dirty) | (1 << BH_Uptodate));
+		// 如果 I/O 操作已完成，返回处理完成状态
 		if (mpd->io_done)
 			return MPAGE_DA_EXTENT_TAIL;
 	} else {
 		/*
-		 * Page with regular buffer heads, just add all dirty ones
+		 * 处理具有常规缓冲头的页面，只添加所有脏缓冲头。
 		 */
-		head = page_buffers(page);
+		head = page_buffers(page);  // 获取页面的缓冲头链表
 		bh = head;
 		do {
-			BUG_ON(buffer_locked(bh));
+			BUG_ON(buffer_locked(bh));  // 确保缓冲头未被锁定
 			/*
-			 * We need to try to allocate
-			 * unmapped blocks in the same page.
-			 * Otherwise we won't make progress
-			 * with the page in ext4_writepage
+			 * 我们需要尝试分配页面中未映射的块。
+			 * 否则，在 ext4_writepage 中该页面将无法继续处理。
 			 */
 			if (ext4_bh_delay_or_unwritten(NULL, bh)) {
+				// 将缓冲头添加到扩展中
 				mpage_add_bh_to_extent(mpd, logical,
 						       bh->b_size,
 						       bh->b_state);
+				// 如果 I/O 操作已完成，返回处理完成状态
 				if (mpd->io_done)
 					return MPAGE_DA_EXTENT_TAIL;
-			} else if (buffer_dirty(bh) && (buffer_mapped(bh))) {
+			} else if (buffer_dirty(bh) && buffer_mapped(bh)) {
 				/*
-				 * mapped dirty buffer. We need to update
-				 * the b_state because we look at
-				 * b_state in mpage_da_map_blocks. We don't
-				 * update b_size because if we find an
-				 * unmapped buffer_head later we need to
-				 * use the b_state flag of that buffer_head.
+				 * 映射的脏缓冲头。我们需要更新 b_state，
+				 * 因为我们在 mpage_da_map_blocks 中会检查 b_state。
+				 * 我们不更新 b_size，因为如果稍后找到未映射的 buffer_head，
+				 * 我们需要使用该 buffer_head 的 b_state 标志。
 				 */
 				if (mpd->b_size == 0)
-					mpd->b_state = bh->b_state & BH_FLAGS;
+					mpd->b_state = bh->b_state & BH_FLAGS;  // 更新块状态
 			}
-			logical++;
-		} while ((bh = bh->b_this_page) != head);
+			logical++;  // 更新逻辑块号
+		} while ((bh = bh->b_this_page) != head);  // 遍历页面的所有缓冲头
 	}
 
-	return 0;
+	return 0;  // 返回成功状态
 }
 
 /*
- * This is a special get_blocks_t callback which is used by
- * ext4_da_write_begin().  It will either return mapped block or
- * reserve space for a single block.
+ * ext4_da_get_block_prep: ext4_da_write_begin() 的专用 get_blocks_t 回调
+ * @inode: 文件的 inode 结构
+ * @iblock: 文件中的逻辑块号
+ * @bh_result: 缓冲区头部，存储块映射信息
+ * @create: 如果为 1，则表示应为该块预留空间
  *
- * For delayed buffer_head we have BH_Mapped, BH_New, BH_Delay set.
- * We also have b_blocknr = -1 and b_bdev initialized properly
+ * 该函数用于 ext4 的延迟分配写入机制（delayed allocation write），
+ * 它会返回映射的块或者为单个块预留空间。
  *
- * For unwritten buffer_head we have BH_Mapped, BH_New, BH_Unwritten set.
- * We also have b_blocknr = physicalblock mapping unwritten extent and b_bdev
- * initialized properly.
+ * 如果缓冲区是延迟分配的，则会设置 BH_Mapped（映射位）、BH_New（新块位）、
+ * BH_Delay（延迟分配位），并且 b_blocknr 会被设置为 -1（表示还没有实际分配物理块），
+ * b_bdev 也会被正确初始化为对应的块设备。
+ *
+ * 如果缓冲区是尚未写入的（unwritten extent），则会设置 BH_Mapped、BH_New、
+ * BH_Unwritten（未写入位），并且 b_blocknr 会指向对应的物理块号，b_bdev 同样被正确初始化。
  */
 static int ext4_da_get_block_prep(struct inode *inode, sector_t iblock,
 				  struct buffer_head *bh_result, int create)
 {
 	int ret = 0;
-	sector_t invalid_block = ~((sector_t) 0xffff);
+	sector_t invalid_block = ~((sector_t) 0xffff);  // 初始化无效块号为 0xffff 的按位取反值
 
+	// 检查无效块号是否小于文件系统的最大块号，如果是则将无效块号设置为全 1
 	if (invalid_block < ext4_blocks_count(EXT4_SB(inode->i_sb)->s_es))
 		invalid_block = ~0;
 
+	// 确保调用时 create 标志为 1（即必须是创建新的块时调用），否则触发错误
 	BUG_ON(create == 0);
+	// 确保缓冲区大小与文件系统的块大小一致，否则触发错误
 	BUG_ON(bh_result->b_size != inode->i_sb->s_blocksize);
 
 	/*
-	 * first, we need to know whether the block is allocated already
-	 * preallocated blocks are unmapped but should treated
-	 * the same as allocated blocks.
+	 * 首先，我们需要知道块是否已经分配
+	 * 预分配的块是未映射的，但应视为已分配块进行处理
 	 */
-	ret = ext4_get_blocks(NULL, inode, iblock, 1,  bh_result, 0);
+	ret = ext4_get_blocks(NULL, inode, iblock, 1, bh_result, 0);
+	
+	// 如果块没有预分配或已分配，并且缓冲区不标记为延迟分配
 	if ((ret == 0) && !buffer_delay(bh_result)) {
-		/* the block isn't (pre)allocated yet, let's reserve space */
+		/* 该块尚未（预）分配，让我们为其预留空间 */
+
 		/*
-		 * XXX: __block_prepare_write() unmaps passed block,
-		 * is it OK?
+		 * XXX: __block_prepare_write() 会取消传入块的映射，
+		 * 这个行为可以接受吗？
 		 */
-		ret = ext4_da_reserve_space(inode, iblock);
+		ret = ext4_da_reserve_space(inode, iblock);  // 为块预留空间
 		if (ret)
-			/* not enough space to reserve */
+			/* 如果空间不足，预留失败，返回错误码 */
 			return ret;
 
+		// 将缓冲区标记为延迟分配，映射到无效块号（invalid_block）
 		map_bh(bh_result, inode->i_sb, invalid_block);
-		set_buffer_new(bh_result);
-		set_buffer_delay(bh_result);
+		set_buffer_new(bh_result);  // 标记为新块
+		set_buffer_delay(bh_result);  // 标记为延迟分配块
 	} else if (ret > 0) {
+		// 如果块已经分配，设置缓冲区的大小
 		bh_result->b_size = (ret << inode->i_blkbits);
+		
+		// 如果块是未写入状态（unwritten），则做进一步处理
 		if (buffer_unwritten(bh_result)) {
-			/* A delayed write to unwritten bh should
-			 * be marked new and mapped.  Mapped ensures
-			 * that we don't do get_block multiple times
-			 * when we write to the same offset and new
-			 * ensures that we do proper zero out for
-			 * partial write.
+			/*
+			 * 对于未写入块的延迟写操作，应标记为新块和映射块。
+			 * 映射块的标记确保不会在同一偏移处多次调用 get_block，
+			 * 新块标记确保在部分写操作时会正确进行清零操作。
 			 */
-			set_buffer_new(bh_result);
-			set_buffer_mapped(bh_result);
+			set_buffer_new(bh_result);  // 标记为新块
+			set_buffer_mapped(bh_result);  // 标记为已映射块
 		}
-		ret = 0;
+		ret = 0;  // 重置返回值为 0，表示成功
 	}
 
-	return ret;
+	return ret;  // 返回操作结果
 }
 
 /*
@@ -2626,141 +2634,141 @@ static int bput_one(handle_t *handle, struct buffer_head *bh)
 	return 0;
 }
 
+/*
+ * __ext4_journalled_writepage: 用于写入页面到 ext4 日志中的函数。
+ *
+ * @page: 指向要写入的页面的指针。
+ * @len: 要写入的字节长度。
+ *
+ * 返回: 0 表示成功，负值表示错误代码。
+ */
 static int __ext4_journalled_writepage(struct page *page,
 				       unsigned int len)
 {
-	struct address_space *mapping = page->mapping;
-	struct inode *inode = mapping->host;
-	struct buffer_head *page_bufs;
-	handle_t *handle = NULL;
-	int ret = 0;
-	int err;
+	struct address_space *mapping = page->mapping; // 获取页面的地址空间映射
+	struct inode *inode = mapping->host; // 获取与页面关联的 inode
+	struct buffer_head *page_bufs; // 指向页面缓冲区头的指针
+	handle_t *handle = NULL; // 日志处理句柄
+	int ret = 0; // 返回值初始化
+	int err; // 错误代码
 
-	page_bufs = page_buffers(page);
-	BUG_ON(!page_bufs);
+	page_bufs = page_buffers(page); // 获取页面的缓冲区头
+	BUG_ON(!page_bufs); // 确保页面缓冲区头存在
+
+	// 遍历页面缓冲区并获取写入访问
 	walk_page_buffers(handle, page_bufs, 0, len, NULL, bget_one);
-	/* As soon as we unlock the page, it can go away, but we have
-	 * references to buffers so we are safe */
-	unlock_page(page);
+	/* 一旦我们解锁页面，它就可能被释放，但我们对缓冲区有引用，因此安全 */
+	unlock_page(page); // 解锁页面
 
-	handle = ext4_journal_start(inode, ext4_writepage_trans_blocks(inode));
-	if (IS_ERR(handle)) {
-		ret = PTR_ERR(handle);
-		goto out;
+	handle = ext4_journal_start(inode, ext4_writepage_trans_blocks(inode)); // 启动 ext4 日志
+	if (IS_ERR(handle)) { // 检查是否出错
+		ret = PTR_ERR(handle); // 获取错误代码
+		goto out; // 跳转到输出部分
 	}
 
+	// 为页面缓冲区获取写入访问
 	ret = walk_page_buffers(handle, page_bufs, 0, len, NULL,
 				do_journal_get_write_access);
 
+	// 将页面数据写入日志
 	err = walk_page_buffers(handle, page_bufs, 0, len, NULL,
 				write_end_fn);
-	if (ret == 0)
-		ret = err;
-	err = ext4_journal_stop(handle);
-	if (!ret)
-		ret = err;
+	if (ret == 0) // 如果没有错误
+		ret = err; // 更新返回值
 
+	err = ext4_journal_stop(handle); // 停止日志处理
+	if (!ret) // 如果返回值为 0
+		ret = err; // 更新返回值
+
+	// 释放页面缓冲区引用
 	walk_page_buffers(handle, page_bufs, 0, len, NULL, bput_one);
-	ext4_set_inode_state(inode, EXT4_STATE_JDATA);
+	ext4_set_inode_state(inode, EXT4_STATE_JDATA); // 设置 inode 状态为 JDATA
 out:
-	return ret;
+	return ret; // 返回结果
 }
+
 
 static int ext4_set_bh_endio(struct buffer_head *bh, struct inode *inode);
 static void ext4_end_io_buffer_write(struct buffer_head *bh, int uptodate);
 
 /*
- * Note that we don't need to start a transaction unless we're journaling data
- * because we should have holes filled from ext4_page_mkwrite(). We even don't
- * need to file the inode to the transaction's list in ordered mode because if
- * we are writing back data added by write(), the inode is already there and if
- * we are writing back data modified via mmap(), noone guarantees in which
- * transaction the data will hit the disk. In case we are journaling data, we
- * cannot start transaction directly because transaction start ranks above page
- * lock so we have to do some magic.
+ * 请注意，除非我们正在记录数据，否则不需要启动事务，
+ * 因为应该已经通过 ext4_page_mkwrite() 填充了空洞。 
+ * 即使在有序模式下，我们也不需要将 inode 提交到事务的列表中，
+ * 因为如果我们正在写回通过 write() 添加的数据，inode 已经在那里了；
+ * 如果我们正在写回通过 mmap() 修改的数据，则没有人能保证数据会在哪个事务中落盘。
+ * 如果我们正在记录数据，不能直接启动事务，因为事务的启动优先于页面锁，
+ * 因此我们需要一些特殊处理。
  *
- * This function can get called via...
- *   - ext4_da_writepages after taking page lock (have journal handle)
- *   - journal_submit_inode_data_buffers (no journal handle)
- *   - shrink_page_list via pdflush (no journal handle)
- *   - grab_page_cache when doing write_begin (have journal handle)
+ * 该函数可以通过以下途径被调用：
+ *   - ext4_da_writepages 在持有页面锁后（有 journal handle）
+ *   - journal_submit_inode_data_buffers（无 journal handle）
+ *   - shrink_page_list 通过 pdflush 调用（无 journal handle）
+ *   - grab_page_cache 在执行 write_begin 时（有 journal handle）
  *
- * We don't do any block allocation in this function. If we have page with
- * multiple blocks we need to write those buffer_heads that are mapped. This
- * is important for mmaped based write. So if we do with blocksize 1K
- * truncate(f, 1024);
- * a = mmap(f, 0, 4096);
- * a[0] = 'a';
- * truncate(f, 4096);
- * we have in the page first buffer_head mapped via page_mkwrite call back
- * but other bufer_heads would be unmapped but dirty(dirty done via the
- * do_wp_page). So writepage should write the first block. If we modify
- * the mmap area beyond 1024 we will again get a page_fault and the
- * page_mkwrite callback will do the block allocation and mark the
- * buffer_heads mapped.
+ * 该函数不会进行任何块分配。如果一个页面包含多个块，我们只需要写入那些已经映射的 buffer_heads。
+ * 这对基于 mmap 的写操作非常重要。例如：
+ * 如果我们使用 blocksize 1K 执行 truncate(f, 1024);
+ * 然后使用 mmap(f, 0, 4096);
+ * 修改 a[0] = 'a';
+ * 然后执行 truncate(f, 4096);
+ * 页面中的第一个 buffer_head 将通过 page_mkwrite 回调映射，
+ * 但是其他的 buffer_heads 将不会被映射但标记为 dirty（脏数据通过 do_wp_page 标记）。
+ * 所以 writepage 应该写入第一个块。如果我们修改 mmap 区域超过 1024 字节，
+ * 我们会再次触发 page_fault，page_mkwrite 回调将完成块分配并标记 buffer_heads 为已映射。
  *
- * We redirty the page if we have any buffer_heads that is either delay or
- * unwritten in the page.
+ * 如果页面中的任何 buffer_heads 是延迟分配或未写入的，
+ * 我们将重新标记页面为脏页。
  *
- * We can get recursively called as show below.
+ * 该函数可能会递归调用，如下所示：
  *
  *	ext4_writepage() -> kmalloc() -> __alloc_pages() -> page_launder() ->
  *		ext4_writepage()
  *
- * But since we don't do any block allocation we should not deadlock.
- * Page also have the dirty flag cleared so we don't get recurive page_lock.
+ * 但由于我们不做块分配，因此不应该发生死锁。
+ * 页面也已清除脏标记，因此不会发生递归的 page_lock。
  */
 static int ext4_writepage(struct page *page,
 			  struct writeback_control *wbc)
 {
-	int ret = 0;
-	loff_t size;
-	unsigned int len;
-	struct buffer_head *page_bufs = NULL;
-	struct inode *inode = page->mapping->host;
+	int ret = 0;  // 保存函数返回值
+	loff_t size;  // 文件大小
+	unsigned int len;  // 要写入的页面长度
+	struct buffer_head *page_bufs = NULL;  // 页面缓冲区
+	struct inode *inode = page->mapping->host;  // 获取页面关联的 inode
 
-	trace_ext4_writepage(inode, page);
-	size = i_size_read(inode);
-	if (page->index == size >> PAGE_CACHE_SHIFT)
-		len = size & ~PAGE_CACHE_MASK;
+	trace_ext4_writepage(inode, page);  // 跟踪 ext4 写页面操作
+	size = i_size_read(inode);  // 读取 inode 的大小
+	if (page->index == size >> PAGE_CACHE_SHIFT)  // 如果是最后一个页面
+		len = size & ~PAGE_CACHE_MASK;  // 计算页面的实际大小
 	else
-		len = PAGE_CACHE_SIZE;
+		len = PAGE_CACHE_SIZE;  // 否则页面大小为 PAGE_CACHE_SIZE
 
-	if (page_has_buffers(page)) {
-		page_bufs = page_buffers(page);
+	if (page_has_buffers(page)) {  // 如果页面有 buffer
+		page_bufs = page_buffers(page);  // 获取页面的 buffer_heads
 		if (walk_page_buffers(NULL, page_bufs, 0, len, NULL,
 					ext4_bh_delay_or_unwritten)) {
 			/*
-			 * We don't want to do  block allocation
-			 * So redirty the page and return
-			 * We may reach here when we do a journal commit
-			 * via journal_submit_inode_data_buffers.
-			 * If we don't have mapping block we just ignore
-			 * them. We can also reach here via shrink_page_list
+			 * 不进行块分配，只重新标记页面为脏页并返回。
+			 * 这可能会在通过 journal 提交时或在 shrink_page_list 中发生。
+			 * 如果没有映射的块，则忽略它们。
 			 */
 			redirty_page_for_writepage(wbc, page);
-			unlock_page(page);
+			unlock_page(page);  // 解锁页面
 			return 0;
 		}
 	} else {
 		/*
-		 * The test for page_has_buffers() is subtle:
-		 * We know the page is dirty but it lost buffers. That means
-		 * that at some moment in time after write_begin()/write_end()
-		 * has been called all buffers have been clean and thus they
-		 * must have been written at least once. So they are all
-		 * mapped and we can happily proceed with mapping them
-		 * and writing the page.
-		 *
-		 * Try to initialize the buffer_heads and check whether
-		 * all are mapped and non delay. We don't want to
-		 * do block allocation here.
+		 * 如果页面没有 buffer：
+		 * 此时页面是脏的，但丢失了 buffer。这意味着在调用 write_begin()/write_end() 之后，
+		 * 所有的 buffer 都是干净的，且它们一定已经被写入过一次。
+		 * 因此它们都已经映射，可以继续进行映射和写入操作。
 		 */
 		ret = block_prepare_write(page, 0, len,
-					  noalloc_get_block_write);
-		if (!ret) {
-			page_bufs = page_buffers(page);
-			/* check whether all are mapped and non delay */
+					  noalloc_get_block_write);  // 准备写操作
+		if (!ret) {  // 如果成功准备写入
+			page_bufs = page_buffers(page);  // 获取 buffer_heads
+			// 检查是否都已映射且无延迟
 			if (walk_page_buffers(NULL, page_bufs, 0, len, NULL,
 						ext4_bh_delay_or_unwritten)) {
 				redirty_page_for_writepage(wbc, page);
@@ -2769,39 +2777,39 @@ static int ext4_writepage(struct page *page,
 			}
 		} else {
 			/*
-			 * We can't do block allocation here
-			 * so just redity the page and unlock
-			 * and return
+			 * 无法进行块分配，重新标记页面为脏页并解锁，返回
 			 */
 			redirty_page_for_writepage(wbc, page);
 			unlock_page(page);
 			return 0;
 		}
-		/* now mark the buffer_heads as dirty and uptodate */
+		/* 将 buffer_heads 标记为脏和最新状态 */
 		block_commit_write(page, 0, len);
 	}
 
-	if (PageChecked(page) && ext4_should_journal_data(inode)) {
+	if (PageChecked(page) && ext4_should_journal_data(inode)) {  // 如果页面已检查且需要记录数据
 		/*
-		 * It's mmapped pagecache.  Add buffers and journal it.  There
-		 * doesn't seem much point in redirtying the page here.
+		 * 是基于 mmap 的页面缓存。添加 buffers 并记录它。
+		 * 没有必要在此处重新标记页面为脏页。
 		 */
-		ClearPageChecked(page);
-		return __ext4_journalled_writepage(page, len);
+		ClearPageChecked(page);  // 清除页面检查标志
+		return __ext4_journalled_writepage(page, len);  // 执行 journaling
 	}
 
+	// 如果启用了 NOBH 选项并且需要写回数据，则使用 nobh 机制写页面
 	if (test_opt(inode->i_sb, NOBH) && ext4_should_writeback_data(inode))
 		ret = nobh_writepage(page, noalloc_get_block_write, wbc);
-	else if (page_bufs && buffer_uninit(page_bufs)) {
-		ext4_set_bh_endio(page_bufs, inode);
+	else if (page_bufs && buffer_uninit(page_bufs)) {  // 如果有未初始化的 buffer_heads
+		ext4_set_bh_endio(page_bufs, inode);  // 设置 IO 完成回调
 		ret = block_write_full_page_endio(page, noalloc_get_block_write,
-					    wbc, ext4_end_io_buffer_write);
-	} else
+					    wbc, ext4_end_io_buffer_write);  // 完整写入页面
+	} else  // 如果没有启用 nobh 或者没有未初始化的 buffer_heads，使用标准写页面方式
 		ret = block_write_full_page(page, noalloc_get_block_write,
 					    wbc);
 
-	return ret;
+	return ret;  // 返回写页面的结果
 }
+
 
 /*
  * This is called via ext4_da_writepages() to
@@ -2828,50 +2836,56 @@ static int ext4_da_writepages_trans_blocks(struct inode *inode)
 	return ext4_chunk_trans_blocks(inode, max_blocks);
 }
 
+/*
+ * ext4_da_writepages: 延迟分配写回页函数
+ * @mapping: address_space 结构，表示文件的映射信息
+ * @wbc: writeback_control 结构，用于控制写回的行为
+ *
+ * 该函数是 ext4 的延迟分配页写回函数，负责将文件系统中的脏页写回到磁盘。
+ * 它采用了延迟分配机制，在写入之前进行块分配，并处理多个写回操作。
+ * 函数通过处理写回控制逻辑并调用适当的 I/O 提交函数来执行实际的写入操作。
+ */
 static int ext4_da_writepages(struct address_space *mapping,
 			      struct writeback_control *wbc)
 {
-	pgoff_t	index;
-	int range_whole = 0;
-	handle_t *handle = NULL;
-	struct mpage_da_data mpd;
-	struct inode *inode = mapping->host;
-	int no_nrwrite_index_update;
-	int pages_written = 0;
-	long pages_skipped;
-	unsigned int max_pages;
-	int range_cyclic, cycled = 1, io_done = 0;
-	int needed_blocks, ret = 0;
-	long desired_nr_to_write, nr_to_writebump = 0;
-	loff_t range_start = wbc->range_start;
-	struct ext4_sb_info *sbi = EXT4_SB(mapping->host->i_sb);
+	pgoff_t index;  // 页偏移
+	int range_whole = 0;  // 是否为整个范围
+	handle_t *handle = NULL;  // 日志句柄
+	struct mpage_da_data mpd;  // 延迟分配数据结构
+	struct inode *inode = mapping->host;  // inode 结构
+	int no_nrwrite_index_update;  // 标记是否需要更新写回索引
+	int pages_written = 0;  // 记录写入的页数
+	long pages_skipped;  // 记录跳过的页数
+	unsigned int max_pages;  // 最大写回页数
+	int range_cyclic, cycled = 1, io_done = 0;  // 写回范围和循环标志
+	int needed_blocks, ret = 0;  // 所需的块数和返回值
+	long desired_nr_to_write, nr_to_writebump = 0;  // 期望写入的页数
+	loff_t range_start = wbc->range_start;  // 写回范围的起始位置
+	struct ext4_sb_info *sbi = EXT4_SB(mapping->host->i_sb);  // 文件系统信息
 
-	trace_ext4_da_writepages(inode, wbc);
+	trace_ext4_da_writepages(inode, wbc);  // 跟踪写回操作
 
 	/*
-	 * No pages to write? This is mainly a kludge to avoid starting
-	 * a transaction for special inodes like journal inode on last iput()
-	 * because that could violate lock ordering on umount
+	 * 如果没有脏页，这里主要是为了避免在最后一次 iput() 时
+	 * 为某些特殊 inode（如日志 inode）启动事务，因为这可能
+	 * 会在卸载时违反锁顺序
 	 */
 	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		return 0;
 
 	/*
-	 * If the filesystem has aborted, it is read-only, so return
-	 * right away instead of dumping stack traces later on that
-	 * will obscure the real source of the problem.  We test
-	 * EXT4_MF_FS_ABORTED instead of sb->s_flag's MS_RDONLY because
-	 * the latter could be true if the filesystem is mounted
-	 * read-only, and in that case, ext4_da_writepages should
-	 * *never* be called, so if that ever happens, we would want
-	 * the stack trace.
+	 * 如果文件系统已经中止，返回错误，因为文件系统处于只读状态。
+	 * 我们检测 EXT4_MF_FS_ABORTED 而不是 sb->s_flag 的 MS_RDONLY，
+	 * 因为后者在只读挂载时会为真，而在这种情况下不应调用此函数。
 	 */
 	if (unlikely(sbi->s_mount_flags & EXT4_MF_FS_ABORTED))
 		return -EROFS;
 
+	// 检查写回范围是否覆盖整个文件
 	if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 		range_whole = 1;
 
+	// 如果是循环写回模式，设置起始位置和结束位置
 	range_cyclic = wbc->range_cyclic;
 	if (wbc->range_cyclic) {
 		index = mapping->writeback_index;
@@ -2884,27 +2898,14 @@ static int ext4_da_writepages(struct address_space *mapping,
 		index = wbc->range_start >> PAGE_CACHE_SHIFT;
 
 	/*
-	 * This works around two forms of stupidity.  The first is in
-	 * the writeback code, which caps the maximum number of pages
-	 * written to be 1024 pages.  This is wrong on multiple
-	 * levels; different architectues have a different page size,
-	 * which changes the maximum amount of data which gets
-	 * written.  Secondly, 4 megabytes is way too small.  XFS
-	 * forces this value to be 16 megabytes by multiplying
-	 * nr_to_write parameter by four, and then relies on its
-	 * allocator to allocate larger extents to make them
-	 * contiguous.  Unfortunately this brings us to the second
-	 * stupidity, which is that ext4's mballoc code only allocates
-	 * at most 2048 blocks.  So we force contiguous writes up to
-	 * the number of dirty blocks in the inode, or
-	 * sbi->max_writeback_mb_bump whichever is smaller.
+	 * 处理写回代码中的不合理行为：写回代码会将写入的最大页数限制为 1024 页，
+	 * 这在不同架构下表现不同。我们通过调整写回页数以适应系统的块分配限制。
 	 */
 	max_pages = sbi->s_max_writeback_mb_bump << (20 - PAGE_CACHE_SHIFT);
 	if (!range_cyclic && range_whole)
 		desired_nr_to_write = wbc->nr_to_write * 8;
 	else
-		desired_nr_to_write = ext4_num_dirty_pages(inode, index,
-							   max_pages);
+		desired_nr_to_write = ext4_num_dirty_pages(inode, index, max_pages);
 	if (desired_nr_to_write > max_pages)
 		desired_nr_to_write = max_pages;
 
@@ -2917,8 +2918,7 @@ static int ext4_da_writepages(struct address_space *mapping,
 	mpd.inode = mapping->host;
 
 	/*
-	 * we don't want write_cache_pages to update
-	 * nr_to_write and writeback_index
+	 * 我们不希望 write_cache_pages 更新 nr_to_write 和 writeback_index
 	 */
 	no_nrwrite_index_update = wbc->no_nrwrite_index_update;
 	wbc->no_nrwrite_index_update = 1;
@@ -2928,15 +2928,13 @@ retry:
 	while (!ret && wbc->nr_to_write > 0) {
 
 		/*
-		 * we  insert one extent at a time. So we need
-		 * credit needed for single extent allocation.
-		 * journalled mode is currently not supported
-		 * by delalloc
+		 * 我们一次插入一个 extent，需要为单个块分配准备事务日志。
+		 * journalled 模式目前不支持延迟分配。
 		 */
 		BUG_ON(ext4_should_journal_data(inode));
 		needed_blocks = ext4_da_writepages_trans_blocks(inode);
 
-		/* start a new transaction*/
+		// 开启一个新的事务
 		handle = ext4_journal_start(inode, needed_blocks);
 		if (IS_ERR(handle)) {
 			ret = PTR_ERR(handle);
@@ -2947,13 +2945,9 @@ retry:
 		}
 
 		/*
-		 * Now call __mpage_da_writepage to find the next
-		 * contiguous region of logical blocks that need
-		 * blocks to be allocated by ext4.  We don't actually
-		 * submit the blocks for I/O here, even though
-		 * write_cache_pages thinks it will, and will set the
-		 * pages as clean for write before calling
-		 * __mpage_da_writepage().
+		 * 调用 __mpage_da_writepage 来找到需要分配块的逻辑块区间，
+		 * 虽然 write_cache_pages 会认为我们会在此提交 I/O，但实际
+		 * 上我们并不会立即提交，直到找到合适的连续块后再执行 I/O。
 		 */
 		mpd.b_size = 0;
 		mpd.b_state = 0;
@@ -2963,12 +2957,10 @@ retry:
 		mpd.io_done = 0;
 		mpd.pages_written = 0;
 		mpd.retval = 0;
-		ret = write_cache_pages(mapping, wbc, __mpage_da_writepage,
-					&mpd);
+		ret = write_cache_pages(mapping, wbc, __mpage_da_writepage, &mpd);
+
 		/*
-		 * If we have a contiguous extent of pages and we
-		 * haven't done the I/O yet, map the blocks and submit
-		 * them for I/O.
+		 * 如果我们有一个连续的 extent，并且尚未进行 I/O，则映射块并提交 I/O。
 		 */
 		if (!mpd.io_done && mpd.next_page != mpd.first_page) {
 			if (mpage_da_map_blocks(&mpd) == 0)
@@ -2982,30 +2974,20 @@ retry:
 		ext4_journal_stop(handle);
 
 		if ((mpd.retval == -ENOSPC) && sbi->s_journal) {
-			/* commit the transaction which would
-			 * free blocks released in the transaction
-			 * and try again
-			 */
+			/* 提交事务并重试以释放块 */
 			jbd2_journal_force_commit_nested(sbi->s_journal);
 			wbc->pages_skipped = pages_skipped;
 			ret = 0;
 		} else if (ret == MPAGE_DA_EXTENT_TAIL) {
-			/*
-			 * got one extent now try with
-			 * rest of the pages
-			 */
+			/* 写入一个 extent 后继续处理其余页 */
 			pages_written += mpd.pages_written;
 			wbc->pages_skipped = pages_skipped;
 			ret = 0;
 			io_done = 1;
 		} else if (wbc->nr_to_write)
-			/*
-			 * There is no more writeout needed
-			 * or we requested for a noblocking writeout
-			 * and we found the device congested
-			 */
 			break;
 	}
+
 	if (!io_done && !cycled) {
 		cycled = 1;
 		index = 0;
@@ -3013,20 +2995,15 @@ retry:
 		wbc->range_end  = mapping->writeback_index - 1;
 		goto retry;
 	}
-	if (pages_skipped != wbc->pages_skipped)
-		ext4_msg(inode->i_sb, KERN_CRIT,
-			 "This should not happen leaving %s "
-			 "with nr_to_write = %ld ret = %d\n",
-			 __func__, wbc->nr_to_write, ret);
 
-	/* Update index */
+	if (pages_skipped != wbc->pages_skipped)
+		ext4_msg(inode->i_sb, KERN_CRIT, "此处不应发生 nr_to_write = %ld ret = %d\n",
+			 wbc->nr_to_write, ret);
+
+	/* 更新写回索引 */
 	index += pages_written;
 	wbc->range_cyclic = range_cyclic;
 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
-		/*
-		 * set the writeback_index so that range_cyclic
-		 * mode will write it back later
-		 */
 		mapping->writeback_index = index;
 
 out_writepages:
@@ -5646,19 +5623,26 @@ int ext4_meta_trans_blocks(struct inode *inode, int nrblocks, int chunk)
  * We need to consider the worse case, when
  * one new block per extent.
  */
+/*
+ * ext4_writepage_trans_blocks: 计算写入页面所需的事务块数量。
+ *
+ * @inode: 指向要写入的 inode 的指针。
+ *
+ * 返回: 需要的事务块数量。
+ */
 int ext4_writepage_trans_blocks(struct inode *inode)
 {
-	int bpp = ext4_journal_blocks_per_page(inode);
-	int ret;
+	int bpp = ext4_journal_blocks_per_page(inode); // 每页需要的日志块数量
+	int ret; // 用于存储返回值
 
-	ret = ext4_meta_trans_blocks(inode, bpp, 0);
+	ret = ext4_meta_trans_blocks(inode, bpp, 0); // 计算元数据事务块数量
 
-	/* Account for data blocks for journalled mode */
-	if (ext4_should_journal_data(inode))
-		ret += bpp;
-	return ret;
+	/* 在日志模式下，计算数据块 */
+	if (ext4_should_journal_data(inode)) // 检查是否应记录数据
+		ret += bpp; // 如果是，增加数据块数量
+
+	return ret; // 返回所需的事务块数量
 }
-
 /*
  * Calculate the journal credits for a chunk of data modification.
  *

@@ -466,24 +466,23 @@ int __jbd2_log_space_left(journal_t *journal)
 int __jbd2_log_start_commit(journal_t *journal, tid_t target)
 {
 	/*
-	 * Are we already doing a recent enough commit?
+	 * 检查我们是否已经在进行一个最近的提交。
 	 */
 	if (!tid_geq(journal->j_commit_request, target)) {
 		/*
-		 * We want a new commit: OK, mark the request and wakup the
-		 * commit thread.  We do _not_ do the commit ourselves.
+		 * 我们想要一个新的提交：标记请求并唤醒提交线程。
+		 * 我们不自己执行提交。
 		 */
 
-		journal->j_commit_request = target;
+		journal->j_commit_request = target; // 设置提交请求为目标事务 ID
 		jbd_debug(1, "JBD: requesting commit %d/%d\n",
 			  journal->j_commit_request,
-			  journal->j_commit_sequence);
-		wake_up(&journal->j_wait_commit);
-		return 1;
+			  journal->j_commit_sequence); // 打印调试信息，显示请求的提交信息
+		wake_up(&journal->j_wait_commit); // 唤醒等待提交的线程
+		return 1; // 返回 1，表示已启动提交请求
 	}
-	return 0;
+	return 0; // 返回 0，表示没有启动新的提交请求
 }
-
 int jbd2_log_start_commit(journal_t *journal, tid_t tid)
 {
 	int ret;
@@ -495,37 +494,45 @@ int jbd2_log_start_commit(journal_t *journal, tid_t tid)
 }
 
 /*
- * Force and wait upon a commit if the calling process is not within
- * transaction.  This is used for forcing out undo-protected data which contains
- * bitmaps, when the fs is running out of space.
+ * 如果调用进程不在事务中，则强制提交并等待提交完成。
+ * 该函数用于强制写出包含位图的撤销保护数据，当文件系统空间不足时需要此操作。
  *
- * We can only force the running transaction if we don't have an active handle;
- * otherwise, we will deadlock.
+ * 如果当前没有活跃的 handle（处理句柄），我们只能强制运行事务；
+ * 否则，可能会导致死锁。
  *
- * Returns true if a transaction was started.
+ * 返回值为 true 表示事务已启动。
  */
 int jbd2_journal_force_commit_nested(journal_t *journal)
 {
-	transaction_t *transaction = NULL;
+	transaction_t *transaction = NULL; // 初始化事务指针为空
 	tid_t tid;
 
-	spin_lock(&journal->j_state_lock);
+	spin_lock(&journal->j_state_lock); // 加锁，保护 journal 的状态
 	if (journal->j_running_transaction && !current->journal_info) {
+		// 如果有正在运行的事务，并且当前进程没有活跃的事务信息
 		transaction = journal->j_running_transaction;
+		// 启动提交当前事务
 		__jbd2_log_start_commit(journal, transaction->t_tid);
-	} else if (journal->j_committing_transaction)
+	} else if (journal->j_committing_transaction) {
+		// 否则，如果有正在提交的事务，获取该事务
 		transaction = journal->j_committing_transaction;
-
-	if (!transaction) {
-		spin_unlock(&journal->j_state_lock);
-		return 0;	/* Nothing to retry */
 	}
 
+	if (!transaction) {
+		// 如果没有找到需要提交的事务，解锁并返回 0，表示无事务可提交
+		spin_unlock(&journal->j_state_lock);
+		return 0;	/* 没有事务可重试 */
+	}
+
+	// 获取事务的 ID
 	tid = transaction->t_tid;
+	// 解锁 journal 的状态锁
 	spin_unlock(&journal->j_state_lock);
+	// 等待指定事务的提交完成
 	jbd2_log_wait_commit(journal, tid);
-	return 1;
+	return 1; // 返回 1 表示成功提交了事务
 }
+
 
 /*
  * Start a commit of the current running transaction (if any).  Returns true
@@ -928,46 +935,60 @@ out_err:
 }
 
 /**
- *  journal_t * jbd2_journal_init_inode () - creates a journal which maps to a inode.
- *  @inode: An inode to create the journal in
+ * jbd2_journal_init_inode - 基于 inode 初始化日志
+ * @inode: 文件系统的 inode 对象
  *
- * jbd2_journal_init_inode creates a journal which maps an on-disk inode as
- * the journal.  The inode must exist already, must support bmap() and
- * must have all data blocks preallocated.
+ * 该函数通过 inode 对象初始化一个 journal_t 类型的日志对象。
+ * 它会设置日志的各种属性，包括设备名、块大小等。
+ *
+ * 返回值: 如果成功，返回 journal_t* 指针；如果失败，返回 NULL。
  */
+
 journal_t * jbd2_journal_init_inode (struct inode *inode)
 {
 	struct buffer_head *bh;
-	journal_t *journal = journal_init_common();
+	journal_t *journal = journal_init_common(); // 初始化一个通用的 journal 结构
 	char *p;
 	int err;
 	int n;
 	unsigned long long blocknr;
 
+	// 如果 journal 初始化失败，直接返回 NULL
 	if (!journal)
 		return NULL;
 
+	// 设置日志设备和文件系统设备为 inode 所在的块设备
 	journal->j_dev = journal->j_fs_dev = inode->i_sb->s_bdev;
+	// 将 inode 与日志关联
 	journal->j_inode = inode;
+	// 获取块设备名称
 	bdevname(journal->j_dev, journal->j_devname);
+	// 将设备名中的 '/' 替换为 '!'，防止路径字符的冲突
 	p = journal->j_devname;
 	while ((p = strchr(p, '/')))
 		*p = '!';
+	// 添加 inode 号到设备名的结尾
 	p = journal->j_devname + strlen(journal->j_devname);
 	sprintf(p, "-%lu", journal->j_inode->i_ino);
+
+	// 输出调试信息，日志的 inode 信息及其大小、块大小等
 	jbd_debug(1,
 		  "journal %p: inode %s/%ld, size %Ld, bits %d, blksize %ld\n",
 		  journal, inode->i_sb->s_id, inode->i_ino,
 		  (long long) inode->i_size,
 		  inode->i_sb->s_blocksize_bits, inode->i_sb->s_blocksize);
 
+	// 计算日志的最大长度（单位：块数）
 	journal->j_maxlen = inode->i_size >> inode->i_sb->s_blocksize_bits;
+	// 设置日志的块大小
 	journal->j_blocksize = inode->i_sb->s_blocksize;
+	// 初始化日志的统计信息
 	jbd2_stats_proc_init(journal);
 
-	/* journal descriptor can store up to n blocks -bzzz */
+	// 计算日志描述符能够存储的块数
 	n = journal->j_blocksize / sizeof(journal_block_tag_t);
 	journal->j_wbufsize = n;
+	// 为写缓冲区分配内存
 	journal->j_wbuf = kmalloc(n * sizeof(struct buffer_head*), GFP_KERNEL);
 	if (!journal->j_wbuf) {
 		printk(KERN_ERR "%s: Cant allocate bhs for commit thread\n",
@@ -975,14 +996,16 @@ journal_t * jbd2_journal_init_inode (struct inode *inode)
 		goto out_err;
 	}
 
+	// 获取日志的超级块（第 0 块）的物理块号
 	err = jbd2_journal_bmap(journal, 0, &blocknr);
-	/* If that failed, give up */
+	// 如果映射失败，记录错误并退出
 	if (err) {
 		printk(KERN_ERR "%s: Cannnot locate journal superblock\n",
 		       __func__);
 		goto out_err;
 	}
 
+	// 获取日志超级块所在的缓冲区
 	bh = __getblk(journal->j_dev, blocknr, journal->j_blocksize);
 	if (!bh) {
 		printk(KERN_ERR
@@ -990,11 +1013,15 @@ journal_t * jbd2_journal_init_inode (struct inode *inode)
 		       __func__);
 		goto out_err;
 	}
+	// 设置日志的超级块缓冲区和超级块指针
 	journal->j_sb_buffer = bh;
 	journal->j_superblock = (journal_superblock_t *)bh->b_data;
 
+	// 返回初始化好的 journal 对象
 	return journal;
+
 out_err:
+	// 错误处理：释放已分配的资源并返回 NULL
 	kfree(journal->j_wbuf);
 	jbd2_stats_proc_exit(journal);
 	kfree(journal);
@@ -2318,16 +2345,16 @@ static void jbd2_journal_destroy_handle_cache(void)
  * Module startup and shutdown
  */
 
-static int __init journal_init_caches(void)
+static int __init journal_init_caches(void) // 定义一个初始化日志缓存的函数，使用 __init 修饰符表示这是初始化代码
 {
-	int ret;
+	int ret; // 声明一个整型变量用于存储返回值
 
-	ret = jbd2_journal_init_revoke_caches();
-	if (ret == 0)
-		ret = journal_init_jbd2_journal_head_cache();
-	if (ret == 0)
-		ret = journal_init_handle_cache();
-	return ret;
+	ret = jbd2_journal_init_revoke_caches(); // 初始化撤销缓存，并将返回值存储在 ret 中
+	if (ret == 0) // 如果撤销缓存初始化成功（返回值为 0）
+		ret = journal_init_jbd2_journal_head_cache(); // 初始化 JBD2 日志头缓存
+	if (ret == 0) // 如果日志头缓存初始化成功（返回值为 0）
+		ret = journal_init_handle_cache(); // 初始化日志处理缓存
+	return ret; // 返回最终的初始化结果
 }
 
 static void jbd2_journal_destroy_caches(void)
@@ -2338,20 +2365,20 @@ static void jbd2_journal_destroy_caches(void)
 	jbd2_journal_destroy_slabs();
 }
 
-static int __init journal_init(void)
+static int __init journal_init(void) // 定义一个初始化函数，使用 __init 修饰符表示这是一个初始化代码
 {
-	int ret;
+	int ret; // 声明一个整型变量用于存储返回值
 
-	BUILD_BUG_ON(sizeof(struct journal_superblock_s) != 1024);
+	BUILD_BUG_ON(sizeof(struct journal_superblock_s) != 1024); // 编译时检查结构体大小是否为 1024 字节
 
-	ret = journal_init_caches();
-	if (ret == 0) {
-		jbd2_create_debugfs_entry();
-		jbd2_create_jbd_stats_proc_entry();
-	} else {
-		jbd2_journal_destroy_caches();
+	ret = journal_init_caches(); // 调用函数初始化日志缓存，并将返回值存储在 ret 中
+	if (ret == 0) { // 如果初始化成功（返回值为 0）
+		jbd2_create_debugfs_entry(); // 创建调试文件系统条目
+		jbd2_create_jbd_stats_proc_entry(); // 创建用于统计的 proc 条目
+	} else { // 如果初始化失败
+		jbd2_journal_destroy_caches(); // 销毁已经创建的缓存
 	}
-	return ret;
+	return ret; // 返回初始化结果
 }
 
 static void __exit journal_exit(void)

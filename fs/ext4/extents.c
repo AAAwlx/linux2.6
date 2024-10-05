@@ -520,33 +520,37 @@ void ext4_ext_drop_refs(struct ext4_ext_path *path)
 
 /*
  * ext4_ext_binsearch_idx:
- * binary search for the closest index of the given block
- * the header must be checked before calling this
+ * 在给定块号的位置进行二分查找，以找到最接近的索引节点。
+ * 在调用此函数之前必须检查 header。
  */
 static void
 ext4_ext_binsearch_idx(struct inode *inode,
 			struct ext4_ext_path *path, ext4_lblk_t block)
 {
-	struct ext4_extent_header *eh = path->p_hdr;
-	struct ext4_extent_idx *r, *l, *m;
-
+	struct ext4_extent_header *eh = path->p_hdr;  // 当前层级的 extent 头部
+	struct ext4_extent_idx *r, *l, *m;             // 指向索引节点的指针
 
 	ext_debug("binsearch for %u(idx):  ", block);
 
-	l = EXT_FIRST_INDEX(eh) + 1;
-	r = EXT_LAST_INDEX(eh);
+	// 初始化左右指针
+	l = EXT_FIRST_INDEX(eh) + 1;  // 左指针，指向第一个索引节点之后的位置
+	r = EXT_LAST_INDEX(eh);       // 右指针，指向最后一个索引节点
+
 	while (l <= r) {
-		m = l + (r - l) / 2;
+		m = l + (r - l) / 2;  // 计算中间节点
 		if (block < le32_to_cpu(m->ei_block))
-			r = m - 1;
+			r = m - 1;  // 如果块号小于中间节点的块号，向左侧收缩查找范围
 		else
-			l = m + 1;
+			l = m + 1;  // 否则，向右侧收缩查找范围
+
+		// 调试信息：输出当前查找范围和中间节点的块号
 		ext_debug("%p(%u):%p(%u):%p(%u) ", l, le32_to_cpu(l->ei_block),
 				m, le32_to_cpu(m->ei_block),
 				r, le32_to_cpu(r->ei_block));
 	}
 
-	path->p_idx = l - 1;
+	// 找到的索引节点位置
+	path->p_idx = l - 1;  // l 指向的索引节点为可能的匹配节点，取 l - 1
 	ext_debug("  -> %d->%lld ", le32_to_cpu(path->p_idx->ei_block),
 		  idx_pblock(path->p_idx));
 
@@ -575,8 +579,8 @@ ext4_ext_binsearch_idx(struct inode *inode,
 		BUG_ON(chix != path->p_idx);
 	}
 #endif
-
 }
+
 
 /*
  * ext4_ext_binsearch:
@@ -642,99 +646,127 @@ ext4_ext_binsearch(struct inode *inode,
 
 int ext4_ext_tree_init(handle_t *handle, struct inode *inode)
 {
-	struct ext4_extent_header *eh;
+    struct ext4_extent_header *eh;
 
-	eh = ext_inode_hdr(inode);
-	eh->eh_depth = 0;
-	eh->eh_entries = 0;
-	eh->eh_magic = EXT4_EXT_MAGIC;
-	eh->eh_max = cpu_to_le16(ext4_ext_space_root(inode, 0));
-	ext4_mark_inode_dirty(handle, inode);
-	ext4_ext_invalidate_cache(inode);
-	return 0;
+    // 获取inode中保存的ext4_extent_header结构体
+    eh = ext_inode_hdr(inode);
+
+    // 初始化extent树的头部，设置树的深度为0
+    eh->eh_depth = 0;                // 树的深度，0表示叶子节点
+    eh->eh_entries = 0;              // 当前的extent条目数为0
+    eh->eh_magic = EXT4_EXT_MAGIC;   // 设置扩展树的魔数，确保它是一个有效的extent树
+    eh->eh_max = cpu_to_le16(ext4_ext_space_root(inode, 0)); // 设置最大条目数，取决于inode类型
+
+    // 标记inode为已修改，便于后续的写回操作
+    ext4_mark_inode_dirty(handle, inode);
+
+    // 使得extent cache失效，确保后续操作不会使用过时的缓存数据
+    ext4_ext_invalidate_cache(inode);
+
+    return 0; // 成功返回
 }
 
+/*
+ * 查找指定逻辑块号在 extent 树中的对应 extent 节点。
+ *
+ * 参数:
+ * inode   - 指向操作的 inode 结构体。
+ * block   - 逻辑块号（文件中的偏移块号），用于查找对应的 extent。
+ * path    - 指向 ext4_ext_path 结构的指针，用于保存遍历树的路径。
+ *           如果为 NULL，会动态分配路径内存。
+ *
+ * 返回值:
+ * 如果成功，返回一个指向路径结构 ext4_ext_path 的指针；
+ * 如果失败，返回一个错误指针（如 -ENOMEM 或 -EIO）。
+ */
 struct ext4_ext_path *
 ext4_ext_find_extent(struct inode *inode, ext4_lblk_t block,
 					struct ext4_ext_path *path)
 {
-	struct ext4_extent_header *eh;
-	struct buffer_head *bh;
+	struct ext4_extent_header *eh;  // 扩展头部指针
+	struct buffer_head *bh;         // 缓存的块头
 	short int depth, i, ppos = 0, alloc = 0;
 
-	eh = ext_inode_hdr(inode);
-	depth = ext_depth(inode);
+	eh = ext_inode_hdr(inode);      // 获取 inode 的扩展头部
+	depth = ext_depth(inode);       // 获取 extent 树的深度
 
-	/* account possible depth increase */
+	/* 处理可能的深度增加情况，动态分配路径数组 */
 	if (!path) {
 		path = kzalloc(sizeof(struct ext4_ext_path) * (depth + 2),
-				GFP_NOFS);
+				GFP_NOFS);   // 分配路径存储结构
 		if (!path)
-			return ERR_PTR(-ENOMEM);
-		alloc = 1;
+			return ERR_PTR(-ENOMEM);  // 如果内存分配失败，返回错误指针
+		alloc = 1;  // 标记已分配内存
 	}
-	path[0].p_hdr = eh;
-	path[0].p_bh = NULL;
+	path[0].p_hdr = eh;  // 初始化路径的第一层
+	path[0].p_bh = NULL; // 根节点不在块设备中，因此 p_bh 为空
 
 	i = depth;
-	/* walk through the tree */
+	/* 遍历 extent 树 */
 	while (i) {
-		int need_to_validate = 0;
+		int need_to_validate = 0;  // 标记是否需要验证 extent 数据
 
 		ext_debug("depth %d: num %d, max %d\n",
 			  ppos, le16_to_cpu(eh->eh_entries), le16_to_cpu(eh->eh_max));
 
+		/* 二分查找对应索引块中的节点 */
 		ext4_ext_binsearch_idx(inode, path + ppos, block);
-		path[ppos].p_block = idx_pblock(path[ppos].p_idx);
-		path[ppos].p_depth = i;
-		path[ppos].p_ext = NULL;
+		path[ppos].p_block = idx_pblock(path[ppos].p_idx);  // 获取物理块号
+		path[ppos].p_depth = i;  // 更新当前层的深度
+		path[ppos].p_ext = NULL; // 索引块中不直接存储 extent
 
+		/* 获取物理块的 buffer_head */
 		bh = sb_getblk(inode->i_sb, path[ppos].p_block);
-		if (unlikely(!bh))
+		if (unlikely(!bh))  // 如果无法获取块，跳转到错误处理
 			goto err;
+		/* 检查块是否已加载，如果没有则加载块数据 */
 		if (!bh_uptodate_or_lock(bh)) {
-			if (bh_submit_read(bh) < 0) {
+			if (bh_submit_read(bh) < 0) {  // 读取失败时释放 buffer 并跳转到错误处理
 				put_bh(bh);
 				goto err;
 			}
-			/* validate the extent entries */
+			/* 需要验证 extent 的数据是否有效 */
 			need_to_validate = 1;
 		}
-		eh = ext_block_hdr(bh);
-		ppos++;
-		if (unlikely(ppos > depth)) {
+		eh = ext_block_hdr(bh);  // 获取新的扩展头部
+		ppos++;  // 进入下一层
+		if (unlikely(ppos > depth)) {  // 检查路径深度是否超限
 			put_bh(bh);
 			EXT4_ERROR_INODE(inode,
 					 "ppos %d > depth %d", ppos, depth);
 			goto err;
 		}
-		path[ppos].p_bh = bh;
-		path[ppos].p_hdr = eh;
+		path[ppos].p_bh = bh;  // 更新当前路径的 buffer_head
+		path[ppos].p_hdr = eh; // 更新当前路径的扩展头部
 		i--;
 
+		/* 如果需要验证 extent 数据，调用验证函数 */
 		if (need_to_validate && ext4_ext_check(inode, eh, i))
 			goto err;
 	}
 
+	/* 到达叶节点层，设置当前层深度并初始化路径中的索引和扩展指针 */
 	path[ppos].p_depth = i;
 	path[ppos].p_ext = NULL;
 	path[ppos].p_idx = NULL;
 
-	/* find extent */
+	/* 查找包含该逻辑块号的 extent */
 	ext4_ext_binsearch(inode, path + ppos, block);
-	/* if not an empty leaf */
+	/* 如果找到非空叶节点，将其物理块号更新到路径结构 */
 	if (path[ppos].p_ext)
 		path[ppos].p_block = ext_pblock(path[ppos].p_ext);
 
+	/* 显示当前的路径信息（用于调试） */
 	ext4_ext_show_path(inode, path);
 
 	return path;
 
 err:
+	/* 如果发生错误，释放路径的引用和已分配的内存 */
 	ext4_ext_drop_refs(path);
 	if (alloc)
 		kfree(path);
-	return ERR_PTR(-EIO);
+	return ERR_PTR(-EIO);  // 返回 I/O 错误指针
 }
 
 /*
@@ -3167,6 +3199,7 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		  flags, allocated);
 	ext4_ext_show_leaf(inode, path);
 
+	// 在提交 I/O 之前调用 get_block()，并拆分区间
 	/* get_block() before submit the IO, split the extent */
 	if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 		ret = ext4_split_unwritten_extents(handle,
@@ -3182,7 +3215,7 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		else
 			ext4_set_inode_state(inode, EXT4_STATE_DIO_UNWRITTEN);
 		if (ext4_should_dioread_nolock(inode))
-			set_buffer_uninit(bh_result);
+			set_buffer_uninit(bh_result);// 如果 inode 支持直接 I/O，则设置结果缓冲区为未初始化
 		goto out;
 	}
 	/* IO end_io complete, convert the filled extent to written */
@@ -3267,117 +3300,102 @@ out2:
 	return err ? err : allocated;
 }
 /*
- * Block allocation/map/preallocation routine for extents based files
+ * 获取指定逻辑块号的物理块映射，并在必要时进行块分配。
  *
+ * 参数:
+ * handle        - 事务句柄，用于文件系统的日志操作。
+ * inode         - 指向操作文件的 inode 结构体。
+ * iblock        - 逻辑块号（在文件中的偏移块号）。
+ * max_blocks    - 请求的最大块数量。
+ * bh_result     - buffer_head 结构体，用于返回块映射信息。
+ * flags         - 操作标志，用于指定是否分配块、是否是直接 IO 等。
  *
- * Need to be called with
- * down_read(&EXT4_I(inode)->i_data_sem) if not allocating file system block
- * (ie, create is zero). Otherwise down_write(&EXT4_I(inode)->i_data_sem)
- *
- * return > 0, number of of blocks already mapped/allocated
- *          if create == 0 and these are pre-allocated blocks
- *          	buffer head is unmapped
- *          otherwise blocks are mapped
- *
- * return = 0, if plain look up failed (blocks have not been allocated)
- *          buffer head is unmapped
- *
- * return < 0, error case.
+ * 返回值:
+ * 如果成功，返回分配或映射的块数；如果失败，返回负的错误码。
  */
 int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 			ext4_lblk_t iblock,
 			unsigned int max_blocks, struct buffer_head *bh_result,
 			int flags)
 {
-	struct ext4_ext_path *path = NULL;
-	struct ext4_extent_header *eh;
-	struct ext4_extent newex, *ex, *last_ex;
-	ext4_fsblk_t newblock;
-	int err = 0, depth, ret, cache_type;
-	unsigned int allocated = 0;
-	struct ext4_allocation_request ar;
-	ext4_io_end_t *io = EXT4_I(inode)->cur_aio_dio;
+	struct ext4_ext_path *path = NULL;               // 存储遍历 ext4 extent 树的路径
+	struct ext4_extent_header *eh;                   // 扩展头部
+	struct ext4_extent newex, *ex, *last_ex;         // extent 结构，用于保存新的扩展
+	ext4_fsblk_t newblock;                           // 新分配的物理块号
+	int err = 0, depth, ret, cache_type;             // 错误码，树深度，返回值，缓存类型
+	unsigned int allocated = 0;                      // 分配的块数
+	struct ext4_allocation_request ar;               // 块分配请求结构体
+	ext4_io_end_t *io = EXT4_I(inode)->cur_aio_dio;  // 异步 IO 结束时的处理结构
 
+	// 清除标志位，表示该块并非新分配
 	__clear_bit(BH_New, &bh_result->b_state);
 	ext_debug("blocks %u/%u requested for inode %lu\n",
 			iblock, max_blocks, inode->i_ino);
 
-	/* check in cache */
+	/* 在缓存中检查是否存在已分配的块 */
 	cache_type = ext4_ext_in_cache(inode, iblock, &newex);
 	if (cache_type) {
 		if (cache_type == EXT4_EXT_CACHE_GAP) {
+			// 如果是未分配的区域并且没有设置创建标志，则直接返回
 			if ((flags & EXT4_GET_BLOCKS_CREATE) == 0) {
-				/*
-				 * block isn't allocated yet and
-				 * user doesn't want to allocate it
-				 */
 				goto out2;
 			}
-			/* we should allocate requested block */
+			// 否则，继续分配所请求的块
 		} else if (cache_type == EXT4_EXT_CACHE_EXTENT) {
-			/* block is already allocated */
+			// 如果是已分配的区域，直接返回物理块号和已分配的块数
 			newblock = iblock
 				   - le32_to_cpu(newex.ee_block)
 				   + ext_pblock(&newex);
-			/* number of remaining blocks in the extent */
 			allocated = ext4_ext_get_actual_len(&newex) -
 					(iblock - le32_to_cpu(newex.ee_block));
 			goto out;
 		} else {
-			BUG();
+			BUG(); // 如果缓存类型未知，报错
 		}
 	}
 
-	/* find extent for this block */
+	/* 查找此逻辑块所属的扩展 */
 	path = ext4_ext_find_extent(inode, iblock, NULL);
 	if (IS_ERR(path)) {
-		err = PTR_ERR(path);
+		err = PTR_ERR(path);  // 如果查找失败，返回错误码
 		path = NULL;
 		goto out2;
 	}
 
-	depth = ext_depth(inode);
+	depth = ext_depth(inode);  // 获取 extent 树的深度
 
-	/*
-	 * consistent leaf must not be empty;
-	 * this situation is possible, though, _during_ tree modification;
-	 * this is why assert can't be put in ext4_ext_find_extent()
-	 */
+	// 确保找到的叶节点非空（在树修改期间可能会出现空叶子）
 	if (unlikely(path[depth].p_ext == NULL && depth != 0)) {
 		EXT4_ERROR_INODE(inode, "bad extent address "
 				 "iblock: %d, depth: %d pblock %lld",
 				 iblock, depth, path[depth].p_block);
-		err = -EIO;
+		err = -EIO;  // 发生错误时返回 IO 错误
 		goto out2;
 	}
 	eh = path[depth].p_hdr;
 
 	ex = path[depth].p_ext;
 	if (ex) {
-		ext4_lblk_t ee_block = le32_to_cpu(ex->ee_block);
-		ext4_fsblk_t ee_start = ext_pblock(ex);
-		unsigned short ee_len;
+		ext4_lblk_t ee_block = le32_to_cpu(ex->ee_block);  // 扩展的起始逻辑块号
+		ext4_fsblk_t ee_start = ext_pblock(ex);            // 扩展的起始物理块号
+		unsigned short ee_len;                             // 扩展长度
 
-		/*
-		 * Uninitialized extents are treated as holes, except that
-		 * we split out initialized portions during a write.
-		 */
+		/* 如果找到了覆盖该逻辑块的extent，直接返回对应的物理块号 */
 		ee_len = ext4_ext_get_actual_len(ex);
-		/* if found extent covers block, simply return it */
 		if (in_range(iblock, ee_block, ee_len)) {
 			newblock = iblock - ee_block + ee_start;
-			/* number of remaining blocks in the extent */
 			allocated = ee_len - (iblock - ee_block);
 			ext_debug("%u fit into %u:%d -> %llu\n", iblock,
 					ee_block, ee_len, newblock);
 
-			/* Do not put uninitialized extent in the cache */
+			/* 如果不是未初始化的扩展，则将其放入缓存 */
 			if (!ext4_ext_is_uninitialized(ex)) {
 				ext4_ext_put_in_cache(inode, ee_block,
 							ee_len, ee_start,
 							EXT4_EXT_CACHE_EXTENT);
 				goto out;
 			}
+			// 处理未初始化的扩展，进行必要的分配
 			ret = ext4_ext_handle_uninitialized_extents(handle,
 					inode, iblock, max_blocks, path,
 					flags, allocated, bh_result, newblock);
@@ -3385,23 +3403,14 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 		}
 	}
 
-	/*
-	 * requested block isn't allocated yet;
-	 * we couldn't try to create block if create flag is zero
-	 */
+	/* 如果请求的块未分配且没有创建标志，则退出 */
 	if ((flags & EXT4_GET_BLOCKS_CREATE) == 0) {
-		/*
-		 * put just found gap into cache to speed up
-		 * subsequent requests
-		 */
-		ext4_ext_put_gap_in_cache(inode, path, iblock);
+		ext4_ext_put_gap_in_cache(inode, path, iblock);  // 将未分配的区域缓存起来
 		goto out2;
 	}
-	/*
-	 * Okay, we need to do block allocation.
-	 */
 
-	/* find neighbour allocated blocks */
+	/* 分配新的块 */
+	// 查找相邻的已分配块
 	ar.lleft = iblock;
 	err = ext4_ext_search_left(inode, path, &ar.lleft, &ar.pleft);
 	if (err)
@@ -3411,12 +3420,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	if (err)
 		goto out2;
 
-	/*
-	 * See if request is beyond maximum number of blocks we can have in
-	 * a single extent. For an initialized extent this limit is
-	 * EXT_INIT_MAX_LEN and for an uninitialized extent this limit is
-	 * EXT_UNINIT_MAX_LEN.
-	 */
+	/* 检查请求的块数是否超过最大允许长度 */
 	if (max_blocks > EXT_INIT_MAX_LEN &&
 	    !(flags & EXT4_GET_BLOCKS_UNINIT_EXT))
 		max_blocks = EXT_INIT_MAX_LEN;
@@ -3424,7 +3428,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 		 (flags & EXT4_GET_BLOCKS_UNINIT_EXT))
 		max_blocks = EXT_UNINIT_MAX_LEN;
 
-	/* Check if we can really insert (iblock)::(iblock+max_blocks) extent */
+	/* 检查新扩展是否与现有扩展重叠 */
 	newex.ee_block = cpu_to_le32(iblock);
 	newex.ee_len = cpu_to_le16(max_blocks);
 	err = ext4_ext_check_overlap(inode, &newex, path);
@@ -3433,51 +3437,41 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	else
 		allocated = max_blocks;
 
-	/* allocate new block */
+	/* 分配新的物理块 */
 	ar.inode = inode;
-	ar.goal = ext4_ext_find_goal(inode, path, iblock);
+	ar.goal = ext4_ext_find_goal(inode, path, iblock);  // 查找目标分配位置
 	ar.logical = iblock;
 	ar.len = allocated;
-	if (S_ISREG(inode->i_mode))
+	if (S_ISREG(inode->i_mode))  // 如果是常规文件，设置数据块提示标志
 		ar.flags = EXT4_MB_HINT_DATA;
 	else
-		/* disable in-core preallocation for non-regular files */
-		ar.flags = 0;
+		ar.flags = 0;  // 对于非常规文件，禁用核心预分配
 	newblock = ext4_mb_new_blocks(handle, &ar, &err);
 	if (!newblock)
 		goto out2;
 	ext_debug("allocate new block: goal %llu, found %llu/%u\n",
 		  ar.goal, newblock, allocated);
 
-	/* try to insert new extent into found leaf and return */
-	ext4_ext_store_pblock(&newex, newblock);
+	/* 将新扩展插入到叶节点中 */
+	ext4_ext_store_pblock(&newex, newblock);  // 存储物理块号
 	newex.ee_len = cpu_to_le16(ar.len);
-	/* Mark uninitialized */
-	if (flags & EXT4_GET_BLOCKS_UNINIT_EXT){
+	// 如果标志表示需要未初始化的扩展，则进行标记
+	if (flags & EXT4_GET_BLOCKS_UNINIT_EXT) {
 		ext4_ext_mark_uninitialized(&newex);
-		/*
-		 * io_end structure was created for every IO write to an
-		 * uninitialized extent. To avoid unecessary conversion,
-		 * here we flag the IO that really needs the conversion.
-		 * For non asycn direct IO case, flag the inode state
-		 * that we need to perform convertion when IO is done.
-		 */
 		if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 			if (io)
 				io->flag = EXT4_IO_UNWRITTEN;
 			else
-				ext4_set_inode_state(inode,
-						     EXT4_STATE_DIO_UNWRITTEN);
+				ext4_set_inode_state(inode, EXT4_STATE_DIO_UNWRITTEN);
 		}
 		if (ext4_should_dioread_nolock(inode))
 			set_buffer_uninit(bh_result);
 	}
 
+	/* 如果需要，更新 inode 的状态并插入新扩展 */
 	if (unlikely(EXT4_I(inode)->i_flags & EXT4_EOFBLOCKS_FL)) {
 		if (unlikely(!eh->eh_entries)) {
-			EXT4_ERROR_INODE(inode,
-					 "eh->eh_entries == 0 ee_block %d",
-					 ex->ee_block);
+			EXT4_ERROR_INODE(inode, "eh->eh_entries == 0 ee_block %d", ex->ee_block);
 			err = -EIO;
 			goto out2;
 		}
@@ -3488,52 +3482,45 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	}
 	err = ext4_ext_insert_extent(handle, inode, path, &newex, flags);
 	if (err) {
-		/* free data blocks we just allocated */
-		/* not a good idea to call discard here directly,
-		 * but otherwise we'd need to call it every free() */
+		/* 如果插入失败，释放已分配的块 */
 		ext4_discard_preallocations(inode);
 		ext4_free_blocks(handle, inode, 0, ext_pblock(&newex),
 				 ext4_ext_get_actual_len(&newex), 0);
 		goto out2;
 	}
 
-	/* previous routine could use block we allocated */
+	/* 更新块的映射信息 */
 	newblock = ext_pblock(&newex);
 	allocated = ext4_ext_get_actual_len(&newex);
 	if (allocated > max_blocks)
 		allocated = max_blocks;
 	set_buffer_new(bh_result);
 
-	/*
-	 * Update reserved blocks/metadata blocks after successful
-	 * block allocation which had been deferred till now.
-	 */
+	/* 更新保留块/元数据块，确保延迟分配的正确性 */
 	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
 		ext4_da_update_reserve_space(inode, allocated, 1);
 
-	/*
-	 * Cache the extent and update transaction to commit on fdatasync only
-	 * when it is _not_ an uninitialized extent.
-	 */
+	/* 将新分配的扩展放入缓存，并在必要时更新事务 */
 	if ((flags & EXT4_GET_BLOCKS_UNINIT_EXT) == 0) {
-		ext4_ext_put_in_cache(inode, iblock, allocated, newblock,
-						EXT4_EXT_CACHE_EXTENT);
+		ext4_ext_put_in_cache(inode, iblock, allocated, newblock, EXT4_EXT_CACHE_EXTENT);
 		ext4_update_inode_fsync_trans(handle, inode, 1);
 	} else
 		ext4_update_inode_fsync_trans(handle, inode, 0);
+
 out:
 	if (allocated > max_blocks)
 		allocated = max_blocks;
-	ext4_ext_show_leaf(inode, path);
+	ext4_ext_show_leaf(inode, path);  // 显示叶节点的调试信息
 	set_buffer_mapped(bh_result);
-	bh_result->b_bdev = inode->i_sb->s_bdev;
-	bh_result->b_blocknr = newblock;
+	bh_result->b_bdev = inode->i_sb->s_bdev;  // 设置结果的块设备信息
+	bh_result->b_blocknr = newblock;  // 设置结果的物理块号
+
 out2:
 	if (path) {
-		ext4_ext_drop_refs(path);
-		kfree(path);
+		ext4_ext_drop_refs(path);  // 释放路径引用
+		kfree(path);  // 释放路径内存
 	}
-	return err ? err : allocated;
+	return err ? err : allocated;  // 返回错误码或已分配的块数
 }
 
 void ext4_ext_truncate(struct inode *inode)

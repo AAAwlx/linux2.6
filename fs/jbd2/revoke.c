@@ -334,77 +334,75 @@ void jbd2_journal_destroy_revoke(journal_t *journal)
 int jbd2_journal_revoke(handle_t *handle, unsigned long long blocknr,
 		   struct buffer_head *bh_in)
 {
-	struct buffer_head *bh = NULL;
-	journal_t *journal;
-	struct block_device *bdev;
-	int err;
+	struct buffer_head *bh = NULL; // 用于存储与块号相关的缓冲区头
+	journal_t *journal; // 日志结构体指针
+	struct block_device *bdev; // 块设备指针
+	int err; // 存储错误代码
 
-	might_sleep();
-	if (bh_in)
-		BUFFER_TRACE(bh_in, "enter");
+	might_sleep(); // 表示该函数可能会进入睡眠状态
+	if (bh_in) // 如果传入了缓冲区头
+		BUFFER_TRACE(bh_in, "enter"); // 记录调试信息
 
+	// 获取当前事务的日志
 	journal = handle->h_transaction->t_journal;
+	// 检查是否可以设置撤销特性
 	if (!jbd2_journal_set_features(journal, 0, 0, JBD2_FEATURE_INCOMPAT_REVOKE)){
-		J_ASSERT (!"Cannot set revoke feature!");
-		return -EINVAL;
+		J_ASSERT (!"Cannot set revoke feature!"); // 断言：无法设置撤销特性
+		return -EINVAL; // 返回无效参数错误
 	}
 
-	bdev = journal->j_fs_dev;
-	bh = bh_in;
+	bdev = journal->j_fs_dev; // 获取文件系统设备
+	bh = bh_in; // 如果传入了缓冲区头，直接使用它
 
-	if (!bh) {
+	if (!bh) { // 如果没有传入缓冲区头
+		// 根据块号查找对应的缓冲区
 		bh = __find_get_block(bdev, blocknr, journal->j_blocksize);
-		if (bh)
-			BUFFER_TRACE(bh, "found on hash");
+		if (bh) // 如果找到
+			BUFFER_TRACE(bh, "found on hash"); // 记录调试信息
 	}
 #ifdef JBD2_EXPENSIVE_CHECKING
-	else {
+	else { // 如果传入了缓冲区头
 		struct buffer_head *bh2;
 
-		/* If there is a different buffer_head lying around in
-		 * memory anywhere... */
+		// 检查是否有其他缓冲区头与之对应
 		bh2 = __find_get_block(bdev, blocknr, journal->j_blocksize);
-		if (bh2) {
-			/* ... and it has RevokeValid status... */
+		if (bh2) { // 如果找到了
+			// 检查找到的缓冲区是否标记为撤销有效
 			if (bh2 != bh && buffer_revokevalid(bh2))
-				/* ...then it better be revoked too,
-				 * since it's illegal to create a revoke
-				 * record against a buffer_head which is
-				 * not marked revoked --- that would
-				 * risk missing a subsequent revoke
-				 * cancel. */
+				// 断言：如果不相同，则必须撤销
 				J_ASSERT_BH(bh2, buffer_revoked(bh2));
-			put_bh(bh2);
+			put_bh(bh2); // 释放找到的缓冲区
 		}
 	}
 #endif
 
-	/* We really ought not ever to revoke twice in a row without
-           first having the revoke cancelled: it's illegal to free a
-           block twice without allocating it in between! */
+	// 确保不会连续撤销相同的块，防止非法操作
 	if (bh) {
 		if (!J_EXPECT_BH(bh, !buffer_revoked(bh),
 				 "inconsistent data on disk")) {
 			if (!bh_in)
-				brelse(bh);
-			return -EIO;
+				brelse(bh); // 如果没有传入缓冲区头，释放缓冲区
+			return -EIO; // 返回输入输出错误
 		}
+		// 标记缓冲区为撤销
 		set_buffer_revoked(bh);
 		set_buffer_revokevalid(bh);
-		if (bh_in) {
+		if (bh_in) { // 如果传入了缓冲区头
 			BUFFER_TRACE(bh_in, "call jbd2_journal_forget");
-			jbd2_journal_forget(handle, bh_in);
+			jbd2_journal_forget(handle, bh_in); // 忘记当前缓冲区头
 		} else {
 			BUFFER_TRACE(bh, "call brelse");
-			__brelse(bh);
+			__brelse(bh); // 释放缓冲区
 		}
 	}
 
-	jbd_debug(2, "insert revoke for block %llu, bh_in=%p\n",blocknr, bh_in);
+	// 记录插入撤销记录的调试信息
+	jbd_debug(2, "insert revoke for block %llu, bh_in=%p\n", blocknr, bh_in);
+	// 插入撤销记录到撤销哈希表中
 	err = insert_revoke_hash(journal, blocknr,
 				handle->h_transaction->t_tid);
-	BUFFER_TRACE(bh_in, "exit");
-	return err;
+	BUFFER_TRACE(bh_in, "exit"); // 记录调试信息
+	return err; // 返回错误码（如果有）
 }
 
 /*
@@ -503,37 +501,47 @@ void jbd2_journal_write_revoke_records(journal_t *journal,
 				       transaction_t *transaction,
 				       int write_op)
 {
-	struct journal_head *descriptor;
-	struct jbd2_revoke_record_s *record;
-	struct jbd2_revoke_table_s *revoke;
-	struct list_head *hash_list;
-	int i, offset, count;
+    struct journal_head *descriptor;               // 描述符指针，用于保存当前的描述信息
+    struct jbd2_revoke_record_s *record;           // 撤销记录指针
+    struct jbd2_revoke_table_s *revoke;            // 撤销表指针
+    struct list_head *hash_list;                   // 哈希表中的列表指针
+    int i, offset, count;                          // 循环索引、偏移量和计数器
 
-	descriptor = NULL;
-	offset = 0;
-	count = 0;
+    descriptor = NULL;                             // 初始化描述符为空
+    offset = 0;                                    // 初始化偏移量为0
+    count = 0;                                     // 初始化计数器为0
 
-	/* select revoke table for committing transaction */
-	revoke = journal->j_revoke == journal->j_revoke_table[0] ?
-		journal->j_revoke_table[1] : journal->j_revoke_table[0];
+    /* 选择用于提交事务的撤销表 */
+    revoke = journal->j_revoke == journal->j_revoke_table[0] ?
+        journal->j_revoke_table[1] : journal->j_revoke_table[0];
 
-	for (i = 0; i < revoke->hash_size; i++) {
-		hash_list = &revoke->hash_table[i];
+    // 遍历撤销表中的哈希表
+    for (i = 0; i < revoke->hash_size; i++) {
+        hash_list = &revoke->hash_table[i];       // 获取当前哈希表列表
 
-		while (!list_empty(hash_list)) {
-			record = (struct jbd2_revoke_record_s *)
-				hash_list->next;
-			write_one_revoke_record(journal, transaction,
-						&descriptor, &offset,
-						record, write_op);
-			count++;
-			list_del(&record->hash);
-			kmem_cache_free(jbd2_revoke_record_cache, record);
-		}
-	}
-	if (descriptor)
-		flush_descriptor(journal, descriptor, offset, write_op);
-	jbd_debug(1, "Wrote %d revoke records\n", count);
+        // 遍历当前哈希列表，直到列表为空
+        while (!list_empty(hash_list)) {
+            // 获取并类型转换当前哈希列表中的撤销记录
+            record = (struct jbd2_revoke_record_s *)
+                hash_list->next;
+
+            // 写入单个撤销记录到日志中
+            write_one_revoke_record(journal, transaction,
+                                    &descriptor, &offset,
+                                    record, write_op);
+
+            count++;                                 // 增加写入的撤销记录计数
+            list_del(&record->hash);                // 从哈希列表中删除该记录
+            kmem_cache_free(jbd2_revoke_record_cache, record); // 释放该撤销记录的内存
+        }
+    }
+    
+    // 如果描述符不为空，刷新描述符，将写入的记录持久化到日志中
+    if (descriptor)
+        flush_descriptor(journal, descriptor, offset, write_op);
+
+    // 调试输出，记录写入的撤销记录数量
+    jbd_debug(1, "Wrote %d revoke records\n", count);
 }
 
 /*

@@ -23,12 +23,12 @@ struct fs_struct;
  * nsproxy is copied.
  */
 struct nsproxy {
-	atomic_t count;
-	struct uts_namespace *uts_ns;
-	struct ipc_namespace *ipc_ns;
-	struct mnt_namespace *mnt_ns;
-	struct pid_namespace *pid_ns;
-	struct net 	     *net_ns;
+	atomic_t count;//原子计数器，用于管理结构的引用计数
+	struct uts_namespace *uts_ns;//指向 UTS 命名空间的指针，存储系统标识符信息。
+	struct ipc_namespace *ipc_ns;//指向 IPC 命名空间的指针，管理进程间通信资源。
+	struct mnt_namespace *mnt_ns;//指向挂载命名空间的指针，管理文件系统的挂载点。
+	struct pid_namespace *pid_ns;//指向 PID 命名空间的指针，管理进程 ID 的命名空间。
+	struct net 	     *net_ns;//指向网络命名空间的指针，管理网络资源和设置。
 };
 extern struct nsproxy init_nsproxy;
 

@@ -107,7 +107,7 @@
 int
 ext4_mark_iloc_dirty(handle_t *handle,
 		     struct inode *inode,
-		     struct ext4_iloc *iloc);
+		     struct ext4_iloc *iloc);//将一个 inode 标记为 "已脏"，表示它需要写入磁盘
 
 /*
  * On success, We end up with an outstanding reference count against
@@ -115,25 +115,25 @@ ext4_mark_iloc_dirty(handle_t *handle,
  */
 
 int ext4_reserve_inode_write(handle_t *handle, struct inode *inode,
-			struct ext4_iloc *iloc);
+			struct ext4_iloc *iloc);//为 inode 写入保留日志事务
 
-int ext4_mark_inode_dirty(handle_t *handle, struct inode *inode);
+int ext4_mark_inode_dirty(handle_t *handle, struct inode *inode);//标记 inode 为 "已脏"，意味着 inode 的元数据需要写入磁盘
 
 /*
  * Wrapper functions with which ext4 calls into JBD.
  */
 void ext4_journal_abort_handle(const char *caller, const char *err_fn,
-		struct buffer_head *bh, handle_t *handle, int err);
+		struct buffer_head *bh, handle_t *handle, int err);//中止日志事务,如果在操作过程中发生了错误，这个函数会中止当前的日志事务，并进行适当的清理。用于保证文件系统的一致性。
 
 int __ext4_journal_get_undo_access(const char *where, handle_t *handle,
-				struct buffer_head *bh);
+				struct buffer_head *bh);//请求对一个缓冲区进行 "撤销访问" 的权限，在事务中为缓冲区记录撤销日志，以便如果事务失败，系统可以将缓冲区恢复到事务开始之前的状态。
 
 int __ext4_journal_get_write_access(const char *where, handle_t *handle,
-				struct buffer_head *bh);
+				struct buffer_head *bh);//请求对一个缓冲区进行写访问的权限在进行缓冲区写操作之前，申请对该缓冲区的写访问。如果写入成功，这个操作将确保事务的一致性。
 
 int __ext4_forget(const char *where, handle_t *handle, int is_metadata,
 		  struct inode *inode, struct buffer_head *bh,
-		  ext4_fsblk_t blocknr);
+		  ext4_fsblk_t blocknr);//"忘记" 缓冲区内容，撤销对元数据或数据块的更改。
 
 int __ext4_journal_get_create_access(const char *where,
 				handle_t *handle, struct buffer_head *bh);
@@ -267,14 +267,23 @@ int ext4_force_commit(struct super_block *sb);
 
 static inline int ext4_should_journal_data(struct inode *inode)
 {
+	// 如果 inode 没有挂载到日志系统上，则不记录数据日志
 	if (EXT4_JOURNAL(inode) == NULL)
 		return 0;
+
+	// 如果 inode 不是常规文件（例如目录或设备文件），则记录数据日志
 	if (!S_ISREG(inode->i_mode))
 		return 1;
+
+	// 如果文件系统挂载选项为 "data=journal"，则对数据进行日志记录
 	if (test_opt(inode->i_sb, DATA_FLAGS) == EXT4_MOUNT_JOURNAL_DATA)
 		return 1;
+
+	// 如果 inode 上的标志位包含 EXT4_JOURNAL_DATA_FL，则对数据进行日志记录
 	if (EXT4_I(inode)->i_flags & EXT4_JOURNAL_DATA_FL)
 		return 1;
+
+	// 其他情况不需要记录数据日志
 	return 0;
 }
 
